@@ -98,6 +98,61 @@ function Rules.CSVToSet(csv)
     return any and set or nil
 end
 
+-- ---- specs -----------------------------------------------------------------
+-- A spec key is "<CLASS TOKEN>.<TREE>", e.g. "ROGUE.COMBAT". The full list
+-- and the item suitability rules live in RLC_Specs.lua; here a key only has
+-- to be well formed, and its class is the part before the dot.
+
+-- classID -> class token, for the classes Forever has.
+Rules.CLASS_TOKEN = {
+    [1] = "WARRIOR",
+    [2] = "PALADIN",
+    [3] = "HUNTER",
+    [4] = "ROGUE",
+    [5] = "PRIEST",
+    [7] = "SHAMAN",
+    [8] = "MAGE",
+    [9] = "WARLOCK",
+    [11] = "DRUID",
+}
+
+function Rules.ValidSpec(s)
+    return type(s) == "string" and #s <= 32 and s:match("^[A-Z]+%.[A-Z]+$") ~= nil
+end
+
+function Rules.SpecsToCSV(set)
+    return Rules.SetToCSV(set)
+end
+
+function Rules.CSVToSpecs(csv)
+    if type(csv) ~= "string" or csv == "" then
+        return nil
+    end
+    local set, any = {}, false
+    for key in csv:gmatch("[^,]+") do
+        if Rules.ValidSpec(key) then
+            set[key] = true
+            any = true
+        end
+    end
+    return any and set or nil
+end
+
+-- Whether any spec in the set belongs to this class.
+local function classInSpecs(specs, classID)
+    local token = classID and Rules.CLASS_TOKEN[classID]
+    if not token then
+        return false
+    end
+    local prefix = token .. "."
+    for key in pairs(specs) do
+        if key:sub(1, #prefix) == prefix then
+            return true
+        end
+    end
+    return false
+end
+
 -- ---- wire codec ------------------------------------------------------------
 -- An op is fields joined by TAB; one addon message carries several ops
 -- joined by "^". Neither character can appear in a name, a number or an
@@ -183,6 +238,7 @@ function Rules.NewSession(id, host, title, t)
         ended = nil,
         officers = {},
         locks = {}, -- name -> true: has won an item this raid
+        specs = {}, -- name -> spec key, locked once the raid starts
         reserves = {}, -- name -> itemID
         items = {}, -- key -> item
         order = {}, -- keys in the order they were added
@@ -200,7 +256,18 @@ function Rules.Eligible(S, item, name, classID)
         return false
     end
     if item.mode == "open" then
-        return true
+        return true -- open to everyone who can use it: specs no longer matter
+    end
+    if item.specs then
+        local spec = S.specs[name]
+        if spec then
+            if not item.specs[spec] then
+                return false
+            end
+        elseif not classInSpecs(item.specs, classID) then
+            -- No spec on record (no addon): the class must suit it at least.
+            return false
+        end
     end
     return not S.locks[name]
 end
@@ -263,6 +330,9 @@ end
 --   REROLL  key csv                 tie: only these roll again
 --   AWARD   key name how time       locks the winner
 --   CANCEL  key
+--   SPEC    name specKey            "" clears it
+--   UNDO    key                     reverses an award
+-- ITEM has a seventh field: the specs that may roll ("" = any).
 --
 -- Returns the session (NEW returns a new table), or nil plus a reason when
 -- the op is malformed. A rejected op changes nothing.
@@ -288,6 +358,13 @@ function Rules.Apply(S, op)
             return nil, "bad phase"
         end
         S.phase = p
+        return S
+    end
+    if kind == "SPEC" then
+        if not Rules.ValidName(op[2]) or (op[3] ~= "" and not Rules.ValidSpec(op[3])) then
+            return nil, "bad SPEC"
+        end
+        S.specs[op[2]] = op[3] ~= "" and op[3] or nil
         return S
     end
     if kind == "OFF" or kind == "LOCK" or kind == "RES" then
@@ -341,6 +418,7 @@ function Rules.Apply(S, op)
         item.state, item.mode = op[3], op[4]
         item.classMask = tonumber(op[5]) or 0
         item.restrict = Rules.CSVToSet(op[6])
+        item.specs = Rules.CSVToSpecs(op[7])
         if item.state == "interest" or item.state == "rolling" then
             S.active = key
         elseif S.active == key then
@@ -388,6 +466,24 @@ function Rules.Apply(S, op)
         if S.active == key then
             S.active = nil
         end
+    elseif kind == "UNDO" then
+        -- A win given by mistake: the item goes back to waiting, and the
+        -- winner is unlocked unless they won something else too.
+        local winner = item.winner
+        if item.state ~= "done" or not winner then
+            return nil, "bad UNDO"
+        end
+        item.state, item.winner, item.how, item.awardedAt = "pending", nil, nil, nil
+        item.mode, item.restrict, item.wants, item.rolls = "normal", nil, {}, {}
+        local other = false
+        for _, it in pairs(S.items) do
+            if it.state == "done" and it.winner == winner then
+                other = true
+            end
+        end
+        if not other then
+            S.locks[winner] = nil
+        end
     else
         return nil, "unknown op"
     end
@@ -397,9 +493,10 @@ end
 -- ---- intents (host only) -------------------------------------------------
 --
 -- ctx = { classOf = fn(name) -> classID|nil, now = number }
--- Requests anyone may make:      WANT key 0|1, RES itemID
+-- Requests anyone may make:      WANT key 0|1, RES itemID, SPEC specKey
 -- Officer requests:              ADD itemString, START key, CALL key,
---                                CLOSE key, OPEN key, CLASS key mask,
+--                                CLOSE key, OPEN key, SPECS key csv,
+--                                UNDO key, SETSPEC name spec,
 --                                AWARD key name, CANCEL key, LOCK name 0|1,
 --                                PHASE live|ended
 -- Host only:                     OFF name 0|1, ROLLSEEN name roll low high
@@ -411,8 +508,16 @@ function Rules.IsOfficer(S, name)
     return name == S.host or S.officers[name] == true
 end
 
-local function itemOp(item, state, mode, mask, restrict)
-    return { "ITEM", item.key, state, mode, mask or item.classMask or 0, Rules.SetToCSV(restrict) }
+local function itemOp(item, state, mode, mask, restrict, specs)
+    return {
+        "ITEM",
+        item.key,
+        state,
+        mode,
+        mask or item.classMask or 0,
+        Rules.SetToCSV(restrict),
+        Rules.SpecsToCSV(specs or item.specs),
+    }
 end
 
 function Rules.Intent(S, who, req, ctx)
@@ -443,6 +548,20 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "Not an item."
         end
         return { { "RES", who, id } }
+    elseif kind == "SPEC" then
+        -- Your own spec: free to change until the raid starts, then locked
+        -- (a first report from a late joiner still counts).
+        local spec = req[2]
+        if not Rules.ValidSpec(spec) then
+            return nil, "Not a spec."
+        end
+        if S.phase ~= "reserve" and S.specs[who] and S.specs[who] ~= spec then
+            return nil, "Specs are locked once the raid starts. Ask an officer to change yours."
+        end
+        if S.specs[who] == spec then
+            return {}
+        end
+        return { { "SPEC", who, spec } }
     end
 
     -- Host only.
@@ -477,7 +596,22 @@ function Rules.Intent(S, who, req, ctx)
         if not Rules.ValidItemString(req[2]) then
             return nil, "Not an item."
         end
-        return { { "ADD", tostring(S.seq + 1), req[2] } }
+        local key = tostring(S.seq + 1)
+        local ops = { { "ADD", key, req[2] } }
+        -- The host works out which classes and specs suit it.
+        local mask, specs = 0, ""
+        if ctx.describe then
+            mask, specs = ctx.describe(req[2])
+        end
+        if (mask or 0) ~= 0 or (specs or "") ~= "" then
+            ops[2] = { "ITEM", key, "pending", "normal", mask or 0, "", specs or "" }
+        end
+        return ops
+    elseif kind == "SETSPEC" then
+        if not Rules.ValidName(req[2]) or (req[3] ~= "" and not Rules.ValidSpec(req[3])) then
+            return nil, "Bad spec."
+        end
+        return { { "SPEC", req[2], req[3] } }
     elseif kind == "LOCK" then
         if not Rules.ValidName(req[2]) then
             return nil, "No such player."
@@ -557,15 +691,6 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "That item is not up for rolls."
         end
         return { itemOp(item, st, "open", item.classMask) }, "Open to everyone."
-    elseif kind == "CLASS" then
-        if st == "done" or st == "cancelled" then
-            return nil, "That item is finished."
-        end
-        local mask = tonumber(req[3])
-        if not mask or mask < 0 then
-            return nil, "Bad class list."
-        end
-        return { itemOp(item, st, item.mode, mask, item.restrict) }
     elseif kind == "AWARD" then
         if st == "done" or st == "cancelled" then
             return nil, "That item is finished."
@@ -581,6 +706,17 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "That item is finished."
         end
         return { { "CANCEL", item.key } }
+    elseif kind == "SPECS" then
+        if st == "done" or st == "cancelled" then
+            return nil, "That item is finished."
+        end
+        local specs = Rules.CSVToSpecs(req[3]) -- nil = any spec
+        return { itemOp(item, st, item.mode, item.classMask, item.restrict, specs or {}) }
+    elseif kind == "UNDO" then
+        if st ~= "done" then
+            return nil, "Only a won item can be taken back."
+        end
+        return { { "UNDO", item.key } }, "Win taken back. This item is up again."
     end
     return nil, "Unknown request."
 end
@@ -605,6 +741,9 @@ function Rules.Snapshot(S)
     for name, id in pairs(S.reserves) do
         ops[#ops + 1] = { "RES", name, id }
     end
+    for name, spec in pairs(S.specs) do
+        ops[#ops + 1] = { "SPEC", name, spec }
+    end
     local lockNames = {}
     for name in pairs(S.locks) do
         lockNames[name] = true
@@ -612,11 +751,11 @@ function Rules.Snapshot(S)
     for _, key in ipairs(S.order) do
         local item = S.items[key]
         ops[#ops + 1] = { "ADD", key, item.itemString }
-        if item.state ~= "pending" or item.classMask ~= 0 or item.mode ~= "normal" then
+        if item.state ~= "pending" or item.classMask ~= 0 or item.mode ~= "normal" or item.specs then
             -- Finished items replay as their last live state, then AWARD or
             -- CANCEL closes them, exactly as they happened.
             local st = (item.state == "done" or item.state == "cancelled") and "rolling" or item.state
-            ops[#ops + 1] = { "ITEM", key, st, item.mode, item.classMask, Rules.SetToCSV(item.restrict) }
+            ops[#ops + 1] = itemOp(item, st, item.mode, item.classMask, item.restrict)
         end
         for name in pairs(item.wants) do
             ops[#ops + 1] = { "WANT", key, name, 1 }
@@ -638,7 +777,7 @@ function Rules.Snapshot(S)
     -- `active` on its AWARD, so name the active item again last.
     local cur = S.active and S.items[S.active]
     if cur then
-        ops[#ops + 1] = { "ITEM", cur.key, cur.state, cur.mode, cur.classMask, Rules.SetToCSV(cur.restrict) }
+        ops[#ops + 1] = itemOp(cur, cur.state, cur.mode, cur.classMask, cur.restrict)
     end
     return ops
 end

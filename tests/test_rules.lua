@@ -180,8 +180,12 @@ end
 -- ---- class restriction and ties --------------------------------------------
 do
     fresh()
+    -- The item's "Classes:" line, read by the host on ADD.
+    ctx.describe = function()
+        return R.ClassBit(8), ""
+    end
     act(HOST, { "ADD", "item:5" })
-    act(HOST, { "CLASS", "1", R.ClassBit(8) })
+    ctx.describe = nil
     act(HOST, { "START", "1" })
     check(client.items["1"].classMask == R.ClassBit(8), "class mask survives START")
     check(act(A, { "WANT", "1", 1 }) == nil, "wrong class cannot want")
@@ -221,6 +225,56 @@ do
     check(client.items["1"].winner == A, "tied player beats the earlier lower roll")
 end
 
+-- ---- specs: only suited specs roll, locked at raid start, undo a win ------
+do
+    fresh()
+    local H, R2 = "Hunt-Realm", "Rog-Realm"
+    CLASS[H], CLASS[R2] = 3, 4
+    check(act(H, { "SPEC", "HUNTER.MM" }), "spec reported before start")
+    act(R2, { "SPEC", "ROGUE.COMBAT" })
+    act(HOST, { "PHASE", "live" })
+    check(act(H, { "SPEC", "HUNTER.SV" }) == nil, "spec locked once the raid starts")
+    check(act(HOST, { "SETSPEC", H, "HUNTER.SV" }), "officer can change a locked spec")
+    check(client.specs[H] == "HUNTER.SV", "officer change reaches clients")
+    -- A rogue leather item: the host's describe() says rogues and cats.
+    ctx.describe = function()
+        return 0, "DRUID.CAT,ROGUE.COMBAT,ROGUE.SUB"
+    end
+    act(HOST, { "ADD", "item:7000" })
+    ctx.describe = nil
+    check(client.items["1"].specs["ROGUE.COMBAT"], "suited specs travel with ADD")
+    act(HOST, { "START", "1" })
+    check(client.items["1"].specs and client.items["1"].specs["DRUID.CAT"], "specs survive START")
+    check(act(H, { "WANT", "1", 1 }) == nil, "hunter cannot want a rogue item")
+    check(act(R2, { "WANT", "1", 1 }), "rogue can")
+    local NoAddon = "Plain-Realm"
+    CLASS[NoAddon] = 4
+    act(HOST, { "CALL", "1" })
+    check(act(HOST, { "ROLLSEEN", H, 99, 1, 100 }) == nil, "hunter roll ignored")
+    check(act(HOST, { "ROLLSEEN", NoAddon, 10, 1, 100 }), "rogue without the addon: class check only")
+    act(HOST, { "ROLLSEEN", R2, 50, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].winner == R2, "suited spec wins")
+    -- Given by mistake: take it back.
+    local _, note = act(HOST, { "UNDO", "1" })
+    local it = client.items["1"]
+    check(it.state == "pending" and not it.winner and not client.locks[R2], "undo: item waits again, winner unlocked")
+    check(note:find("taken back"), "undo announced")
+    check(it.specs and it.specs["ROGUE.COMBAT"], "undo keeps the suited specs")
+    -- Nobody suited wants it: it opens to everyone, hunter included.
+    act(HOST, { "START", "1" })
+    act(HOST, { "CALL", "1" })
+    check(client.items["1"].mode == "open", "no suited wants: open to everyone")
+    check(act(H, { "WANT", "1", 1 }), "hunter can want it once open")
+    -- Officer clears the spec limit on another item.
+    act(HOST, { "ADD", "item:7001" })
+    act(HOST, { "SPECS", "2", "ROGUE.COMBAT" })
+    check(client.items["2"].specs["ROGUE.COMBAT"] and not client.items["2"].specs["DRUID.CAT"], "officer sets specs")
+    act(HOST, { "SPECS", "2", "" })
+    check(client.items["2"].specs == nil, "officer clears specs")
+    check(act(H, { "UNDO", "2" }) == nil, "only officers undo")
+end
+
 -- ---- one active item at a time ---------------------------------------------
 do
     fresh()
@@ -258,11 +312,13 @@ do
 
     fresh()
     act(A, { "RES", 9 })
+    act(A, { "SPEC", "WARRIOR.ARMS" })
     act(HOST, { "PHASE", "live" })
     act(HOST, { "OFF", B, 1 })
     for i = 1, 4 do
         act(HOST, { "ADD", "item:" .. i })
     end
+    act(HOST, { "SPECS", "3", "WARRIOR.ARMS,ROGUE.COMBAT" })
     act(HOST, { "START", "4" }) -- active item sits BEFORE finished ones in replay order? No: after.
     act(C, { "WANT", "4", 1 })
     act(HOST, { "CALL", "4" })

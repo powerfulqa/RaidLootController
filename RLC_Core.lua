@@ -201,6 +201,10 @@ function NS.ApplyOps(ops, broadcast)
     if NS.Refresh then
         NS.Refresh()
     end
+    -- A new or replayed session may not have our spec yet.
+    if S and NS.Specs and not broadcast then
+        NS.Specs.Report()
+    end
     return rejected
 end
 
@@ -251,7 +255,11 @@ function NS.HandleRequest(who, req)
         NS.Net.SendSnapshot()
         return
     end
-    local ops, note = Rules.Intent(S, who, req, { classOf = NS.ClassOf, now = GetServerTime() })
+    local ops, note = Rules.Intent(S, who, req, {
+        classOf = NS.ClassOf,
+        now = GetServerTime(),
+        describe = NS.Specs.DescribeItem,
+    })
     if not ops then
         if note and req[1] ~= "ROLLSEEN" then
             if who == NS.Me() then
@@ -294,6 +302,7 @@ function NS.NewSession(title)
     local t = GetServerTime()
     NS.ApplyOps({ { "NEW", me .. "-" .. t, me, title ~= "" and title or (GetInstanceInfo() or "Raid"), t } }, true)
     NS.Announce("New raid session. Open /rlc to reserve an item before the raid starts.")
+    NS.Specs.Report(true)
 end
 
 -- ---- events ------------------------------------------------------------------
@@ -323,12 +332,15 @@ NS.On("ADDON_LOADED", function(name)
     DB.classes = type(DB.classes) == "table" and DB.classes or {}
     DB.owed = type(DB.owed) == "table" and DB.owed or {}
     DB.catalog = type(DB.catalog) == "table" and DB.catalog or {}
+    DB.mySpec = type(DB.mySpec) == "table" and DB.mySpec or {} -- "Name-Realm" -> spec picked by hand
     if DB.announce == nil then
         DB.announce = true
     end
     DB.minQuality = tonumber(DB.minQuality) or 3
     if type(DB.session) ~= "table" or DB.session.v ~= 1 then
         DB.session = nil
+    elseif type(DB.session.specs) ~= "table" then
+        DB.session.specs = {} -- saved before specs existed
     end
     NS.DB = DB
 end)

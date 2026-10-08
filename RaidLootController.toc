@@ -12,4 +12,5 @@ RLC_Core.lua
 RLC_Net.lua
 RLC_Loot.lua
 RLC_Catalog.lua
+RLC_Specs.lua
 RLC_UI.lua

@@ -23,7 +23,7 @@ read_globals = {
     "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetLootSlotInfo", "GetLootSlotLink",
     "GetLootSourceInfo", "GetMasterLootCandidate", "GetNormalizedRealmName", "GetNumClasses",
     "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetCursorPosition", "GetMinimapShape", "GetTime", "GetTradePlayerItemLink",
-    "GiveMasterLoot", "HandleModifiedItemClick", "hooksecurefunc", "IsInGroup", "IsInGuild", "IsModifiedClick", "IsInRaid", "ITEM_CLASSES_ALLOWED",
+    "GiveMasterLoot", "MenuUtil", "C_SpecializationInfo", "C_Traits", "HandleModifiedItemClick", "hooksecurefunc", "IsInGroup", "IsInGuild", "IsModifiedClick", "IsInRaid", "ITEM_CLASSES_ALLOWED",
     "LE_PARTY_CATEGORY_INSTANCE", "NUM_BAG_SLOTS", "RANDOM_ROLL_RESULT", "RandomRoll",
     "ButtonFrameTemplate_HidePortrait", "Minimap", "UIParent", "UnitClass", "UnitFullName", "UnitIsGroupAssistant",
     "UnitIsGroupLeader", "UnitName", "canaccessvalue", "date", "strtrim", "tinsert", "wipe",

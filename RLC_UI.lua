@@ -238,8 +238,11 @@ itemName:SetWidth(340)
 local itemInfo = Text(rp)
 itemInfo:SetPoint("TOPLEFT", itemName, "BOTTOMLEFT", 0, -4)
 itemInfo:SetWidth(340)
+local specInfo = Text(rp)
+specInfo:SetPoint("TOPLEFT", itemInfo, "BOTTOMLEFT", 0, -3)
+specInfo:SetWidth(340)
 local myInfo = Text(rp, "GameFontNormalSmall")
-myInfo:SetPoint("TOPLEFT", bigIcon, "BOTTOMLEFT", 0, -8)
+myInfo:SetPoint("TOPLEFT", bigIcon, "BOTTOMLEFT", 0, -14)
 myInfo:SetWidth(380)
 
 local wantBtn = Button(rp, "I want this", 110, function()
@@ -279,26 +282,32 @@ local startBtn = adminButton("Start", 74, 0, 26, onSel("START"))
 local callBtn = adminButton("Call roll", 80, 78, 26, onSel("CALL"))
 local closeBtn = adminButton("Close roll", 84, 162, 26, onSel("CLOSE"))
 local openBtn = adminButton("Open to all", 92, 250, 26, onSel("OPEN"))
-local classBtn = adminButton("Classes", 74, 0, 0, function()
-    NS.ShowClassPicker()
+local specBtn = adminButton("Who can roll", 96, 0, 0, function(self)
+    NS.ShowSpecMenu(self)
 end)
-local awardBtn = adminButton("Give to selected", 120, 78, 0, function()
+local awardBtn = adminButton("Give to selected", 112, 100, 0, function()
     if selKey and selPlayer then
         NS.Act("AWARD", selKey, selPlayer)
     end
 end)
-local cancelBtn = adminButton("Remove item", 96, 202, 0, onSel("CANCEL"))
+local cancelBtn = adminButton("Remove item", 90, 216, 0, onSel("CANCEL"))
+local undoBtn = adminButton("Undo win", 86, 310, 0, onSel("UNDO"))
 
-local function classList(mask)
-    local names = {}
-    for id = 1, GetNumClasses() do
-        if Rules.HasClass(mask, id) then
-            local className, file = GetClassInfo(id)
-            local color = file and C_ClassColor.GetClassColor(file)
-            names[#names + 1] = color and color:WrapTextInColorCode(className) or className
-        end
-    end
-    return table.concat(names, ", ")
+-- Class-coloured, localized class name for a class token.
+local CLASS_ID = {}
+for id, token in pairs(Rules.CLASS_TOKEN) do
+    CLASS_ID[token] = id
+end
+local function classLabel(token)
+    local name = GetClassInfo(CLASS_ID[token] or 0) or token
+    local color = C_ClassColor.GetClassColor(token)
+    return color and color:WrapTextInColorCode(name) or name
+end
+NS.ClassLabel = classLabel
+
+local function specName(key)
+    local spec = key and NS.Specs.BY_KEY[key]
+    return spec and spec.name or "?"
 end
 
 local function refreshLoot(S)
@@ -337,8 +346,8 @@ local function refreshLoot(S)
     local stateText = item.state == "done"
             and ("Won by " .. NS.ColorName(item.winner) .. " (" .. (HOW_TEXT[item.how] or "") .. ")")
         or STATE_TEXT[item.state]
-    local classes = (item.classMask and item.classMask ~= 0) and (" - " .. classList(item.classMask)) or ""
-    itemInfo:SetText(stateText .. " - " .. MODE_TEXT[item.mode] .. classes)
+    itemInfo:SetText(stateText .. " - " .. MODE_TEXT[item.mode])
+    specInfo:SetText("Best for: " .. NS.Specs.Describe(item.specs, classLabel))
 
     local canWant = Rules.CanWant(S, item, me, myClass)
     local wanted = item.wants[me]
@@ -351,6 +360,12 @@ local function refreshLoot(S)
         myInfo:SetText("You rolled " .. item.rolls[me] .. ".")
     elseif canWant then
         myInfo:SetText(wanted and "You want this item." or "You can ask for this item.")
+    elseif item.mode == "normal" and item.specs and S.specs[me] and not item.specs[S.specs[me]] then
+        myInfo:SetText(
+            "|cffff8800This item is not for "
+                .. specName(S.specs[me])
+                .. ". You can roll if nobody it suits wants it.|r"
+        )
     elseif item.mode == "normal" and S.locks[me] then
         myInfo:SetText("|cffff8800You already won an item. You can roll if nobody else wants this.|r")
     else
@@ -411,94 +426,101 @@ local function refreshLoot(S)
     callBtn:SetEnabled(item.state == "interest")
     closeBtn:SetEnabled(item.state == "rolling")
     openBtn:SetEnabled(live and item.mode ~= "open")
-    classBtn:SetEnabled(not finished)
+    specBtn:SetEnabled(not finished)
     awardBtn:SetEnabled(selPlayer ~= nil and not finished)
     cancelBtn:SetEnabled(not finished)
+    undoBtn:SetEnabled(item.state == "done")
 end
 
--- ---- class picker ---------------------------------------------------------------------
+-- ---- spec menus ------------------------------------------------------------------------
 
-local picker = CreateFrame("Frame", nil, f, "BackdropTemplate")
-picker:SetSize(220, 300)
-picker:SetPoint("TOPLEFT", f, "TOPRIGHT", 4, -40)
-picker:SetBackdrop({
-    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-    edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-})
-picker:Hide()
-local pickerTitle = Text(picker, "GameFontNormal")
-pickerTitle:SetPoint("TOP", 0, -10)
-pickerTitle:SetText("Who can roll?")
-local checks = {}
-
-local function pickerMask()
-    local mask = 0
-    for id, cb in pairs(checks) do
-        if cb:GetChecked() then
-            mask = mask + Rules.ClassBit(id)
-        end
-    end
-    return mask
-end
-
-local function setPicker(mask)
-    for id, cb in pairs(checks) do
-        cb:SetChecked(mask ~= 0 and Rules.HasClass(mask, id))
-    end
-end
-
-local function buildPicker()
-    local y = -30
-    for id = 1, GetNumClasses() do
-        local className, file = GetClassInfo(id)
-        if className then
-            local cb = CreateFrame("CheckButton", nil, picker, "UICheckButtonTemplate")
-            cb:SetSize(22, 22)
-            cb:SetPoint("TOPLEFT", 14, y)
-            local label = Text(cb)
-            label:SetPoint("LEFT", cb, "RIGHT", 2, 0)
-            local color = file and C_ClassColor.GetClassColor(file)
-            label:SetText(color and color:WrapTextInColorCode(className) or className)
-            checks[id] = cb
-            y = y - 20
-        end
-    end
-    picker:SetHeight(-y + 74)
-    local fromTip = Button(picker, "From tooltip", 96, function()
-        setPicker(Loot.TooltipClassMask(picker.itemString))
-    end)
-    fromTip:SetPoint("BOTTOMLEFT", 10, 36)
-    local any = Button(picker, "Any class", 96, function()
-        setPicker(0)
-    end)
-    any:SetPoint("LEFT", fromTip, "RIGHT", 4, 0)
-    local ok = Button(picker, "Apply", 96, function()
-        if picker.key then
-            NS.Act("CLASS", picker.key, pickerMask())
-        end
-        picker:Hide()
-    end)
-    ok:SetPoint("BOTTOMLEFT", 10, 10)
-    local cancel = Button(picker, CANCEL, 96, function()
-        picker:Hide()
-    end)
-    cancel:SetPoint("LEFT", ok, "RIGHT", 4, 0)
-end
-
-function NS.ShowClassPicker()
+-- Officers: which specs may roll for the selected item. Each tick takes
+-- effect at once. "Suggested" re-runs the item rules; "Any spec" lifts the
+-- limit.
+function NS.ShowSpecMenu(owner)
     local S = NS.S()
     local item = S and selKey and S.items[selKey]
     if not item then
         return
     end
-    if not next(checks) then
-        buildPicker()
+    local function send(set)
+        NS.Act("SPECS", item.key, Rules.SpecsToCSV(set))
     end
-    picker.key, picker.itemString = item.key, item.itemString
-    setPicker(item.classMask or 0)
-    picker:Show()
+    local function currentSpecs()
+        local now = {}
+        for k in pairs(item.specs or {}) do
+            now[k] = true
+        end
+        return now
+    end
+    MenuUtil.CreateContextMenu(owner, function(_, root)
+        root:CreateTitle("Who can roll")
+        root:CreateButton("Suggested for this item", function()
+            local _, csv = NS.Specs.DescribeItem(item.itemString)
+            send(Rules.CSVToSpecs(csv) or {})
+        end)
+        root:CreateButton("Any spec", function()
+            send({})
+        end)
+        local byClass, order = {}, {}
+        for _, spec in ipairs(NS.Specs.LIST) do
+            if not byClass[spec.class] then
+                byClass[spec.class] = {}
+                order[#order + 1] = spec.class
+            end
+            table.insert(byClass[spec.class], spec)
+        end
+        for _, token in ipairs(order) do
+            local sub = root:CreateButton(classLabel(token))
+            for _, spec in ipairs(byClass[token]) do
+                sub:CreateCheckbox(spec.name, function()
+                    return item.specs ~= nil and item.specs[spec.key] == true
+                end, function()
+                    local now = currentSpecs()
+                    now[spec.key] = not now[spec.key] or nil
+                    send(now)
+                end)
+            end
+        end
+    end)
+end
+
+-- Pick a spec for one player: yourself (stored on this character and sent
+-- to the host), or, for officers, anyone in the raid.
+local function showPlayerSpecMenu(owner, name)
+    local me = NS.Me()
+    local token = name == me and select(2, UnitClass("player")) or Rules.CLASS_TOKEN[NS.ClassOf(name) or 0]
+    if not token then
+        NS.Print("Can't tell that player's class.")
+        return
+    end
+    MenuUtil.CreateContextMenu(owner, function(_, root)
+        root:CreateTitle(NS.Short(name) .. " - spec")
+        if name == me then
+            root:CreateRadio("From my talents", function()
+                return NS.DB.mySpec[me] == nil
+            end, function()
+                NS.Specs.Choose(nil)
+            end)
+        end
+        for _, spec in ipairs(NS.Specs.LIST) do
+            if spec.class == token then
+                root:CreateRadio(spec.name, function()
+                    local S = NS.S()
+                    if name == me then
+                        return NS.DB.mySpec[me] == spec.key
+                    end
+                    return S ~= nil and S.specs[name] == spec.key
+                end, function()
+                    if name == me then
+                        NS.Specs.Choose(spec.key)
+                    else
+                        NS.Act("SETSPEC", name, spec.key)
+                    end
+                end)
+            end
+        end
+    end)
 end
 
 -- ---- Raid page ----------------------------------------------------------------------
@@ -588,11 +610,20 @@ if ChatEdit_InsertLink then
     hooksecurefunc("ChatEdit_InsertLink", onInsertLink)
 end
 
-local players = List(rpg, 690, 220, { 120, 230, 60, 110, 70 }, false, function(name)
+-- Your spec, from talents or picked by hand.
+local mySpecLabel = Text(rpg, "GameFontNormal")
+mySpecLabel:SetPoint("TOPLEFT", 420, -62)
+mySpecLabel:SetWidth(270)
+local mySpecBtn = Button(rpg, "Change spec", 110, function(self)
+    showPlayerSpecMenu(self, NS.Me())
+end)
+mySpecBtn:SetPoint("TOPLEFT", mySpecLabel, "BOTTOMLEFT", 0, -4)
+
+local players = List(rpg, 690, 205, { 110, 90, 170, 50, 100, 70 }, false, function(name)
     raidSel = name
     NS.Refresh()
 end)
-players.frame:SetPoint("TOPLEFT", 4, -116)
+players.frame:SetPoint("TOPLEFT", 4, -131)
 players.onEnter = function(row, name)
     local S = NS.S()
     local id = S and S.reserves[name]
@@ -615,6 +646,12 @@ local offBtn = Button(rpg, "Make officer", 110, function()
     end
 end)
 offBtn:SetPoint("LEFT", lockBtn, "RIGHT", 6, 0)
+local setSpecBtn = Button(rpg, "Set spec", 90, function(self)
+    if raidSel then
+        showPlayerSpecMenu(self, raidSel)
+    end
+end)
+setSpecBtn:SetPoint("LEFT", offBtn, "RIGHT", 6, 0)
 local owedText = Text(rpg)
 owedText:SetPoint("TOPLEFT", lockBtn, "BOTTOMLEFT", 0, -8)
 owedText:SetWidth(680)
@@ -682,14 +719,16 @@ local function refreshRaid(S)
         r.data = name
         r.cols[1]:SetText(NS.ColorName(name) .. (NS.roster[name] and "" or " |cff999999(left)|r"))
         local res = S and S.reserves[name]
-        r.cols[2]:SetText(res and NS.LinkOf("item:" .. res) or "")
-        r.cols[3]:SetText(won[name] and (won[name] .. " won") or "")
+        local spec = S and S.specs[name]
+        r.cols[2]:SetText(spec and specName(spec) or "|cff999999-|r")
+        r.cols[3]:SetText(res and NS.LinkOf("item:" .. res) or "")
+        r.cols[4]:SetText(won[name] and (won[name] .. " won") or "")
         local status = ""
         if S then
             status = S.locks[name] and "|cffff8800Has an item|r" or "|cff00ff00Can roll|r"
         end
-        r.cols[4]:SetText(status)
-        r.cols[5]:SetText(S and (S.host == name and "Host" or (S.officers[name] and "Officer")) or "")
+        r.cols[5]:SetText(status)
+        r.cols[6]:SetText(S and (S.host == name and "Host" or (S.officers[name] and "Officer")) or "")
         return name == raidSel
     end)
 
@@ -699,6 +738,20 @@ local function refreshRaid(S)
     offBtn:SetShown(NS.IsHost())
     offBtn:SetEnabled(raidSel ~= nil and raidSel ~= me)
     offBtn:SetText((S and raidSel and S.officers[raidSel]) and "Remove officer" or "Make officer")
+    setSpecBtn:SetShown(officer)
+    setSpecBtn:SetEnabled(raidSel ~= nil)
+
+    -- Own spec: what we would report, and what the raid has on record.
+    local mySpec, picked = NS.Specs.Mine()
+    local onRecord = S and S.specs[me]
+    local line = "Your spec: "
+        .. (mySpec and specName(mySpec) or "|cffff8800unknown, pick one|r")
+        .. (mySpec and (picked and " (picked)" or " (from talents)") or "")
+    if onRecord and onRecord ~= mySpec then
+        line = line .. "\n|cffff8800Raid has you as " .. specName(onRecord) .. " (locked).|r"
+    end
+    mySpecLabel:SetText(line)
+    mySpecLabel:SetWordWrap(true)
 
     local parts = {}
     for name, list in pairs(NS.DB.owed) do
