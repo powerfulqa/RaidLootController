@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: |cffff8800Raid Loot Controller|r
+## Notes: Fair raid loot without DKP: soft reserves, server-verified rolls, one item each before anyone gets two, and a full raid history.
+## Author: Serv
+## Version: v0.1.0
+## SavedVariables: RaidLootControllerDB
+## IconTexture: Interface\Icons\INV_Misc_Bag_10
+## AddonCompartmentFunc: RaidLootController_OnAddonCompartmentClick
+
+RLC_Rules.lua
+RLC_Core.lua
+RLC_Net.lua
+RLC_Loot.lua
+RLC_Catalog.lua
+RLC_UI.lua
