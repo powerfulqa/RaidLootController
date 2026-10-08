@@ -383,6 +383,9 @@ SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
     elseif cmd == "sync" then
         NS.RequestSync(0)
         NS.Print("Asked the raid host for the current session.")
+    elseif cmd == "minimap" then
+        NS.SetMinimapButton(NS.DB.minimapButton == false)
+        NS.Print("Minimap button %s.", NS.DB.minimapButton == false and "hidden" or "shown")
     elseif cmd == "owed" then
         wipe(NS.DB.owed)
         NS.Print("Cleared the list of items still to trade.")
@@ -397,6 +400,7 @@ SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
         NS.Print("/rlc sync - fetch the session from the raid host")
         NS.Print("/rlc announce - turn raid chat announcements on or off (host)")
         NS.Print("/rlc owed - clear the list of items still to trade (host)")
+        NS.Print("/rlc minimap - hide or show the minimap button")
     end
 end
 

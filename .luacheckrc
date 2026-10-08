@@ -22,10 +22,10 @@ read_globals = {
     "CreateFrame", "DEFAULT_CHAT_FRAME", "Enum", "ERR_TRADE_COMPLETE", "GameTooltip", "GameTooltip_Hide",
     "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetLootSlotInfo", "GetLootSlotLink",
     "GetLootSourceInfo", "GetMasterLootCandidate", "GetNormalizedRealmName", "GetNumClasses",
-    "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetTime", "GetTradePlayerItemLink",
+    "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetCursorPosition", "GetMinimapShape", "GetTime", "GetTradePlayerItemLink",
     "GiveMasterLoot", "HandleModifiedItemClick", "hooksecurefunc", "IsInGroup", "IsInGuild", "IsModifiedClick", "IsInRaid", "ITEM_CLASSES_ALLOWED",
     "LE_PARTY_CATEGORY_INSTANCE", "NUM_BAG_SLOTS", "RANDOM_ROLL_RESULT", "RandomRoll",
-    "ButtonFrameTemplate_HidePortrait", "UIParent", "UnitClass", "UnitFullName", "UnitIsGroupAssistant",
+    "ButtonFrameTemplate_HidePortrait", "Minimap", "UIParent", "UnitClass", "UnitFullName", "UnitIsGroupAssistant",
     "UnitIsGroupLeader", "UnitName", "canaccessvalue", "date", "strtrim", "tinsert", "wipe",
 }
 files["tests/*.lua"] = { std = "lua51" }

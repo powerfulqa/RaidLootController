@@ -1037,3 +1037,105 @@ function NS.Toggle()
         NS.Show()
     end
 end
+
+-- ---- minimap button ------------------------------------------------------------------
+-- Left-click opens the window, right-click opens the Catalogue, drag to move
+-- it round the minimap edge. /rlc minimap hides or shows it. Same shape as
+-- the WoWClearance button, which is measured working on this client.
+
+local EDGE = 10 -- how far outside the minimap edge the button sits
+
+local function placeButton(btn)
+    local angle = math.rad(NS.DB.minimapAngle or 200)
+    local rx = (Minimap:GetWidth() or 0) > 0 and Minimap:GetWidth() / 2 + EDGE or 80
+    local ry = (Minimap:GetHeight() or 0) > 0 and Minimap:GetHeight() / 2 + EDGE or 80
+    local x, y = math.cos(angle) * rx, math.sin(angle) * ry
+    -- A square minimap needs the button clamped to its edges, not a circle.
+    if ((GetMinimapShape and GetMinimapShape()) or "ROUND") ~= "ROUND" then
+        x = math.max(-rx, math.min(x * math.sqrt(2), rx))
+        y = math.max(-ry, math.min(y * math.sqrt(2), ry))
+    end
+    btn:ClearAllPoints()
+    btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
+end
+
+local mmButton
+local function createMinimapButton()
+    -- Not created at all when hidden: parenting a frame to the minimap is
+    -- itself what some minimap replacements react badly to.
+    if mmButton or NS.DB.minimapButton == false then
+        return
+    end
+    local btn = CreateFrame("Button", "RaidLootControllerMinimapButton", Minimap)
+    mmButton = btn
+    btn:SetSize(31, 31)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetFrameLevel(8)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:RegisterForDrag("LeftButton")
+
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Background")
+    bg:SetSize(53, 53)
+    bg:SetPoint("CENTER", -1, 1)
+    local icon = btn:CreateTexture(nil, "ARTWORK")
+    icon:SetTexture(133639) -- inv_misc_bag_10, same as the .toc icon
+    icon:SetSize(20, 20)
+    icon:SetPoint("CENTER")
+    local border = btn:CreateTexture(nil, "OVERLAY")
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    border:SetSize(53, 53)
+    border:SetPoint("CENTER", 10, -10)
+    btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+    btn:SetScript("OnDragStart", function(self)
+        self:SetScript("OnUpdate", function()
+            local mx, my = Minimap:GetCenter()
+            local scale = Minimap:GetEffectiveScale()
+            local cx, cy = GetCursorPosition()
+            NS.DB.minimapAngle = math.deg(math.atan2(cy / scale - my, cx / scale - mx))
+            placeButton(self)
+        end)
+    end)
+    btn:SetScript("OnDragStop", function(self)
+        self:SetScript("OnUpdate", nil)
+    end)
+    btn:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            current = "catalog"
+            NS.Show()
+        else
+            NS.Toggle()
+        end
+    end)
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine("Raid Loot Controller")
+        local S = NS.S()
+        if S then
+            GameTooltip:AddLine((S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or ""), 1, 1, 1)
+            local item = S.active and S.items[S.active]
+            if item then
+                GameTooltip:AddLine("Up now: " .. NS.LinkOf(item.itemString), 1, 1, 1)
+            end
+        end
+        GameTooltip:AddLine("Left-click: open  |  Right-click: catalogue  |  Drag: move", 0.6, 0.6, 0.6)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", GameTooltip_Hide)
+    placeButton(btn)
+end
+
+function NS.SetMinimapButton(show)
+    NS.DB.minimapButton = show
+    if show then
+        createMinimapButton()
+        if mmButton then
+            mmButton:Show()
+        end
+    elseif mmButton then
+        mmButton:Hide()
+    end
+end
+
+NS.On("PLAYER_LOGIN", createMinimapButton)

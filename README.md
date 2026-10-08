@@ -55,6 +55,9 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc sync` | Fetch the session from the raid host |
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |
+| `/rlc minimap` | Hide or show the minimap button |
+
+The minimap button opens the window (left-click) or the loot catalogue (right-click). Drag it to move it around the minimap.
 
 ## Install
 
