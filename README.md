@@ -75,6 +75,9 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |
 | `/rlc minimap` | Hide or show the minimap button |
+| `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |
+
+The **Help** tab answers the common questions, with a search box. Click any column name to sort a list by it; click again to reverse.
 
 The minimap button opens the window (left-click) or the loot catalogue (right-click). Drag it to move it around the minimap.
 
@@ -88,6 +91,7 @@ Copy the `RaidLootController` folder into `Interface/AddOns`. Everyone in the ra
 lua tests/test_rules.lua          # rules suite (stock lua5.1)
 lua tests/test_catalog.lua        # catalogue data and sync merge
 lua tests/test_specs.lua          # which specs an item suits
+lua tests/test_demo.lua           # demo mode builds cleanly
 luacheck *.lua tests/*.lua        # 0 warnings
 stylua --check *.lua tests/*.lua
 ```

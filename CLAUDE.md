@@ -18,6 +18,8 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Loot.lua` | Roll lines from `CHAT_MSG_SYSTEM`, loot window, master loot, trade delivery, tooltip class line. |
 | `RLC_Catalog.lua` | Loot catalogue by instance and boss. Pure data functions on top (`Record`, `CountKill`, `Digest`, `InstanceOps`, `ApplyOp`), event glue and guild/group sync (prefix `RLCC`) below. |
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
+| `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). Update it with any player-facing change. |
+| `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
 | `RLC_UI.lua` | The window (Loot, Raid, History, Catalogue tabs), the spec menus and the minimap button. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
@@ -38,10 +40,15 @@ only from the session host (and `NEW` only from a leader or assistant).
   event name throws and aborts the rest of the file.
 - Read the porting lessons in `~/Projects/WoWClearance/docs/PORT_STATUS.md`
   before assuming anything about this client.
+- **Forever has character surnames.** The game spells a player as "Serv"
+  (UnitName, with the surname as its SECOND return where retail puts the
+  realm) and as "Serv Aszune" (roll lines, likely other chat). Never
+  compare raw names: run every name read from the game through
+  `NS.Canon`, and name units with `NS.UnitIdentity`. Measured 2026-10-09.
 - Wire input is untrusted: validate in `Rules.Apply` / `Rules.Intent`, never
   in the UI.
 - Player-facing text is short and plain. No em dashes (U+2014) anywhere.
-- Before committing: `lua tests/test_rules.lua`, `lua tests/test_catalog.lua`, `lua tests/test_specs.lua`,
+- Before committing: `lua tests/test_rules.lua`, `lua tests/test_catalog.lua`, `lua tests/test_specs.lua`, `lua tests/test_demo.lua`,
   `luacheck *.lua tests/*.lua` (0 warnings), `stylua --check *.lua tests/*.lua`.
 - Two addon-message prefixes: `RLC1` (live session) and `RLCC` (catalogue),
   so a catalogue upload never takes the send budget live rolls need.

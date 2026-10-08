@@ -73,6 +73,8 @@ end
 do
     local pat = R.FormatPattern("%s rolls %d (%d-%d)")
     local n, roll, lo, hi = R.ParseRoll("Ann rolls 57 (1-100)", pat)
+    local sn = R.ParseRoll("Serv Aszune rolls 2 (1-100)", pat)
+    check(sn == "Serv Aszune", "roll line keeps the surname (Forever)")
     check(n == "Ann" and roll == 57 and lo == 1 and hi == 100, "parses an English roll line")
     check(R.ParseRoll("Ann says hi", pat) == nil, "ignores other system lines")
     local de = R.FormatPattern("%1$s w\195\188rfelt. Ergebnis: %2$d (%3$d-%4$d)")
@@ -84,6 +86,8 @@ end
 do
     fresh()
     check(R.Apply(host, { "LOCK", "NoRealm", 1 }) == nil, "rejects a name without realm")
+    check(R.ValidName("Serv Aszune-ClassicBetaPvE"), "accepts a Forever name with a surname")
+    check(not R.ValidName("A B C-Realm") and not R.ValidName(" Serv-Realm"), "rejects odd spacing")
     check(R.Apply(host, { "ADD", "1", "|cff|Hitem:1|h[x]|h|r" }) == nil, "rejects a raw link on the wire")
     check(R.Apply(host, { "ROLL", "1", A, 50 }) == nil, "rejects an op on an unknown item")
     check(R.Intent(host, A, { "ADD", "item:19019" }, ctx) == nil, "non-officer cannot add items")

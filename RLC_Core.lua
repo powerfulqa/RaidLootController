@@ -23,10 +23,23 @@ function NS.Print(fmt, ...)
 end
 
 -- ---- names -----------------------------------------------------------------
--- Everything inside the addon uses "Name-Realm". Chat shows same-realm
--- players without a realm, so a bare name gets ours.
+-- Everything inside the addon names a player one way: "Display-Realm",
+-- where Display is "First Surname" on a client with surnames.
+--
+-- Forever has character surnames, and the game does not spell a name the
+-- same way everywhere: roll lines say "Serv Aszune", while UnitName returns
+-- "Serv" plus the surname as its SECOND value (where retail returns the
+-- realm). So every name read from the game goes through NS.Canon, which
+-- maps any spelling of a group member (first name, first + surname, with
+-- or without realm) to their one canonical name. Measured 2026-10-09: a
+-- roll line "Serv Aszune rolls 2 (1-100)" did not match "Serv-Realm".
 
 local myRealm
+local function realm()
+    myRealm = myRealm or (GetNormalizedRealmName() or ""):gsub("[%s%-]", "")
+    return myRealm
+end
+
 function NS.Full(name)
     if type(name) ~= "string" or name == "" then
         return nil
@@ -34,12 +47,71 @@ function NS.Full(name)
     if name:find("-", 1, true) then
         return name
     end
-    myRealm = myRealm or GetNormalizedRealmName()
-    return myRealm and (name .. "-" .. myRealm) or nil
+    return realm() ~= "" and (name .. "-" .. realm()) or nil
 end
 
+local SEP = Constants
+        and Constants.CharacterNameSeparatorConsts
+        and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR
+    or " "
+
+-- Canonical name and first name of a unit, or nil.
+local function unitIdentity(unit)
+    local first, second = UnitName(unit)
+    if type(first) ~= "string" or first == "" then
+        return nil
+    end
+    local _, unitRealm = UnitFullName(unit)
+    local surnames = RegionalUniqueNamesEnabled and RegionalUniqueNamesEnabled()
+    local display = first
+    if surnames and type(second) == "string" and second ~= "" and not first:find(SEP, 1, true) then
+        display = first .. SEP .. second
+    end
+    unitRealm = (type(unitRealm) == "string" and unitRealm ~= "" and unitRealm ~= second) and unitRealm or realm()
+    unitRealm = unitRealm:gsub("[%s%-]", "")
+    return display .. "-" .. unitRealm, (display:match("^([^" .. SEP .. "]+)") or display)
+end
+NS.UnitIdentity = unitIdentity
+
+-- lower-case spelling -> canonical name, for everyone in the group. A bare
+-- first name maps only when no one else in the group shares it.
+local aliases = {}
+
+local function addAliases(canon, first)
+    local display = canon:match("^(.+)%-[^%-]+$") or canon
+    local r = canon:match("%-([^%-]+)$") or ""
+    for _, a in ipairs({ canon, display, first, first .. "-" .. r }) do
+        local k = a:lower()
+        if aliases[k] == nil or aliases[k] == canon then
+            aliases[k] = canon
+        else
+            aliases[k] = false -- two players share this spelling
+        end
+    end
+end
+
+-- Any spelling of a player's name -> the canonical name.
+function NS.Canon(name)
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+    local hit = aliases[name:lower()]
+    if hit then
+        return hit
+    end
+    -- "First Surname-Realm" where the realm part differs in spacing.
+    local bare = name:match("^(.-)%-") or name
+    hit = aliases[bare:lower()]
+    if hit then
+        return hit
+    end
+    return NS.Full(name)
+end
+
+local myName
 function NS.Me()
-    return NS.Full(UnitName("player"))
+    myName = myName or unitIdentity("player")
+    return myName
 end
 
 function NS.Short(name)
@@ -56,6 +128,8 @@ NS.roster = roster
 
 function NS.RefreshRoster()
     wipe(roster)
+    wipe(aliases)
+    myName = nil
     local units = {}
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do
@@ -68,23 +142,24 @@ function NS.RefreshRoster()
         end
     end
     for _, unit in ipairs(units) do
-        local name, realm = UnitFullName(unit)
-        if name then
-            local full = (realm and realm ~= "") and (name .. "-" .. realm) or NS.Full(name)
+        local full, first = unitIdentity(unit)
+        if full then
+            addAliases(full, first)
             local _, classFile, classID = UnitClass(unit)
-            if full then
-                roster[full] = {
-                    unit = unit,
-                    classID = classID,
-                    classFile = classFile,
-                    lead = UnitIsGroupLeader(unit),
-                    assist = UnitIsGroupAssistant(unit),
-                }
-                if classFile and NS.DB then
-                    NS.DB.classes[full] = classFile
-                end
+            roster[full] = {
+                unit = unit,
+                classID = classID,
+                classFile = classFile,
+                lead = UnitIsGroupLeader(unit),
+                assist = UnitIsGroupAssistant(unit),
+            }
+            if classFile and NS.DB then
+                NS.DB.classes[full] = classFile
             end
         end
+    end
+    if NS.Demo and NS.Demo.active then
+        NS.Demo.AddRoster(roster) -- fake raiders stay listed in demo mode
     end
 end
 
@@ -237,7 +312,8 @@ end
 -- only addon users print. Never both, or addon users read it twice.
 function NS.Announce(text, itemString)
     local line = itemString and (NS.LinkOf(itemString) .. " - " .. text) or text
-    if NS.DB.announce and IsInGroup() and not C_ChatInfo.InChatMessagingLockdown() then
+    local demo = NS.Demo and NS.Demo.active
+    if NS.DB.announce and not demo and IsInGroup() and not C_ChatInfo.InChatMessagingLockdown() then
         C_ChatInfo.SendChatMessage(line, IsInRaid() and "RAID" or "PARTY")
     else
         NS.Print(line)
@@ -261,11 +337,16 @@ function NS.HandleRequest(who, req)
         describe = NS.Specs.DescribeItem,
     })
     if not ops then
-        if note and req[1] ~= "ROLLSEEN" then
-            if who == NS.Me() then
+        -- A refused roll is told to the player who rolled, not the host.
+        local to = req[1] == "ROLLSEEN" and req[2] or who
+        if NS.debug and req[1] == "ROLLSEEN" then
+            NS.Print("debug: roll from %s refused: %s", tostring(req[2]), tostring(note))
+        end
+        if note and to then
+            if to == NS.Me() then
                 NS.Print(note)
             else
-                NS.Net.Queue({ "ERR", who, note })
+                NS.Net.Queue({ "ERR", to, note })
             end
         end
         return
@@ -395,6 +476,11 @@ SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
     elseif cmd == "sync" then
         NS.RequestSync(0)
         NS.Print("Asked the raid host for the current session.")
+    elseif cmd == "demo" then
+        NS.Demo.Toggle()
+    elseif cmd == "debug" then
+        NS.debug = not NS.debug or nil
+        NS.Print("Debug output %s.", NS.debug and "on" or "off")
     elseif cmd == "minimap" then
         NS.SetMinimapButton(NS.DB.minimapButton == false)
         NS.Print("Minimap button %s.", NS.DB.minimapButton == false and "hidden" or "shown")
@@ -413,6 +499,7 @@ SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
         NS.Print("/rlc announce - turn raid chat announcements on or off (host)")
         NS.Print("/rlc owed - clear the list of items still to trade (host)")
         NS.Print("/rlc minimap - hide or show the minimap button")
+        NS.Print("/rlc demo - fill the window with a fake raid to look around (nothing is sent or saved)")
     end
 end
 

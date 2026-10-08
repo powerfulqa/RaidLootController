@@ -14,3 +14,5 @@ RLC_Loot.lua
 RLC_Catalog.lua
 RLC_Specs.lua
 RLC_UI.lua
+RLC_Help.lua
+RLC_Demo.lua

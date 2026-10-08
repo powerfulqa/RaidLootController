@@ -23,7 +23,7 @@ local MODE_TEXT = {
 }
 local HOW_TEXT = { roll = "roll", open = "open roll", reserve = "reserve", manual = "given" }
 local PHASE_TEXT = {
-    reserve = "|cff66ccffTaking reserves|r",
+    reserve = "|cff66ccffReserves open|r",
     live = "|cff00ff00Raid in progress|r",
     ended = "|cff999999Ended|r",
 }
@@ -53,7 +53,8 @@ end
 
 -- Scrolling list of clickable rows. `cols` is a list of column widths; an
 -- optional icon goes before the first column.
-local function List(parent, w, h, cols, withIcon, onClick)
+-- `headers` (optional) labels the columns, in a row just above the list.
+local function List(parent, w, h, cols, withIcon, onClick, headers)
     local sf = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
     sf:SetSize(w - 24, h)
     local child = CreateFrame("Frame", nil, sf)
@@ -65,7 +66,84 @@ local function List(parent, w, h, cols, withIcon, onClick)
     bg:SetColorTexture(0, 0, 0, 0.35)
 
     local rows = {}
-    local list = { frame = sf }
+    local list = { frame = sf, headers = {} }
+
+    -- Column labels. They become sort buttons once the caller sorts with
+    -- list:Sort; click once to sort, again to reverse.
+    if headers then
+        local x = withIcon and (ROW + 4) or 2
+        for c, cw in ipairs(cols) do
+            if headers[c] and headers[c] ~= "" then
+                local hdr = CreateFrame("Button", nil, sf)
+                hdr:SetSize(cw, 14)
+                hdr:SetPoint("BOTTOMLEFT", sf, "TOPLEFT", x, 4)
+                hdr:EnableMouse(false)
+                hdr.text = hdr:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                hdr.text:SetPoint("LEFT")
+                hdr.text:SetText(headers[c])
+                hdr.arrow = hdr:CreateTexture(nil, "OVERLAY")
+                hdr.arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+                hdr.arrow:SetSize(9, 8)
+                hdr.arrow:SetPoint("LEFT", hdr.text, "RIGHT", 3, 0)
+                hdr.arrow:Hide()
+                hdr:SetScript("OnClick", function()
+                    if list.sortCol == c then
+                        list.desc = not list.effDesc
+                    else
+                        list.sortCol, list.desc = c, nil
+                    end
+                    NS.Refresh()
+                end)
+                list.headers[c] = hdr
+            end
+            x = x + cw + 4
+        end
+    end
+
+    -- Reorder `arr` in place by the clicked column. keys[c](entry) gives a
+    -- number or a string for column c; columns without a key don't sort.
+    -- First click: numbers high to low, text A to Z. Ties keep the order the
+    -- caller built, so the default order is the tie-breaker.
+    function list:Sort(arr, keys)
+        for c, hdr in pairs(self.headers) do
+            hdr:EnableMouse(keys[c] ~= nil)
+            hdr.arrow:SetShown(c == self.sortCol and keys[c] ~= nil)
+        end
+        local key = self.sortCol and keys[self.sortCol]
+        if not key then
+            return
+        end
+        local vals, pos = {}, {}
+        for i, e in ipairs(arr) do
+            local v = key(e)
+            if type(v) == "string" then
+                v = v:lower()
+            end
+            vals[e], pos[e] = v, i
+        end
+        local sample = vals[arr[1]]
+        local desc = self.desc
+        if desc == nil then
+            desc = type(sample) == "number"
+        end
+        self.effDesc = desc
+        table.sort(arr, function(a, b)
+            local va, vb = vals[a], vals[b]
+            if va == vb or type(va) ~= type(vb) then
+                return pos[a] < pos[b]
+            end
+            if desc then
+                return va > vb
+            end
+            return va < vb
+        end)
+        -- Blizzard's sort arrow points up; flipped for high to low.
+        if desc then
+            self.headers[self.sortCol].arrow:SetTexCoord(0, 0.5625, 1, 0)
+        else
+            self.headers[self.sortCol].arrow:SetTexCoord(0, 0.5625, 0, 1)
+        end
+    end
     local function build(i)
         local r = CreateFrame("Button", nil, child)
         r:SetHeight(ROW)
@@ -173,39 +251,46 @@ local function showPage(key)
     NS.Refresh()
 end
 
-for i, def in ipairs({ { "loot", "Loot" }, { "raid", "Raid" }, { "history", "History" }, { "catalog", "Catalogue" } }) do
+local TABS = {
+    { "loot", "Loot" },
+    { "raid", "Raid" },
+    { "history", "History" },
+    { "catalog", "Catalogue" },
+    { "help", "Help" },
+}
+for i, def in ipairs(TABS) do
     local b = Button(f, def[2], 100, function()
         showPage(def[1])
     end)
     b:SetPoint("TOPLEFT", 12 + (i - 1) * 104, -30)
     tabs[def[1]] = b
 end
+NS.ShowPage = function(key)
+    current = key
+    NS.Show()
+end
 
-local sessionLine = Text(f, "GameFontNormalSmall", "RIGHT")
-sessionLine:SetPoint("TOPRIGHT", -16, -36)
-sessionLine:SetWidth(380)
+-- RLC_Help.lua fills this page.
+NS.helpPage = page("help")
 
 -- ---- Loot page ----------------------------------------------------------------------
 
 local lp = page("loot")
 local selKey, selPlayer
 
-local queueTitle = Text(lp, "GameFontNormal")
-queueTitle:SetPoint("TOPLEFT", 0, 0)
-queueTitle:SetText("Items")
-
 local queue = List(lp, 280, 300, { 150, 90 }, true, function(item)
     selKey = item.key
     selPlayer = nil
     NS.Refresh()
-end)
+end, { "Item", "Status" })
 queue.frame:SetPoint("TOPLEFT", 4, -20)
+queue.frame:SetPoint("BOTTOMLEFT", lp, "BOTTOMLEFT", 4, 62)
 queue.onEnter = function(row, item)
     ItemTooltip(row, item.itemString)
 end
 
 local dropHint = Text(lp, "GameFontDisableSmall")
-dropHint:SetPoint("TOPLEFT", queue.frame, "BOTTOMLEFT", 0, -10)
+dropHint:SetPoint("BOTTOMLEFT", 0, 28)
 dropHint:SetWidth(270)
 dropHint:SetWordWrap(true)
 dropHint:SetText("Officers: drop an item from your bags on this window, or open a loot window, to add it.")
@@ -213,11 +298,18 @@ dropHint:SetText("Officers: drop an item from your bags on this window, or open 
 local addLootBtn = Button(lp, "Add from loot", 130, function()
     Loot.AddFromWindow()
 end)
-addLootBtn:SetPoint("TOPLEFT", dropHint, "BOTTOMLEFT", 0, -6)
+addLootBtn:SetPoint("BOTTOMLEFT", 0, 0)
 
 -- Right side: the selected item.
+-- Shown on the right while there is no item to show.
+local emptyText = Text(lp, "GameFontHighlight")
+emptyText:SetPoint("TOPLEFT", 310, -30)
+emptyText:SetWidth(370)
+emptyText:SetWordWrap(true)
+emptyText:SetSpacing(4)
+
 local rp = CreateFrame("Frame", nil, lp)
-rp:SetPoint("TOPLEFT", 300, 0)
+rp:SetPoint("TOPLEFT", 300, -8)
 rp:SetPoint("BOTTOMRIGHT")
 
 local bigIcon = CreateFrame("Button", nil, rp)
@@ -259,8 +351,9 @@ rollBtn:SetPoint("LEFT", wantBtn, "RIGHT", 6, 0)
 local people = List(rp, 390, 190, { 130, 150, 50 }, false, function(name)
     selPlayer = name
     NS.Refresh()
-end)
-people.frame:SetPoint("TOPLEFT", wantBtn, "BOTTOMLEFT", 4, -10)
+end, { "Player", "Interest", "Roll" })
+people.frame:SetPoint("TOPLEFT", wantBtn, "BOTTOMLEFT", 4, -24)
+people.frame:SetPoint("BOTTOMLEFT", rp, "BOTTOMLEFT", 4, 58)
 
 -- Officer controls.
 local admin = CreateFrame("Frame", nil, rp)
@@ -278,20 +371,22 @@ local function onSel(kind)
         end
     end
 end
-local startBtn = adminButton("Start", 74, 0, 26, onSel("START"))
-local callBtn = adminButton("Call roll", 80, 78, 26, onSel("CALL"))
-local closeBtn = adminButton("Close roll", 84, 162, 26, onSel("CLOSE"))
-local openBtn = adminButton("Open to all", 92, 250, 26, onSel("OPEN"))
-local specBtn = adminButton("Who can roll", 96, 0, 0, function(self)
+-- Two rows of four equal buttons that fill the panel width.
+local BW, BX = 96, 100
+local startBtn = adminButton("Start", BW, 0, 26, onSel("START"))
+local callBtn = adminButton("Call roll", BW, BX, 26, onSel("CALL"))
+local closeBtn = adminButton("Close roll", BW, BX * 2, 26, onSel("CLOSE"))
+local openBtn = adminButton("Open to all", BW, BX * 3, 26, onSel("OPEN"))
+local specBtn = adminButton("Who can roll", BW, 0, 0, function(self)
     NS.ShowSpecMenu(self)
 end)
-local awardBtn = adminButton("Give to selected", 112, 100, 0, function()
+local awardBtn = adminButton("Give to player", BW, BX, 0, function()
     if selKey and selPlayer then
         NS.Act("AWARD", selKey, selPlayer)
     end
 end)
-local cancelBtn = adminButton("Remove item", 90, 216, 0, onSel("CANCEL"))
-local undoBtn = adminButton("Undo win", 86, 310, 0, onSel("UNDO"))
+local cancelBtn = adminButton("Remove item", BW, BX * 2, 0, onSel("CANCEL"))
+local undoBtn = adminButton("Undo win", BW, BX * 3, 0, onSel("UNDO"))
 
 -- Class-coloured, localized class name for a class token.
 local CLASS_ID = {}
@@ -305,6 +400,11 @@ local function classLabel(token)
 end
 NS.ClassLabel = classLabel
 
+-- Sort key for an item: its name once the client has it, else its ID.
+local function itemKey(itemString)
+    return C_Item.GetItemInfo(itemString) or itemString
+end
+
 local function specName(key)
     local spec = key and NS.Specs.BY_KEY[key]
     return spec and spec.name or "?"
@@ -315,6 +415,16 @@ local function refreshLoot(S)
     if S and (not selKey or not S.items[selKey]) then
         selKey = S.active or order[#order]
     end
+    order = { unpack(order) } -- a copy: sorting must never touch S.order
+    queue:Sort(order, {
+        function(key)
+            return itemKey(S.items[key].itemString)
+        end,
+        function(key)
+            local item = S.items[key]
+            return item.state == "done" and ("won " .. NS.Short(item.winner)) or item.state
+        end,
+    })
     queue:Set(#order, function(r, i)
         local item = S.items[order[i]]
         r.data = item
@@ -334,6 +444,18 @@ local function refreshLoot(S)
 
     local item = S and selKey and S.items[selKey]
     rp:SetShown(item ~= nil)
+    emptyText:SetShown(item == nil)
+    if not S then
+        emptyText:SetText(
+            "No raid session yet.\n\nThe raid leader starts one on the Raid tab with New raid. "
+                .. "Then everyone can reserve an item there before the raid starts."
+        )
+    elseif not item then
+        emptyText:SetText(
+            "No items yet.\n\nWhen a boss dies, the master looter adds the loot here. "
+                .. "Then click I want this, and Roll when rolls are called."
+        )
+    end
     if not item then
         return
     end
@@ -402,6 +524,15 @@ local function refreshLoot(S)
         end
         return a < b
     end)
+    people:Sort(names, {
+        NS.Short,
+        function(name)
+            return (item.wants[name] and 2 or 0) + (S.reserves[name] == item.itemID and 1 or 0)
+        end,
+        function(name)
+            return item.rolls[name] or -1
+        end,
+    })
     people:Set(#names, function(r, i)
         local name = names[i]
         r.data = name
@@ -622,8 +753,9 @@ mySpecBtn:SetPoint("TOPLEFT", mySpecLabel, "BOTTOMLEFT", 0, -4)
 local players = List(rpg, 690, 205, { 110, 90, 170, 50, 100, 70 }, false, function(name)
     raidSel = name
     NS.Refresh()
-end)
-players.frame:SetPoint("TOPLEFT", 4, -131)
+end, { "Player", "Spec", "Reserve", "Won", "Status", "Role" })
+players.frame:SetPoint("TOPLEFT", 4, -142)
+players.frame:SetPoint("BOTTOMLEFT", rpg, "BOTTOMLEFT", 4, 62)
 players.onEnter = function(row, name)
     local S = NS.S()
     local id = S and S.reserves[name]
@@ -638,7 +770,7 @@ local lockBtn = Button(rpg, "Unlock", 100, function()
         NS.Act("LOCK", raidSel, S.locks[raidSel] and 0 or 1)
     end
 end)
-lockBtn:SetPoint("TOPLEFT", players.frame, "BOTTOMLEFT", -4, -10)
+lockBtn:SetPoint("BOTTOMLEFT", 0, 28)
 local offBtn = Button(rpg, "Make officer", 110, function()
     local S = NS.S()
     if raidSel and S then
@@ -653,7 +785,7 @@ local setSpecBtn = Button(rpg, "Set spec", 90, function(self)
 end)
 setSpecBtn:SetPoint("LEFT", offBtn, "RIGHT", 6, 0)
 local owedText = Text(rpg)
-owedText:SetPoint("TOPLEFT", lockBtn, "BOTTOMLEFT", 0, -8)
+owedText:SetPoint("BOTTOMLEFT", 0, 4)
 owedText:SetWidth(680)
 owedText:SetWordWrap(true)
 
@@ -714,6 +846,26 @@ local function refreshRaid(S)
         end
     end
     table.sort(names)
+    players:Sort(names, {
+        NS.Short,
+        function(name)
+            local spec = S and S.specs[name]
+            return spec and specName(spec) or ""
+        end,
+        function(name)
+            local res = S and S.reserves[name]
+            return res and itemKey("item:" .. res) or ""
+        end,
+        function(name)
+            return won[name] or 0
+        end,
+        function(name)
+            return S and S.locks[name] and 1 or 0
+        end,
+        function(name)
+            return S and (S.host == name and 2 or (S.officers[name] and 1)) or 0
+        end,
+    })
     players:Set(#names, function(r, i)
         local name = names[i]
         r.data = name
@@ -771,11 +923,13 @@ local histSel
 local raidsList = List(hp, 230, 380, { 70, 130 }, false, function(id)
     histSel = id
     NS.Refresh()
-end)
-raidsList.frame:SetPoint("TOPLEFT", 4, -4)
+end, { "Date", "Raid" })
+raidsList.frame:SetPoint("TOPLEFT", 4, -20)
+raidsList.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 4, 4)
 
-local histItems = List(hp, 450, 350, { 190, 110, 90 }, true, nil)
-histItems.frame:SetPoint("TOPLEFT", 250, -4)
+local histItems = List(hp, 436, 350, { 180, 110, 80 }, true, nil, { "Item", "Winner", "How" })
+histItems.frame:SetPoint("TOPLEFT", 250, -20)
+histItems.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 250, 34)
 histItems.onEnter = function(row, item)
     GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(item.itemString)
@@ -811,7 +965,7 @@ local delBtn = Button(hp, "Delete raid", 100, function()
         NS.Refresh()
     end
 end)
-delBtn:SetPoint("TOPLEFT", histItems.frame, "BOTTOMLEFT", -4, -10)
+delBtn:SetPoint("BOTTOMLEFT", 246, 0)
 
 local function refreshHistory()
     local hist = NS.DB.history
@@ -825,6 +979,14 @@ local function refreshHistory()
     if not histSel or not hist[histSel] then
         histSel = ids[1]
     end
+    raidsList:Sort(ids, {
+        function(id)
+            return hist[id].created or 0
+        end,
+        function(id)
+            return hist[id].title or ""
+        end,
+    })
     raidsList:Set(#ids, function(r, i)
         local rec = hist[ids[i]]
         r.data = ids[i]
@@ -842,6 +1004,17 @@ local function refreshHistory()
             end
         end
     end
+    histItems:Sort(shown, {
+        function(item)
+            return itemKey(item.itemString)
+        end,
+        function(item)
+            return NS.Short(item.winner)
+        end,
+        function(item)
+            return HOW_TEXT[item.how] or ""
+        end,
+    })
     histItems:Set(#shown, function(r, i)
         local item = shown[i]
         r.data = item
@@ -887,18 +1060,20 @@ local tree = List(cp, 260, 330, { 220 }, false, function(row)
         search:SetText("")
     end
     NS.Refresh()
-end)
-tree.frame:SetPoint("TOPLEFT", 4, -30)
+end, { "Instance and boss" })
+tree.frame:SetPoint("TOPLEFT", 4, -46)
+tree.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 4, 4)
 
-local catItems = List(cp, 440, 330, { 200, 130, 70 }, true, function(rec)
+local catItems = List(cp, 420, 330, { 165, 135, 58 }, true, function(rec)
     if IsModifiedClick() then
         HandleModifiedItemClick(NS.LinkOf(rec.s))
         return
     end
     catItem = rec.s
     NS.Refresh()
-end)
-catItems.frame:SetPoint("TOPLEFT", 270, -30)
+end, { "Item", "Dropped", "Last seen" })
+catItems.frame:SetPoint("TOPLEFT", 270, -46)
+catItems.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 270, 58)
 catItems.onEnter = function(row, rec)
     ItemTooltip(row, rec.s)
 end
@@ -909,7 +1084,7 @@ local catReserve = Button(cp, "Reserve this", 110, function()
         NS.Act("RES", id)
     end
 end)
-catReserve:SetPoint("TOPLEFT", catItems.frame, "BOTTOMLEFT", -4, -10)
+catReserve:SetPoint("BOTTOMLEFT", 266, 22)
 local catAsk = Button(cp, "Ask guild for updates", 150, function()
     Catalog.Ask("GUILD", true)
     if IsInGroup() then
@@ -932,8 +1107,8 @@ local catForget = Button(cp, "Forget boss", 100, function()
 end)
 catForget:SetPoint("LEFT", catAsk, "RIGHT", 6, 0)
 local catHelp = Text(cp, "GameFontDisableSmall")
-catHelp:SetPoint("TOPLEFT", catReserve, "BOTTOMLEFT", 0, -8)
-catHelp:SetWidth(440)
+catHelp:SetPoint("BOTTOMLEFT", 270, 4)
+catHelp:SetWidth(410)
 catHelp:SetWordWrap(true)
 catHelp:SetText("Filled in by everyone's addon as bosses die. Shift-click an item to link it.")
 
@@ -1001,7 +1176,12 @@ local function refreshCatalog()
         if boss then
             for _, rec in pairs(boss.i) do
                 local label = catBoss.bossKey == 0 and ("seen " .. rec.n .. "x")
-                    or ("in " .. rec.n .. " of " .. boss.kills .. " kills")
+                    or string.format(
+                        "in %d of %d kills (%d%%)",
+                        rec.n,
+                        boss.kills,
+                        math.floor(rec.n / math.max(boss.kills, 1) * 100 + 0.5)
+                    )
                 shown[#shown + 1] = { rec = rec, label = label }
             end
         end
@@ -1012,6 +1192,17 @@ local function refreshCatalog()
         end
         return a.rec.s < b.rec.s
     end)
+    catItems:Sort(shown, {
+        function(e)
+            return itemKey(e.rec.s)
+        end,
+        function(e)
+            return e.rec.n
+        end,
+        function(e)
+            return e.rec.t
+        end,
+    })
     catItems:Set(#shown, function(r, i)
         local e = shown[i]
         r.data = e.rec
@@ -1052,12 +1243,11 @@ local function refreshNow()
     if not f:IsShown() then
         return
     end
+    -- The session's status lives in the title, so the tab row has room.
     if S then
-        sessionLine:SetText(
-            (S.title or "") .. " - host " .. NS.ColorName(S.host) .. " - " .. (PHASE_TEXT[S.phase] or "")
-        )
+        f:SetTitle("Raid Loot Controller - " .. (S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or ""))
     else
-        sessionLine:SetText("|cff999999No raid session|r")
+        f:SetTitle("Raid Loot Controller")
     end
     if current == "loot" then
         refreshLoot(S)
@@ -1065,6 +1255,8 @@ local function refreshNow()
         refreshRaid(S)
     elseif current == "catalog" then
         refreshCatalog()
+    elseif current == "help" then
+        NS.RefreshHelp()
     else
         refreshHistory()
     end

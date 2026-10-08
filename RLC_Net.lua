@@ -53,12 +53,23 @@ local lanes = {
 }
 local LIVE, CAT_GROUP, CAT_GUILD = lanes[1], lanes[2], lanes[3]
 
+-- Demo mode sends nothing: its session, history and catalogue are fake.
+local function demo()
+    return NS.Demo ~= nil and NS.Demo.active == true
+end
+
 function Net.Queue(op)
+    if demo() then
+        return
+    end
     LIVE.queue[#LIVE.queue + 1] = Rules.EncodeOp(op)
 end
 
 -- dest: "GROUP" or "GUILD".
 function Net.QueueCatalog(op, dest)
+    if demo() then
+        return
+    end
     local lane = dest == "GUILD" and CAT_GUILD or CAT_GROUP
     if #lane.queue < 5000 then -- a full catalogue is about this size; never grow past it
         lane.queue[#lane.queue + 1] = Rules.EncodeOp(op)
@@ -148,13 +159,13 @@ local function acceptNew(S, op, sender)
 end
 
 NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
-    if prefix ~= PREFIX and prefix ~= CAT_PREFIX then
+    if (prefix ~= PREFIX and prefix ~= CAT_PREFIX) or demo() then
         return
     end
     if canaccessvalue and not canaccessvalue(msg, sender) then
         return
     end
-    sender = NS.Full(sender)
+    sender = NS.Canon(sender)
     local me = NS.Me()
     if not sender or sender == me then
         return -- our own broadcast, echoed back

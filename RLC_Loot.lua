@@ -24,17 +24,23 @@ end
 
 local rollPattern
 NS.On("CHAT_MSG_SYSTEM", function(text)
-    if not NS.IsHost() then
+    if not NS.IsHost() and not NS.debug then
         return
     end
     -- System lines can be secret on this client; reading one would throw.
     if canaccessvalue and not canaccessvalue(text) then
+        if NS.debug then
+            NS.Print("debug: a system chat line is hidden from addons, so rolls can't be read")
+        end
         return
     end
-    rollPattern = rollPattern or Rules.FormatPattern(RANDOM_ROLL_RESULT)
+    rollPattern = rollPattern or Rules.FormatPattern(RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)")
     local name, roll, low, high = Rules.ParseRoll(text, rollPattern)
-    if name then
-        NS.HandleRequest(NS.Me(), { "ROLLSEEN", NS.Full(name), roll, low, high })
+    if NS.debug and (name or text:find("%(%d+%-%d+%)")) then
+        NS.Print("debug: %q -> %s", text, name and (name .. " rolled " .. roll) or ("no match for " .. rollPattern))
+    end
+    if name and NS.IsHost() then
+        NS.HandleRequest(NS.Me(), { "ROLLSEEN", NS.Canon(name), roll, low, high })
     end
 end)
 
@@ -142,7 +148,7 @@ function Loot.Deliver(item)
         if slot then
             for i = 1, 40 do
                 local name = GetMasterLootCandidate(slot, i)
-                if name and NS.Full(name) == winner then
+                if name and NS.Canon(name) == winner then
                     GiveMasterLoot(slot, i)
                     return
                 end
@@ -170,8 +176,7 @@ local placed = {}
 
 NS.On("TRADE_SHOW", function()
     wipe(placed)
-    local name, realm = UnitFullName("npc")
-    local who = name and ((realm and realm ~= "") and (name .. "-" .. realm) or NS.Full(name))
+    local who = NS.UnitIdentity("npc") -- the trade partner
     local list = who and NS.DB.owed[who]
     if not list or #list == 0 then
         return

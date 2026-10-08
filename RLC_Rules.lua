@@ -52,9 +52,13 @@ function Rules.ClassBit(classID)
     return 2 ^ (classID - 1)
 end
 
--- Full player names only ("Name-Realm"). Anything else from the wire is junk.
+-- Full player names only: "Name-Realm", or "First Surname-Realm" on a
+-- client with surnames (one space inside the name part). Anything else from
+-- the wire is junk.
 function Rules.ValidName(s)
-    return type(s) == "string" and #s <= 64 and s:match("^[^%s%-]+%-[^%s]+$") ~= nil
+    return type(s) == "string"
+        and #s <= 64
+        and (s:match("^[^%s%-]+%-[^%s%-]+$") ~= nil or s:match("^[^%s%-]+ [^%s%-]+%-[^%s%-]+$") ~= nil)
 end
 
 -- "item:12345:..." (the itemString inside a link). Links themselves never go
@@ -579,11 +583,16 @@ function Rules.Intent(S, who, req, ctx)
         -- item, and only the first roll from each player.
         local name, roll, low, high = req[2], tonumber(req[3]), tonumber(req[4]), tonumber(req[5])
         local item = S.active and S.items[S.active]
-        if not item or low ~= 1 or high ~= 100 or not roll then
-            return nil
+        if not item or item.state ~= "rolling" or not roll then
+            return nil -- not rolling for anything: a /roll for some other reason
         end
-        if not Rules.CanRoll(S, item, name, classOf(name)) then
-            return nil, item.rolls[name] and "already rolled" or "not eligible"
+        -- The reasons go back to the player who rolled.
+        if low ~= 1 or high ~= 100 then
+            return nil, "Only a roll of 1-100 counts. Use the Roll button."
+        elseif item.rolls[name] then
+            return nil, "You already rolled for this item. Only your first roll counts."
+        elseif not Rules.CanRoll(S, item, name, classOf(name)) then
+            return nil, "Your roll didn't count: you can't roll for this item. The Loot tab says why."
         end
         return { { "ROLL", item.key, name, roll } }
     end
