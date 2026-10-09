@@ -126,3 +126,22 @@ Verified 2026-10-09 against the Forever source (build 1.60.1.70291):
 `GetGroupCurrencyInfo`, `RandomRoll`, `RegionalUniqueNamesEnabled` and
 `InChatMessagingLockdown` are documented there. Whether the server offers master
 loot is still checklist item 3.
+
+## Release process
+
+Same flow as EbonClearance, driven by `.github/workflows/release.yml`.
+
+1. Run the checks above (tests, luacheck 0, stylua) on a green `main`.
+2. Add a `### vX.Y.Z` section to `CHANGELOG.md` (player-facing, short).
+   Update `README.md` and the Help tab for any player-facing change.
+3. Commit and push, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. The workflow writes the version into the `.toc`, re-runs syntax checks
+   and tests, zips `RaidLootController/` (every `RLC_*.lua`, the `.toc`,
+   `LICENSE`; it fails if a file the `.toc` loads is missing), commits
+   `Update version to vX.Y.Z [skip ci]` to `main`, and publishes the
+   release with that changelog section. Never bump `## Version:` by hand.
+5. **Then `git pull --rebase`**: the bot commit leaves local one behind.
+
+Download link for players (always the newest):
+https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip
+`test.yml` runs syntax, luacheck and tests on every push to `main`.

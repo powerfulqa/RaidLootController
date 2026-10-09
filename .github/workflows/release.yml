@@ -1,0 +1,90 @@
+name: Release
+
+# Push a tag (git tag v0.2.0 && git push origin v0.2.0) to build a release.
+# Same flow as EbonClearance: version from the tag, tests as a gate, zip,
+# version bump committed back to main, changelog section as the notes.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.0). Must already exist on origin.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # On a tag push GITHUB_REF_NAME is the tag; on workflow_dispatch it is
+      # the branch, so the input wins.
+      RELEASE_VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Inject version from tag
+        run: |
+          sed -i "s/^## Version: .*/## Version: ${RELEASE_VERSION}/" RaidLootController.toc
+          grep "^## Version:" RaidLootController.toc
+
+      - name: Install Lua 5.1
+        # Retry: the apt mirror occasionally fails transiently.
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y lua5.1 && break
+            echo "apt attempt $i failed; retrying in 5s..." && sleep 5
+          done
+          lua5.1 -v
+
+      - name: Verify before packaging (syntax + tests)
+        run: |
+          for f in RLC_*.lua; do luac5.1 -p "$f"; done
+          for t in tests/test_*.lua; do lua5.1 "$t"; done
+
+      - name: Package addon
+        run: |
+          mkdir -p RaidLootController
+          cp RLC_*.lua RaidLootController.toc LICENSE RaidLootController/
+          # Every file the .toc loads must be in the zip, or the addon
+          # fails to load in game.
+          grep -v '^##' RaidLootController.toc | sed 's/\r//' | grep -v '^\s*$' | while read -r f; do
+            test -f "RaidLootController/$f" || { echo "missing from package: $f"; exit 1; }
+          done
+          zip -r RaidLootController.zip RaidLootController/
+
+      - name: Commit version update back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add RaidLootController.toc
+          git commit -m "Update version to ${RELEASE_VERSION} [skip ci]" || echo "No changes to commit"
+          git push origin main
+
+      - name: Extract changelog section for this release
+        run: |
+          awk -v target="### ${RELEASE_VERSION}" '
+            $0 == target { found = 1; print; next }
+            found && /^### v/ { found = 0 }
+            found { print }
+          ' CHANGELOG.md > release-body.md
+          if [ ! -s release-body.md ]; then
+            printf "### %s\n\nPatch release.\n" "${RELEASE_VERSION}" > release-body.md
+          fi
+          head -20 release-body.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          files: RaidLootController.zip
+          body_path: release-body.md
+          generate_release_notes: true

@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Lua 5.1 and luacheck
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y lua5.1 luarocks && break
+            echo "apt attempt $i failed; retrying in 5s..." && sleep 5
+          done
+          sudo luarocks install luacheck
+          lua5.1 -v && luacheck --version
+
+      - name: Lua syntax check
+        run: for f in RLC_*.lua; do luac5.1 -p "$f"; done
+
+      - name: Luacheck (must stay at 0 warnings)
+        run: luacheck RLC_*.lua tests/*.lua
+
+      - name: Tests
+        run: for t in tests/test_*.lua; do lua5.1 "$t"; done

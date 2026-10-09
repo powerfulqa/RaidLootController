@@ -1,6 +1,17 @@
 # Raid Loot Controller
 
+[![Download Latest](https://img.shields.io/github/v/release/powerfulqa/RaidLootController?style=for-the-badge&label=Download&color=orange)](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)
+[![Licence](https://img.shields.io/badge/Licence-Source--Available-blue?style=for-the-badge)](LICENSE)
+
 Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
+
+## Install
+
+1. Download **[RaidLootController.zip](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)** (latest release).
+2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. During the beta that folder is `World of Warcraft\_classic_beta_\Interface\AddOns`.
+3. Restart the game (or `/reload`) and type `/rlc`.
+
+Everyone in the raid should install it. Players without it can still roll with `/roll`, but can't reserve or click I want this.
 
 - **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid.
 - **Soft reserves.** Before the raid starts, reserve one item. If nobody else reserves it, it is yours when it drops. If several players reserve it, only they roll.

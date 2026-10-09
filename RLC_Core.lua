@@ -1,4 +1,7 @@
 -- RLC_Core.lua
+-- Raid Loot Controller by Serv - https://github.com/powerfulqa/RaidLootController
+-- Source-available, see LICENSE.
+--
 -- Namespace, saved data, player names, the group roster, and the glue that
 -- turns ops and requests into state changes. Loads after RLC_Rules.lua.
 --
