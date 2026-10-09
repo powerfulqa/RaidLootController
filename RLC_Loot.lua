@@ -182,12 +182,20 @@ local function bestMatch(n, get, itemString, skip)
 end
 
 -- Host only, from NS.ApplyOps on AWARD.
+-- Whether this client hands won items over: the master looter when loot
+-- is on Master Looter (only they can give from the loot window, and the
+-- drops are in their bags otherwise), else the raid host.
+function Loot.IAmGiver()
+    local method, partyID, raidID = C_PartyInfo.GetLootMethod()
+    if method == Enum.LootMethod.Masterlooter then
+        local unit = raidID and ("raid" .. raidID) or partyID == 0 and "player" or partyID and ("party" .. partyID)
+        return unit ~= nil and UnitIsUnit(unit, "player")
+    end
+    return NS.IsHost()
+end
+
 function Loot.Deliver(item)
     local winner = item.winner
-    if winner == NS.Me() then
-        Loot.MarkDelivered(winner, item.itemString)
-        return -- the host won it and already has it
-    end
     -- ponytail: master loot is unmeasured on Forever (checklist 3); without
     -- the API the item falls through to the owed list and a trade.
     if Loot.lootOpen and GetMasterLootCandidate and GiveMasterLoot then
@@ -208,6 +216,10 @@ function Loot.Deliver(item)
                 NS.ColorName(winner)
             )
         end
+    end
+    if winner == NS.Me() then
+        Loot.MarkDelivered(winner, item.itemString)
+        return -- the giver won it: it is theirs to loot or already in their bags
     end
     local owed = NS.DB.owed
     owed[winner] = owed[winner] or {}

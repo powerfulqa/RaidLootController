@@ -15,6 +15,10 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 
 Everyone in the raid should install it. Players without it can still roll with `/roll`, but can't reserve or click I want this.
 
+> **Set loot to Master Looter.** The addon decides who gets each item, and the master looter's addon hands it over straight from the loot window. Make the master looter the raid host or an officer, with the addon installed.
+>
+> Without Master Looter the game's own Need/Greed rolls come first: the addon only gets an item if **everyone passes**, and then the host loots it and trades it on. Raid drops are bind on pickup, so that only works if Forever lets you trade bound loot to the people at the kill (retail allows it for 2 hours; not yet tested on Forever).
+
 ## What it does
 
 - **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid (free rolls aside, see below).
@@ -34,7 +38,7 @@ Everyone in the raid should install it. Players without it can still roll with `
 
 ## How a raid runs
 
-1. The raid leader opens `/rlc`, goes to **Raid**, and clicks **New raid**.
+1. The raid leader sets loot to **Master Looter** (the host or an officer as master looter), opens `/rlc`, goes to **Raid**, and clicks **New raid**.
 2. Raiders reserve an item on the **Raid** tab: shift-click it into the box, or type its item ID. One reserve each.
 3. The leader clicks **Start raid**. Reserves are now closed (they also close when the first item is put up).
 4. A boss dies. The master looter opens the loot window and clicks **Add N from loot** (or drops an item from their bags on the window). The items appear on the **Loot** tab for everyone.
@@ -45,7 +49,7 @@ Everyone in the raid should install it. Players without it can still roll with `
    - If anyone who won nothing last raid wants it, only they roll first.
 7. Raiders click **Roll (1-100)**. Rolls show up live. The button you need to click next glows, as does the minimap button.
 8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
-9. The winner gets the item by master loot if the loot window is still open. Otherwise it goes on the host's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time the host trades the winner. Once the trade completes, History marks it delivered.
+9. The master looter's addon gives the winner the item straight from the loot window. If the window is closed (or loot is not on Master Looter, where the host hands items over), it goes on that player's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time they trade the winner. Once it is given or traded, History marks it delivered.
 
 An officer can **Unlock** a player on the Raid tab so they can roll normally again.
 

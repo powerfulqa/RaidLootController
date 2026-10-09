@@ -173,8 +173,9 @@ local ENTRIES = {
     },
     {
         q = "How does the winner get the item?",
-        a = "If the loot window is still open, the addon gives it by master loot. "
-            .. "Otherwise it's put in the trade window the next time you trade the winner. "
+        a = "Set loot to Master Looter, with the host or an officer as master looter. The master "
+            .. "looter's addon gives the item straight from the loot window. If the window is closed, "
+            .. "it's put in the trade window the next time they trade the winner. "
             .. "The Raid tab lists what is still to trade, and those items glow green in your bags. "
             .. "Trade the winner and the item comes off the list, even if you put it in the window "
             .. "yourself. /rlc owed clears that list.\n\n"
@@ -185,6 +186,14 @@ local ENTRIES = {
         q = "How do I make someone an officer, or unlock a player?",
         a = "On the Raid tab, click the player, then Make officer (raid leader only), Unlock or Set spec.",
         tab = "raid",
+    },
+
+    {
+        q = "Do we need Master Looter?",
+        a = "Yes, it's the way the addon is meant to run. Without it, the game's own Need and Greed "
+            .. "rolls come first: the addon only gets an item if everyone passes, and then the host "
+            .. "has to loot it and trade it on. Raid drops are bind on pickup, so that also needs the "
+            .. "game to allow trading bound loot to the people at the kill.",
     },
 
     { section = "catalog", title = "Catalogue and history" },

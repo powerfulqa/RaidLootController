@@ -122,6 +122,11 @@ only from the session host (and `NEW` only from a leader or assistant).
     via `TooltipDataProcessor` (GameTooltip and ItemRefTooltip); bag marks via
     each container frame's `UpdateItems` and `GetSlotAndBagID`; the key binding
     shows under Keybindings > AddOns; versions arrive on `CQE`.
+18. Delivery without the host as master looter: with loot on Master
+    Looter and an officer as master looter, `Loot.IAmGiver` picks them (from
+    `C_PartyInfo.GetLootMethod`'s party/raid ID) and their addon gives the
+    item. Also: whether Forever lets a player trade bound (BoP) raid loot to
+    others at the kill, which the non-Master-Looter path depends on.
 
 ## Dev tooling
 

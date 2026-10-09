@@ -4,6 +4,14 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.4.1
+
+**Master Looter is the way to run it.**
+
+- **The master looter hands items over,** not only the raid host. Make the host or an officer master looter: their addon gives the winner the item straight from the loot window, and anything left goes on their "still to trade" list.
+- A master looter who wins an item now gets it from the loot window too.
+- The README and Help explain why Master Looter matters: without it the game's own Need/Greed rolls come first, and the addon only gets items everyone passed on.
+
 ### v0.4.0
 
 **A bigger window, and the addon now follows the loot after the roll.** First round of fixes from running it in game.

@@ -359,6 +359,7 @@ end
 
 -- Apply ops to our copy. The host also broadcasts them. Returns how many
 -- ops did not fit our copy (a sign we missed some).
+local handedOver = {} -- session id .. item key -> true, this session only
 function NS.ApplyOps(ops, broadcast)
     local S = NS.S()
     local changedHistory = false
@@ -392,10 +393,15 @@ function NS.ApplyOps(ops, broadcast)
             if k == "AWARD" then
                 local item = S.items[op[2]]
                 -- Only fresh wins are news; a snapshot replays old ones.
-                if (item.awardedAt or 0) >= GetServerTime() - 120 then
+                local fresh = (item.awardedAt or 0) >= GetServerTime() - 120
+                if fresh then
                     NS.Print("%s won %s.", NS.ColorName(op[3]), NS.LinkOf(item.itemString))
                 end
-                if broadcast and NS.Loot then
+                -- The master looter's addon hands the item over (the host's
+                -- when loot is not on Master Looter). Once per win: a
+                -- resync replays recent wins.
+                if fresh and NS.Loot and NS.Loot.IAmGiver() and not handedOver[S.id .. op[2]] then
+                    handedOver[S.id .. op[2]] = true
                     NS.Loot.Deliver(item)
                 end
             end

@@ -30,6 +30,6 @@ read_globals = {
     "LE_PARTY_CATEGORY_INSTANCE", "NUM_BAG_SLOTS", "RANDOM_ROLL_RESULT", "RandomRoll",
     "ButtonFrameTemplate_HidePortrait", "Minimap", "UIParent", "UnitClass", "UnitFullName", "UnitIsGroupAssistant",
     "UnitIsGroupLeader", "UnitName", "canaccessvalue", "date", "strtrim", "tinsert", "wipe",
-    "GetBuildInfo", "GetLocale", "LinkUtil", "LinkProcessorResponse", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
+    "GetBuildInfo", "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
 }
 files["tests/*.lua"] = { std = "lua51", globals = { "GetServerTime", "CopyTable" } } -- client stubs
