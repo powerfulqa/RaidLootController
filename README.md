@@ -26,6 +26,11 @@ Everyone in the raid should install it. Players without it can still roll with `
 - **Upgrade info.** Officers see what each player wears in that slot and the stat change the item would give them.
 - **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action.
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
+- **Delivery tracking.** Items still to trade are listed on the Raid tab and glow green in the host's bags. Trading the winner takes the item off the list, and History marks it delivered.
+- **Stats.** Every player from your saved raids: raids, items won, free rolls and their last win, to check that loot is spread fairly.
+- **Copy as text.** Copy a raid's results from the History tab to paste into Discord.
+- **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one (`/rlc tooltip` turns them off).
+- **Update notice.** When a guild or group member has a newer version you get one chat line with a link to the download, and the Raid tab flags old versions.
 
 ## How a raid runs
 
@@ -40,7 +45,7 @@ Everyone in the raid should install it. Players without it can still roll with `
    - If anyone who won nothing last raid wants it, only they roll first.
 7. Raiders click **Roll (1-100)**. Rolls show up live. The button you need to click next glows, as does the minimap button.
 8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
-9. The winner gets the item by master loot if the loot window is still open. Otherwise it goes into the trade window the next time the host trades them.
+9. The winner gets the item by master loot if the loot window is still open. Otherwise it goes on the host's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time the host trades the winner. Once the trade completes, History marks it delivered.
 
 An officer can **Unlock** a player on the Raid tab so they can roll normally again.
 
@@ -108,18 +113,22 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 
 The **Commands** tab lists the commands you can use right now, each with a **Run** button (commands that need an item have a **How** button that says what to type). It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.
 
-The **Help** tab answers the common questions, with a search box. Click any column name to sort a list by it; click again to reverse.
+The **Help** tab answers the common questions, with a search box that shows your search words in yellow. Click any column name to sort a list by it; click again to reverse.
+
+Drag the window's bottom right corner to resize it; the size and place are saved. You can bind a key to open it under Keybindings, AddOns. `/rlc report` makes a bug report to copy into an issue.
 
 The minimap button opens the window (left-click) or the loot catalogue (right-click). Drag it to move it around the minimap.
 
 ## Development
 
+Run the tests with Lua 5.1, as the game and CI do (Lua 5.5 refuses a loop in the raid sim):
+
 ```
-lua tests/test_rules.lua          # rules suite (stock lua5.1)
-lua tests/test_raid_sim.lua       # a raid night with cheaters, plus 8 weeks of fairness numbers
-lua tests/test_catalog.lua        # catalogue data and sync merge
-lua tests/test_specs.lua          # which specs an item suits
-lua tests/test_demo.lua           # demo mode builds cleanly
+lua5.1 tests/test_rules.lua       # rules suite
+lua5.1 tests/test_raid_sim.lua    # a raid night with cheaters, plus 8 weeks of fairness numbers
+lua5.1 tests/test_catalog.lua     # catalogue data and sync merge
+lua5.1 tests/test_specs.lua       # which specs an item suits
+lua5.1 tests/test_demo.lua        # demo mode builds cleanly
 luacheck *.lua tests/*.lua        # 0 warnings
 stylua --check *.lua tests/*.lua
 ```

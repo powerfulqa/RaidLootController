@@ -56,7 +56,7 @@ only from the session host (and `NEW` only from a leader or assistant).
 - Wire input is untrusted: validate in `Rules.Apply` / `Rules.Intent`, never
   in the UI.
 - Player-facing text is short and plain. No em dashes (U+2014) anywhere.
-- Before committing: every `tests/test_*.lua` (`for t in tests/test_*.lua; do lua $t; done`; CI does the same),
+- Before committing: every `tests/test_*.lua` (`for t in tests/test_*.lua; do lua5.1 $t; done`; CI does the same; plain `lua` may be 5.5, which refuses the raid sim),
   including `tests/test_raid_sim.lua` (a raid night with chaotic players, plus 8 weeks of fairness numbers),
   `luacheck *.lua tests/*.lua` (0 warnings), `stylua --check *.lua tests/*.lua`.
 - Two addon-message prefixes: `RLC1` (live session) and `RLCC` (catalogue),
