@@ -71,7 +71,17 @@ local ENTRIES = {
     {
         q = 'What does "Open to everyone" mean?',
         a = "Nobody it was meant for wants it, so anyone who can use it may roll, "
-            .. "including players who already won an item. Officers can also open an item by hand.",
+            .. "including players who already won an item. Officers can also open an item by hand.\n\n"
+            .. "This is a free roll: winning it does not count as your item and does not touch your "
+            .. "reserve. Off-spec gear usually comes this way.",
+    },
+    {
+        q = "Can I see if an item is an upgrade?",
+        a = "Hold Shift while you hover an item on the Loot tab to compare it with what you wear.\n\n"
+            .. "When you click I want this, the addon also sends what you wear in that slot. "
+            .. "Hover a name in the list to see their gear and the stat change the item would give them. "
+            .. "It shows raw stats, not a score: officers judge how big the upgrade is.",
+        tab = "loot",
     },
     {
         q = "Does typing /roll in chat count?",
@@ -93,7 +103,8 @@ local ENTRIES = {
             .. " (before Start raid), you can reserve one item on the Raid tab. "
             .. "Shift-click the item into the box, type its item ID, or pick it from the Catalogue.\n\n"
             .. "If nobody else reserves it, it's yours when it drops. If several players reserve it, "
-            .. "only they roll. Winning any other item first uses up your reserve.",
+            .. "only they roll. Winning another item first does not cost you your reserve: "
+            .. "it still pays out when it drops, as your second item.",
         tab = "raid",
     },
     {
@@ -105,13 +116,19 @@ local ENTRIES = {
 
     { section = "specs", title = "Specs" },
     {
-        q = "How does the addon know my spec?",
-        a = "From your talents: the tree with the most points. The Raid tab shows it. "
-            .. "Feral druids pick cat or bear with "
+        q = "What is my loot spec? I have dual spec.",
+        a = "Your loot spec is the spec you want gear for, not the one you play tonight. "
+            .. "An off-tank in dps spec still loots as a tank.\n\n"
+            .. "The addon guesses it from your talents. Check it once on the Raid tab: click "
             .. GREEN
-            .. "Change spec"
+            .. "Confirm"
             .. R
-            .. ". You can change it until the raid starts. After that only an officer can.",
+            .. ", or pick another with "
+            .. GREEN
+            .. "Change loot spec"
+            .. R
+            .. ". It is saved for this character. You can change it until the raid starts. "
+            .. "After that only an officer can.",
         tab = "raid",
     },
     {

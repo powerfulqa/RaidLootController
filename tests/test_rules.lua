@@ -127,11 +127,10 @@ do
     check(it2.winner == C and it2.how == "reserve" and client.locks[C], "single reserver gets it on call, no roll")
 end
 
--- ---- a win before the reserved item drops cancels the reserve ------------
+-- ---- a win before the reserved item drops keeps the reserve --------------
 do
     fresh()
     act(A, { "RES", 500 })
-    act(B, { "RES", 500 })
     act(HOST, { "PHASE", "live" })
     act(HOST, { "ADD", "item:1" })
     act(HOST, { "START", "1" })
@@ -139,12 +138,51 @@ do
     act(HOST, { "CALL", "1" })
     act(HOST, { "ROLLSEEN", A, 20, 1, 100 })
     act(HOST, { "CLOSE", "1" })
-    check(client.reserves[A] == nil, "a normal win cancels the winner's reserve")
+    check(client.locks[A] and client.reserves[A] == 500, "a normal win locks but keeps the reserve")
     act(HOST, { "ADD", "item:500" })
     act(HOST, { "START", "2" })
     act(HOST, { "CALL", "2" })
     local it = client.items["2"]
-    check(it.winner == B and it.how == "reserve", "the remaining reserver gets it alone")
+    check(it.winner == A and it.how == "reserve", "the reserve still pays out after another win")
+    check(client.reserves[A] == nil, "winning the reserved item uses the reserve")
+    act(HOST, { "UNDO", "2" })
+    check(client.reserves[A] == 500 and client.locks[A], "undo of a reserve win gives the reserve back")
+end
+
+-- ---- a free roll (open item) does not lock or touch the reserve -----------
+do
+    fresh()
+    act(A, { "RES", 500 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "OPEN", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 20, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].how == "open", "free roll recorded as open")
+    check(not client.locks[A], "a free-roll win does not lock")
+    check(client.reserves[A] == 500, "a free-roll win keeps the reserve")
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "START", "2" })
+    check(act(A, { "WANT", "2", 1 }), "after a free roll the player can still want a normal item")
+end
+
+-- ---- worn gear rides along with a want -----------------------------------
+do
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1, "item:900,item:901" })
+    check(client.items["1"].worn[A] == "item:900,item:901", "worn gear reaches clients")
+    act(B, { "WANT", "1", 1, "item:1|Hbad,item:2" })
+    check(client.items["1"].wants[B] and not client.items["1"].worn[B], "bad worn value dropped, want kept")
+    act(A, { "WANT", "1", 0 })
+    check(not client.items["1"].worn[A], "taking a want back clears the worn gear")
+    check(not R.ValidWorn("item:1,item:2,item:3"), "at most two worn items")
+    check(not R.ValidWorn(string.rep("item:1", 30)), "worn value is length capped")
 end
 
 -- ---- lockout, open-to-all, unlock -----------------------------------------

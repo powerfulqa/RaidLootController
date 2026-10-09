@@ -19,9 +19,11 @@
 --   * A locked player can roll again only when the item is opened to all,
 --     which happens when no unlocked eligible player wants it, or when an
 --     officer opens it by hand. Officers can also unlock a player.
+--   * A win on an item opened to all (a free roll, usually off-spec) does
+--     not lock the winner and does not touch their reserve.
 --   * A soft reserve made before the raid starts wins the item outright. If
---     several players reserved it, only they roll. Winning ANY item first
---     cancels the winner's reserve.
+--     several players reserved it, only they roll. Winning another item first
+--     keeps the reserve: it pays out when it drops, as a second item.
 --   * An officer can restrict an item to some classes.
 local NS = select(2, ...)
 
@@ -75,6 +77,24 @@ end
 -- on the wire: an itemString is shorter and carries no colour codes.
 function Rules.ValidItemString(s)
     return type(s) == "string" and #s <= 200 and s:match("^item:%d+[%d:%-]*$") ~= nil
+end
+
+-- Worn gear sent with a want: one or two itemStrings (rings, trinkets and
+-- one-hand weapons fill two slots), comma separated. Capped so the WANT op
+-- always fits one addon message.
+Rules.MAX_WORN = 120
+function Rules.ValidWorn(s)
+    if type(s) ~= "string" or s == "" or #s > Rules.MAX_WORN then
+        return false
+    end
+    local n = 0
+    for part in s:gmatch("[^,]+") do
+        n = n + 1
+        if n > 2 or not Rules.ValidItemString(part) then
+            return false
+        end
+    end
+    return n > 0 and not s:find(",,", 1, true) and s:sub(-1) ~= "," and s:sub(1, 1) ~= ","
 end
 
 function Rules.ItemIDOf(itemString)
@@ -426,6 +446,7 @@ function Rules.Apply(S, op)
             classMask = 0,
             wants = {},
             rolls = {},
+            worn = {}, -- name -> what they wear in that slot (WANT)
         }
         S.order[#S.order + 1] = key
         if n > S.seq then
@@ -459,6 +480,10 @@ function Rules.Apply(S, op)
         end
         if kind == "WANT" then
             item.wants[name] = bool(op[4]) or nil
+            -- What they wear in that slot, for officers to compare. Advice
+            -- only and self-reported: a bad value is dropped, not refused.
+            item.worn = item.worn or {}
+            item.worn[name] = item.wants[name] and Rules.ValidWorn(op[5]) and op[5] or nil
         else
             local n = Rules.Int(op[4], 1, 100)
             if not n then
@@ -482,10 +507,14 @@ function Rules.Apply(S, op)
             return nil, "bad AWARD"
         end
         item.state, item.winner, item.how, item.awardedAt = "done", op[3], op[4], tonumber(op[5]) or 0
-        S.locks[op[3]] = true
-        -- Any win uses up the winner's reserve: one item each, and a reserve
-        -- is a claim on that one item, not a second one.
-        S.reserves[op[3]] = nil
+        -- A free roll (item open to all) never locks. Only winning the
+        -- reserved item itself uses up a reserve.
+        if op[4] ~= "open" then
+            S.locks[op[3]] = true
+        end
+        if S.reserves[op[3]] == item.itemID then
+            S.reserves[op[3]] = nil
+        end
         if S.active == key then
             S.active = nil
         end
@@ -496,16 +525,20 @@ function Rules.Apply(S, op)
         end
     elseif kind == "UNDO" then
         -- A win given by mistake: the item goes back to waiting, and the
-        -- winner is unlocked unless they won something else too.
+        -- winner is unlocked unless another locking win holds them. A taken
+        -- back reserve win gives the reserve back.
         local winner = item.winner
         if item.state ~= "done" or not winner then
             return nil, "bad UNDO"
         end
+        if item.how == "reserve" and not S.reserves[winner] then
+            S.reserves[winner] = item.itemID
+        end
         item.state, item.winner, item.how, item.awardedAt = "pending", nil, nil, nil
-        item.mode, item.restrict, item.wants, item.rolls = "normal", nil, {}, {}
+        item.mode, item.restrict, item.wants, item.rolls, item.worn = "normal", nil, {}, {}, {}
         local other = false
         for _, it in pairs(S.items) do
-            if it.state == "done" and it.winner == winner then
+            if it.state == "done" and it.winner == winner and it.how ~= "open" then
                 other = true
             end
         end
@@ -566,7 +599,8 @@ function Rules.Intent(S, who, req, ctx)
         if on and not Rules.CanWant(S, item, who, classOf(who)) then
             return nil, "You can't ask for this item."
         end
-        return { { "WANT", item.key, who, on and 1 or 0 } }
+        local worn = on and Rules.ValidWorn(req[4]) and req[4] or nil
+        return { { "WANT", item.key, who, on and 1 or 0, worn } }
     elseif kind == "RES" then
         if S.phase ~= "reserve" then
             return nil, "Reserves are closed once the raid starts."
@@ -794,7 +828,7 @@ function Rules.Snapshot(S)
             ops[#ops + 1] = itemOp(item, st, item.mode, item.classMask, item.restrict)
         end
         for name in pairs(item.wants) do
-            ops[#ops + 1] = { "WANT", key, name, 1 }
+            ops[#ops + 1] = { "WANT", key, name, 1, item.worn and item.worn[name] }
         end
         for name, n in pairs(item.rolls) do
             ops[#ops + 1] = { "ROLL", key, name, n }

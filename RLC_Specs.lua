@@ -427,13 +427,22 @@ end
 -- Tell the host our spec when the session's copy differs. Only while the
 -- raid takes reserves, or as a first report from a late joiner: after the
 -- start the host would refuse a change anyway (an officer can make it).
-local lastReport = 0
+local lastReport, nudged = 0, nil
 function Specs.Report(force)
     local S = NS.S()
     if not S or S.phase == "ended" then
         return
     end
-    local mine = Specs.Mine()
+    local mine, picked = Specs.Mine()
+    -- Once per session: a spec only guessed from talents may be tonight's
+    -- role (an off-tank in dps spec), not the one the player loots for.
+    if not picked and nudged ~= S.id and S.phase == "reserve" then
+        nudged = S.id
+        NS.Print(
+            "Confirm your loot spec (the spec you want gear for) on the Raid tab. From your talents: %s.",
+            mine and Specs.BY_KEY[mine] and Specs.BY_KEY[mine].name or "unknown"
+        )
+    end
     local onRecord = S.specs[NS.Me()]
     if not mine or onRecord == mine or (S.phase ~= "reserve" and onRecord) then
         return

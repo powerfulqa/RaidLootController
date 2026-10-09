@@ -90,6 +90,66 @@ local function ItemTooltip(owner, itemString)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(itemString)
     GameTooltip:Show()
+    -- Shift (or the "always compare" setting): the game's own side by side
+    -- with what you wear, like a bag item.
+    if TooltipUtil and TooltipUtil.ShouldDoItemComparison(GameTooltip) and GameTooltip_ShowCompareItem then
+        GameTooltip_ShowCompareItem(GameTooltip)
+    end
+end
+
+-- Lowest item level among a worn value ("item:1,item:2"), or nil.
+local function wornLevel(worn)
+    local low
+    for s in (worn or ""):gmatch("[^,]+") do
+        local lvl = C_Item.GetDetailedItemLevelInfo(s)
+        if lvl and (not low or lvl < low) then
+            low = lvl
+        end
+    end
+    return low
+end
+
+-- Tooltip for a player who wants an item: what they wear in that slot and
+-- the raw stat change the new item would bring. No weights: officers judge.
+local function WornTooltip(owner, name, item)
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(NS.ColorName(name))
+    local worn = item.worn and item.worn[name]
+    if not worn then
+        GameTooltip:AddLine("No gear info: no addon, nothing in that slot, or not asked yet.", 0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+        return
+    end
+    local _, newLink = C_Item.GetItemInfo(item.itemString)
+    for s in worn:gmatch("[^,]+") do
+        local _, link = C_Item.GetItemInfo(s)
+        local lvl = C_Item.GetDetailedItemLevelInfo(s)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Wears " .. (link or NS.LinkOf(s)) .. (lvl and (" (ilvl " .. lvl .. ")") or ""))
+        local delta = newLink and link and C_Item.GetItemStatDelta(newLink, link)
+        if not delta then
+            GameTooltip:AddLine("Stats loading, hover again.", 0.6, 0.6, 0.6)
+        else
+            local keys = {}
+            for k, v in pairs(delta) do
+                if v ~= 0 then
+                    keys[#keys + 1] = k
+                end
+            end
+            table.sort(keys)
+            for _, k in ipairs(keys) do
+                local v = delta[k]
+                local text = (v == math.floor(v) and string.format("%+d", v) or string.format("%+.1f", v))
+                    .. " "
+                    .. (_G[k] or k)
+                GameTooltip:AddLine(text, v > 0 and 0.1 or 1, v > 0 and 1 or 0.3, v > 0 and 0.1 or 0.3)
+            end
+            if #keys == 0 then
+                GameTooltip:AddLine("No stat change.", 0.6, 0.6, 0.6)
+            end
+        end
+    end
+    GameTooltip:Show()
 end
 
 -- Scrolling list of clickable rows. `cols` is a list of column widths; an
@@ -382,7 +442,11 @@ local wantBtn = Button(rp, "I want this", 110, function()
     local S = NS.S()
     local item = S and selKey and S.items[selKey]
     if item then
-        NS.Act("WANT", item.key, item.wants[NS.Me()] and 0 or 1)
+        if item.wants[NS.Me()] then
+            NS.Act("WANT", item.key, 0)
+        else
+            NS.Act("WANT", item.key, 1, Loot.WornFor(item.itemString))
+        end
     end
 end)
 wantBtn:SetPoint("TOPLEFT", myInfo, "BOTTOMLEFT", 0, -6)
@@ -397,6 +461,13 @@ local people = List(rp, 390, 190, { 130, 150, 50 }, false, function(name)
 end, { "Player", "Interest", "Roll" })
 people.frame:SetPoint("TOPLEFT", wantBtn, "BOTTOMLEFT", 4, -24)
 people.frame:SetPoint("BOTTOMLEFT", rp, "BOTTOMLEFT", 4, 58)
+people.onEnter = function(row, name)
+    local S = NS.S()
+    local item = S and selKey and S.items[selKey]
+    if item and name then
+        WornTooltip(row, name, item)
+    end
+end
 
 -- Officer controls.
 local admin = CreateFrame("Frame", nil, rp)
@@ -586,7 +657,8 @@ local function refreshLoot(S)
         r.cols[1]:SetText(NS.ColorName(name))
         local tags = {}
         if item.wants[name] then
-            tags[#tags + 1] = "wants it"
+            local lvl = wornLevel(item.worn and item.worn[name])
+            tags[#tags + 1] = "wants it" .. (lvl and ("|cff999999 (wears ilvl " .. lvl .. ")|r") or "")
         end
         if S.reserves[name] == item.itemID then
             tags[#tags + 1] = "|cff66ccffreserved|r"
@@ -792,10 +864,21 @@ end
 local mySpecLabel = Text(rpg, "GameFontNormal")
 mySpecLabel:SetPoint("TOPLEFT", 420, -62)
 mySpecLabel:SetWidth(270)
-local mySpecBtn = Button(rpg, "Change spec", 110, function(self)
+local mySpecBtn = Button(rpg, "Change loot spec", 120, function(self)
     showPlayerSpecMenu(self, NS.Me())
 end)
 mySpecBtn:SetPoint("TOPLEFT", mySpecLabel, "BOTTOMLEFT", 0, -4)
+-- Dual spec: talents say what you play tonight, not what you loot for. A
+-- detected spec stays a guess until the player confirms it once.
+local confirmSpecBtn = Button(rpg, "Confirm", 70, function()
+    local spec = NS.Specs.Mine()
+    if spec then
+        NS.Specs.Choose(spec)
+    end
+end)
+confirmSpecBtn:SetPoint("LEFT", mySpecBtn, "RIGHT", 6, 0)
+AddGlow(mySpecBtn)
+AddGlow(confirmSpecBtn)
 
 local players = List(rpg, 690, 205, { 110, 90, 170, 50, 100, 70 }, false, function(name)
     raidSel = name
@@ -943,9 +1026,12 @@ local function refreshRaid(S)
     -- Own spec: what we would report, and what the raid has on record.
     local mySpec, picked = NS.Specs.Mine()
     local onRecord = S and S.specs[me]
-    local line = "Your spec: "
+    local line = "Your loot spec: "
         .. (mySpec and specName(mySpec) or "|cffff8800unknown, pick one|r")
-        .. (mySpec and (picked and " (picked)" or " (from talents)") or "")
+        .. (mySpec and (picked and " (confirmed)" or " |cffff8800(from talents: confirm it)|r") or "")
+    confirmSpecBtn:SetShown(mySpec ~= nil and not picked)
+    confirmSpecBtn.SetGlow(mySpec ~= nil and not picked)
+    mySpecBtn.SetGlow(mySpec == nil)
     if onRecord and onRecord ~= mySpec then
         line = line .. "\n|cffff8800Raid has you as " .. specName(onRecord) .. " (locked).|r"
     end

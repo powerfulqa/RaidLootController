@@ -93,6 +93,10 @@ only from the session host (and `NEW` only from a leader or assistant).
     does not reach the host's `CHAT_MSG_SYSTEM` (the host ignores it either way).
 14. The glow (`AddGlow` in `RLC_UI.lua`) shows and pulses on the I want this,
     Roll and minimap buttons, and stops after the click.
+15. Upgrade info: `Loot.WornFor` finds the worn item for each slot (ranged,
+    wand, relic assume slot 18), `C_Item.GetItemStatDelta` returns readable
+    deltas for Classic-era items, and Shift on a Loot tab item shows the
+    game's compare tooltip.
 
 ## Dev tooling
 

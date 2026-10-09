@@ -5,7 +5,7 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 - **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid.
 - **Soft reserves.** Before the raid starts, reserve one item. If nobody else reserves it, it is yours when it drops. If several players reserve it, only they roll.
 - **Server-verified rolls.** The Roll button uses the game's own `/roll`, so nobody can fake a number. Everyone with the addon sees the rolls live.
-- **Best-for specs.** Each item is matched to the specs it suits (armor type, weapon type and stats), so a hunter can't roll on a rogue's leather. Your spec is read from your talents. Officers can change who may roll, and undo a win given by mistake.
+- **Best-for specs.** Each item is matched to the specs it suits (armor type, weapon type and stats), so a hunter can't roll on a rogue's leather. Your loot spec is guessed from your talents and confirmed by you once. Officers can change who may roll, and undo a win given by mistake.
 - **Officer controls.** The raid leader (or an assistant) hosts the session and can make other players officers. Officers put items up, call and close rolls, open an item to everyone, restrict an item to some classes, give an item by hand, and lock or unlock players.
 - **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, and who wanted it.
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
@@ -24,7 +24,11 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
 9. The winner gets the item by master loot if the loot window is still open. Otherwise it goes into the trade window the next time the host trades them.
 
-An officer can **Unlock** a player on the Raid tab so they can roll normally again. Winning any item uses up your reserve: if you win something else first, your reserved item goes to the other reservers, or to a normal roll.
+An officer can **Unlock** a player on the Raid tab so they can roll normally again.
+
+- **Free rolls don't count.** Winning an item that was opened to everyone (usually off-spec) does not lock you and does not touch your reserve.
+- **Your reserve is safe.** Winning another item first does not cost you your reserve: it still pays out when it drops, as your second item.
+- **Upgrade size.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the raw stat change. No scores, officers judge.
 
 ## The loot catalogue
 
@@ -45,7 +49,7 @@ When an item is added, the addon works out which specs it suits:
 
 The Loot tab shows the result as "Best for". Only those specs can click I want this and roll. If none of them wants the item, it opens to everyone, as with the one-item rule.
 
-Your spec comes from your talents (the tree with the most points). Feral druids pick cat or bear by hand on the Raid tab. You can change your spec until the raid starts; after that it is locked, and only an officer can change it. Players without the addon are checked by class only.
+Your **loot spec** is the spec you want gear for, not the one you play tonight (dual spec: an off-tank in dps spec still loots as a tank). The addon guesses it from your talents (the tree with the most points) and asks you to **Confirm** it once on the Raid tab, or pick another with **Change loot spec**. It is saved per character. Feral druids pick cat or bear. You can change it until the raid starts; after that it is locked, and only an officer can change it. Players without the addon are checked by class only.
 
 Officers can:
 

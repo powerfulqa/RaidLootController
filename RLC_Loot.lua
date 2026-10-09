@@ -18,6 +18,52 @@ NS.Loot = Loot
 
 -- ---- rolls -----------------------------------------------------------------
 
+-- Inventory slots an item would replace, by equip location. Two slots for
+-- rings, trinkets and one-hand weapons: both are sent.
+-- ponytail: ranged/relic assume slot 18 (Classic layout); Forever unmeasured.
+local SLOTS = {
+    INVTYPE_HEAD = { 1 },
+    INVTYPE_NECK = { 2 },
+    INVTYPE_SHOULDER = { 3 },
+    INVTYPE_BODY = { 4 },
+    INVTYPE_CHEST = { 5 },
+    INVTYPE_ROBE = { 5 },
+    INVTYPE_WAIST = { 6 },
+    INVTYPE_LEGS = { 7 },
+    INVTYPE_FEET = { 8 },
+    INVTYPE_WRIST = { 9 },
+    INVTYPE_HAND = { 10 },
+    INVTYPE_FINGER = { 11, 12 },
+    INVTYPE_TRINKET = { 13, 14 },
+    INVTYPE_CLOAK = { 15 },
+    INVTYPE_WEAPON = { 16, 17 },
+    INVTYPE_2HWEAPON = { 16 },
+    INVTYPE_WEAPONMAINHAND = { 16 },
+    INVTYPE_WEAPONOFFHAND = { 17 },
+    INVTYPE_SHIELD = { 17 },
+    INVTYPE_HOLDABLE = { 17 },
+    INVTYPE_RANGED = { 18 },
+    INVTYPE_RANGEDRIGHT = { 18 },
+    INVTYPE_THROWN = { 18 },
+    INVTYPE_RELIC = { 18 },
+}
+
+-- What this player wears where itemString would go, as the WANT request's
+-- worn field ("item:1,item:2"), or nil. Officers see it to judge how big
+-- an upgrade is; it is advice, never a rule.
+function Loot.WornFor(itemString)
+    local equipLoc = select(4, C_Item.GetItemInfoInstant(itemString))
+    local parts = {}
+    for _, slot in ipairs(SLOTS[equipLoc] or {}) do
+        parts[#parts + 1] = NS.ItemStringOf(GetInventoryItemLink("player", slot))
+    end
+    local worn = table.concat(parts, ",")
+    if #worn > NS.Rules.MAX_WORN then
+        worn = parts[1] or "" -- two long itemStrings: the first slot is enough
+    end
+    return worn ~= "" and worn or nil
+end
+
 function Loot.Roll()
     RandomRoll(1, 100)
 end

@@ -20,7 +20,7 @@ read_globals = {
     "C_AddOns", "C_ChatInfo", "C_ClassColor", "C_Container", "C_Item", "C_Timer", "C_TooltipInfo",
     "CANCEL", "ChatEdit_InsertLink", "ChatFrameUtil", "ClearCursor", "ClickTradeButton", "CopyTable",
     "CreateFrame", "DEFAULT_CHAT_FRAME", "Enum", "ERR_TRADE_COMPLETE", "GameTooltip", "GameTooltip_Hide",
-    "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetLootSlotInfo", "GetLootSlotLink",
+    "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetInventoryItemLink", "GameTooltip_ShowCompareItem", "TooltipUtil", "GetLootSlotInfo", "GetLootSlotLink",
     "GetLootSourceInfo", "GetMasterLootCandidate", "GetNormalizedRealmName", "GetNumClasses",
     "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetCursorPosition", "GetMinimapShape", "GetTime", "GetTradePlayerItemLink",
     "GiveMasterLoot", "Constants", "RegionalUniqueNamesEnabled", "MenuUtil", "C_SpecializationInfo", "C_Traits", "HandleModifiedItemClick", "hooksecurefunc", "IsInGroup", "IsInGuild", "IsModifiedClick", "IsInRaid", "ITEM_CLASSES_ALLOWED",
