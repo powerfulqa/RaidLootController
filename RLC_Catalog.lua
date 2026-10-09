@@ -75,8 +75,30 @@ local function total(cat)
     return totals[cat]
 end
 
+-- itemID -> { { inst, boss, rec }, ... }, built on first lookup and dropped
+-- whenever a record is added or deleted. Entries are the live tables, so
+-- counts that rise later show without a rebuild.
+local index = setmetatable({}, { __mode = "k" })
+
 function Catalog.Forget(cat)
-    totals[cat] = nil
+    totals[cat], index[cat] = nil, nil
+end
+
+-- Where an item drops: a list of { inst, boss, rec }, or nil.
+function Catalog.Find(cat, itemID)
+    if not index[cat] then
+        local idx = {}
+        for _, inst in pairs(cat) do
+            for _, boss in pairs(inst.b) do
+                for id, rec in pairs(boss.i) do
+                    idx[id] = idx[id] or {}
+                    table.insert(idx[id], { inst = inst, boss = boss, rec = rec })
+                end
+            end
+        end
+        index[cat] = idx
+    end
+    return index[cat][itemID]
 end
 
 -- A new item record, or nil when a cap says no.
@@ -85,6 +107,7 @@ local function newRecord(cat, boss, itemString)
         return nil
     end
     totals[cat] = total(cat) + 1
+    index[cat] = nil
     local rec = { s = itemString, n = 0, t = 0 }
     boss.i[Rules.ItemIDOf(itemString)] = rec
     return rec
@@ -396,7 +419,7 @@ function Catalog.Ask(dest, force)
     for instID, d in pairs(Catalog.Digest(cat())) do
         NS.Net.QueueCatalog({ "CQ", instID, d.e, d.n, d.k }, dest)
     end
-    NS.Net.QueueCatalog({ "CQE" }, dest)
+    NS.Net.QueueCatalog({ "CQE", NS.VERSION }, dest) -- older clients ignore the version
 end
 
 local asking = {} -- sender -> { dest, digest, n } while their request arrives
@@ -456,6 +479,7 @@ function Catalog.OnMessage(ops, dest, sender)
                 req.n = req.n + 1
             end
         elseif kind == "CQE" then
+            NS.NoteVersion(sender, op[2])
             answer(sender, asking[sender] or { dest = dest, digest = {} })
             asking[sender] = nil
         else

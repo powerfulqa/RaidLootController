@@ -7,7 +7,7 @@ local Rules = NS.Rules
 local Loot = NS.Loot
 
 local W, H = 720, 500
-local ROW = 18
+local ROW = 22
 
 local STATE_TEXT = {
     pending = "|cff999999Waiting|r",
@@ -154,27 +154,71 @@ end
 -- `headers` (optional) labels the columns, in a row just above the list.
 local function List(parent, w, h, cols, withIcon, onClick, headers)
     local sf = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    sf.scrollBarHideable = true -- the template hides the bar while the rows fit
     sf:SetSize(w - 24, h)
     local child = CreateFrame("Frame", nil, sf)
     child:SetSize(w - 24, 1)
     sf:SetScrollChild(child)
-    local bg = sf:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("TOPLEFT", -4, 4)
-    bg:SetPoint("BOTTOMRIGHT", 22, -4)
-    bg:SetColorTexture(0, 0, 0, 0.35)
+    -- WoWClearance's list box: dark tooltip fill, bronze edge, column
+    -- labels inside the top of the box, room for the scroll bar on the right.
+    local box = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    box:SetPoint("TOPLEFT", sf, "TOPLEFT", -6, headers and 18 or 6)
+    box:SetPoint("BOTTOMRIGHT", sf, "BOTTOMRIGHT", 26, -6)
+    box:SetFrameLevel(math.max(0, sf:GetFrameLevel() - 1))
+    box:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    box:SetBackdropColor(0, 0, 0, 0.6)
+    box:SetBackdropBorderColor(0.4, 0.35, 0.25, 1)
 
     local rows = {}
     local list = { frame = sf, headers = {} }
 
+    -- Column widths are minimums. A list stretched by its anchors (a
+    -- resized window) shares the extra width out in proportion.
+    local widths, base = { unpack(cols) }, 0
+    for _, cw in ipairs(cols) do
+        base = base + cw
+    end
+    local function layout(r) -- a row, or nil for the header row
+        local x = withIcon and (ROW + 4) or 2
+        for c, cw in ipairs(widths) do
+            local cell = r and r.cols[c] or not r and list.headers[c]
+            if cell then
+                cell:SetWidth(cw)
+                if r then
+                    cell:SetPoint("LEFT", x, 0)
+                else
+                    cell:SetPoint("BOTTOMLEFT", sf, "TOPLEFT", x, 2)
+                end
+            end
+            x = x + cw + 4
+        end
+    end
+    sf:SetScript("OnSizeChanged", function(_, width)
+        child:SetWidth(width)
+        local k = math.max(1, (base + width - (w - 24)) / base)
+        for c, cw in ipairs(cols) do
+            widths[c] = math.floor(cw * k)
+        end
+        layout()
+        for _, r in ipairs(rows) do
+            layout(r)
+        end
+    end)
+
     -- Column labels. They become sort buttons once the caller sorts with
     -- list:Sort; click once to sort, again to reverse.
     if headers then
-        local x = withIcon and (ROW + 4) or 2
-        for c, cw in ipairs(cols) do
+        for c in ipairs(cols) do
             if headers[c] and headers[c] ~= "" then
                 local hdr = CreateFrame("Button", nil, sf)
-                hdr:SetSize(cw, 14)
-                hdr:SetPoint("BOTTOMLEFT", sf, "TOPLEFT", x, 4)
+                hdr:SetHeight(14)
                 hdr:EnableMouse(false)
                 hdr.text = hdr:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 hdr.text:SetPoint("LEFT")
@@ -194,8 +238,8 @@ local function List(parent, w, h, cols, withIcon, onClick, headers)
                 end)
                 list.headers[c] = hdr
             end
-            x = x + cw + 4
         end
+        layout()
     end
 
     -- Reorder `arr` in place by the clicked column. keys[c](entry) gives a
@@ -251,21 +295,16 @@ local function List(parent, w, h, cols, withIcon, onClick, headers)
         r.sel = r:CreateTexture(nil, "BACKGROUND")
         r.sel:SetAllPoints()
         r.sel:SetColorTexture(1, 0.82, 0, 0.18)
-        local x = 2
         if withIcon then
             r.icon = r:CreateTexture(nil, "ARTWORK")
             r.icon:SetSize(ROW - 2, ROW - 2)
-            r.icon:SetPoint("LEFT", x, 0)
-            x = x + ROW + 2
+            r.icon:SetPoint("LEFT", 2, 0)
         end
         r.cols = {}
-        for c, cw in ipairs(cols) do
-            local fs = Text(r)
-            fs:SetPoint("LEFT", x, 0)
-            fs:SetWidth(cw)
-            r.cols[c] = fs
-            x = x + cw + 4
+        for c in ipairs(cols) do
+            r.cols[c] = Text(r)
         end
+        layout(r)
         r:SetScript("OnClick", function(self)
             if onClick then
                 onClick(self.data)
@@ -292,6 +331,9 @@ local function List(parent, w, h, cols, withIcon, onClick, headers)
             rows[i]:Hide()
         end
         child:SetHeight(math.max(1, n * ROW))
+        -- The template only hides its bar when the scroll range CHANGES, so a
+        -- list that always fits would keep showing it. Decide here too.
+        sf.ScrollBar:SetShown(n * ROW > sf:GetHeight())
     end
     return list
 end
@@ -304,11 +346,56 @@ f:SetPoint("CENTER")
 f:SetFrameStrata("HIGH")
 f:SetToplevel(true)
 f:SetMovable(true)
+f:SetResizable(true)
+f:SetResizeBounds(W, H) -- every page is laid out for this size or bigger
+f:SetDontSavePosition(true) -- the layout cache must not fight saveWindow
 f:EnableMouse(true)
 f:RegisterForDrag("LeftButton")
-f:SetScript("OnDragStart", f.StartMoving)
-f:SetScript("OnDragStop", f.StopMovingOrSizing)
 f:SetClampedToScreen(true)
+
+-- Size and place, kept in the real saved table so /rlc demo keeps them too.
+local POINTS = { TOPLEFT = 1, TOP = 1, TOPRIGHT = 1, LEFT = 1, CENTER = 1, RIGHT = 1 }
+POINTS.BOTTOMLEFT, POINTS.BOTTOM, POINTS.BOTTOMRIGHT = 1, 1, 1
+local function saveWindow()
+    f:StopMovingOrSizing()
+    local point, _, rel, x, y = f:GetPoint()
+    if RaidLootControllerDB then
+        RaidLootControllerDB.window = { w = f:GetWidth(), h = f:GetHeight(), point = point, rel = rel, x = x, y = y }
+    end
+end
+local function restoreWindow()
+    local s = RaidLootControllerDB and RaidLootControllerDB.window
+    if type(s) ~= "table" then
+        return
+    end
+    local w, h = tonumber(s.w), tonumber(s.h)
+    if w and h then
+        f:SetSize(math.max(W, w), math.max(H, h))
+    end
+    if POINTS[s.point] and POINTS[s.rel] and tonumber(s.x) and tonumber(s.y) then
+        f:ClearAllPoints()
+        f:SetPoint(s.point, UIParent, s.rel, s.x, s.y)
+    end
+end
+f:SetScript("OnSizeChanged", function()
+    if NS.Refresh then -- not yet while this file loads
+        NS.Refresh() -- the Commands page sizes its rows when it draws
+    end
+end)
+f:SetScript("OnDragStart", f.StartMoving)
+f:SetScript("OnDragStop", saveWindow)
+
+-- Drag the corner to resize, as in WoWClearance.
+local grip = CreateFrame("Button", nil, f)
+grip:SetSize(16, 16)
+grip:SetPoint("BOTTOMRIGHT", -6, 6)
+grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+grip:SetScript("OnMouseDown", function()
+    f:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
+end)
+grip:SetScript("OnMouseUp", saveWindow)
 ButtonFrameTemplate_HidePortrait(f)
 f:SetTitle("Raid Loot Controller")
 f:Hide()
@@ -322,12 +409,91 @@ f:SetScript("OnMouseUp", function()
     end
 end)
 
+-- ---- copy window ------------------------------------------------------------------
+-- Text to copy out of the game (a raid's results, a bug report). Opens
+-- without keyboard focus so it can stay up while you play; clicking the
+-- text selects all of it for one Ctrl+C. As in WoWClearance.
+
+local copy
+-- w, h: optional size; a single link needs far less than a report.
+function NS.ShowCopy(title, text, w, h)
+    if not copy then
+        copy = CreateFrame("Frame", "RaidLootControllerCopy", UIParent, "ButtonFrameTemplate")
+        copy:SetSize(520, 360)
+        copy:SetPoint("CENTER", 40, -40)
+        copy:SetFrameStrata("DIALOG")
+        copy:SetToplevel(true)
+        copy:SetMovable(true)
+        copy:SetResizable(true)
+        copy:SetResizeBounds(320, 120)
+        copy:EnableMouse(true)
+        copy:RegisterForDrag("LeftButton")
+        copy:SetScript("OnDragStart", copy.StartMoving)
+        copy:SetScript("OnDragStop", copy.StopMovingOrSizing)
+        copy:SetClampedToScreen(true)
+        ButtonFrameTemplate_HidePortrait(copy)
+        tinsert(UISpecialFrames, "RaidLootControllerCopy")
+        local hint = Text(copy, "GameFontDisableSmall")
+        hint:SetPoint("TOPLEFT", 14, -34)
+        hint:SetText("Click the text, then Ctrl+C to copy.")
+        local sf = CreateFrame("ScrollFrame", nil, copy, "UIPanelScrollFrameTemplate")
+        sf.scrollBarHideable = true
+        sf:SetPoint("TOPLEFT", 12, -64)
+        sf:SetPoint("BOTTOMRIGHT", -32, 30)
+        local box = CreateFrame("EditBox", nil, sf)
+        box:SetMultiLine(true)
+        box:SetAutoFocus(false)
+        box:SetFontObject("GameFontHighlightSmall")
+        box:SetWidth(460)
+        box:SetScript("OnEscapePressed", box.ClearFocus)
+        box:SetScript("OnEditFocusGained", function(self)
+            self:HighlightText()
+        end)
+        -- Read only: typing puts the text back.
+        box:SetScript("OnTextChanged", function(self, user)
+            if user then
+                self:SetText(copy.text)
+                self:HighlightText()
+            end
+        end)
+        sf:SetScrollChild(box)
+        sf:SetScript("OnSizeChanged", function(_, width)
+            box:SetWidth(width)
+        end)
+        local cgrip = CreateFrame("Button", nil, copy)
+        cgrip:SetSize(16, 16)
+        cgrip:SetPoint("BOTTOMRIGHT", -6, 6)
+        cgrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        cgrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+        cgrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+        cgrip:SetScript("OnMouseDown", function()
+            copy:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
+        end)
+        cgrip:SetScript("OnMouseUp", function()
+            copy:StopMovingOrSizing()
+        end)
+        copy.box, copy.sf = box, sf
+    end
+    copy:SetSize(w or 520, h or 360)
+    copy:SetTitle(title)
+    copy.text = text
+    copy.box:SetText(text)
+    copy.box:ClearFocus()
+    copy:Show()
+    -- Text that fits needs no scroll bar (the template only checks when the
+    -- range changes). The box has its height a frame after SetText.
+    C_Timer.After(0, function()
+        copy.sf.ScrollBar:SetShown(copy.box:GetHeight() > copy.sf:GetHeight())
+    end)
+    copy:Raise()
+end
+
 local pages, tabs = {}, {}
 local current = "loot"
 
 local function page(key)
     local p = CreateFrame("Frame", nil, f)
-    p:SetPoint("TOPLEFT", 12, -60)
+    p:SetPoint("TOPLEFT", 12, -66) -- input boxes draw a few px above their frame
     p:SetPoint("BOTTOMRIGHT", -12, 30)
     p:Hide()
     pages[key] = p
@@ -353,15 +519,16 @@ local TABS = {
     { "loot", "Loot" },
     { "raid", "Raid" },
     { "history", "History" },
+    { "stats", "Stats" },
     { "catalog", "Catalogue" },
     { "commands", "Commands" },
     { "help", "Help" },
 }
 for i, def in ipairs(TABS) do
-    local b = Button(f, def[2], 100, function()
+    local b = Button(f, def[2], 92, function()
         showPage(def[1])
     end)
-    b:SetPoint("TOPLEFT", 12 + (i - 1) * 104, -30)
+    b:SetPoint("TOPLEFT", 12 + (i - 1) * 96, -30)
     tabs[def[1]] = b
 end
 NS.ShowPage = function(key)
@@ -403,7 +570,7 @@ addLootBtn:SetPoint("BOTTOMLEFT", 0, 0)
 -- Shown on the right while there is no item to show.
 local emptyText = Text(lp, "GameFontHighlight")
 emptyText:SetPoint("TOPLEFT", 310, -30)
-emptyText:SetWidth(370)
+emptyText:SetPoint("TOPRIGHT", -10, -30)
 emptyText:SetWordWrap(true)
 emptyText:SetSpacing(4)
 
@@ -425,13 +592,13 @@ bigIcon:SetScript("OnLeave", GameTooltip_Hide)
 
 local itemName = Text(rp, "GameFontNormalLarge")
 itemName:SetPoint("TOPLEFT", bigIcon, "TOPRIGHT", 8, 0)
-itemName:SetWidth(340)
+itemName:SetPoint("TOPRIGHT", rp, "TOPRIGHT", 0, 0)
 local itemInfo = Text(rp)
 itemInfo:SetPoint("TOPLEFT", itemName, "BOTTOMLEFT", 0, -4)
-itemInfo:SetWidth(340)
+itemInfo:SetPoint("TOPRIGHT", itemName, "BOTTOMRIGHT", 0, -4)
 local specInfo = Text(rp)
 specInfo:SetPoint("TOPLEFT", itemInfo, "BOTTOMLEFT", 0, -3)
-specInfo:SetWidth(340)
+specInfo:SetPoint("TOPRIGHT", itemInfo, "BOTTOMRIGHT", 0, -3)
 local myInfo = Text(rp, "GameFontNormalSmall")
 myInfo:SetPoint("TOPLEFT", bigIcon, "BOTTOMLEFT", 0, -14)
 myInfo:SetWidth(380)
@@ -459,6 +626,7 @@ local people = List(rp, 390, 190, { 130, 150, 50 }, false, function(name)
 end, { "Player", "Interest", "Roll" })
 people.frame:SetPoint("TOPLEFT", wantBtn, "BOTTOMLEFT", 4, -24)
 people.frame:SetPoint("BOTTOMLEFT", rp, "BOTTOMLEFT", 4, 58)
+people.frame:SetPoint("BOTTOMRIGHT", rp, "BOTTOMRIGHT", -26, 58)
 people.onEnter = function(row, name)
     local S = NS.S()
     local item = S and selKey and S.items[selKey]
@@ -470,12 +638,26 @@ end
 -- Officer controls.
 local admin = CreateFrame("Frame", nil, rp)
 admin:SetPoint("BOTTOMLEFT", 0, 0)
-admin:SetSize(400, 50)
+admin:SetPoint("BOTTOMRIGHT", 0, 0)
+admin:SetHeight(50)
+local adminButtons = {}
 local function adminButton(text, w, x, y, fn)
     local b = Button(admin, text, w, fn)
-    b:SetPoint("BOTTOMLEFT", x, y)
+    b.col, b.y = x / 100, y
+    adminButtons[#adminButtons + 1] = b
     return b
 end
+-- Four equal columns across whatever width the panel has.
+admin:SetScript("OnSizeChanged", function(_, width)
+    local bw = math.floor((width - 12) / 4)
+    for _, b in ipairs(adminButtons) do
+        b:SetWidth(bw)
+        b:SetPoint("BOTTOMLEFT", b.col * (bw + 4), b.y)
+    end
+end)
+rp:SetScript("OnSizeChanged", function(_, width)
+    myInfo:SetWidth(width)
+end)
 local function onSel(kind)
     return function()
         if selKey then
@@ -553,6 +735,12 @@ local function refreshLoot(S)
     addLootBtn:SetText(pending > 0 and ("Add " .. pending .. " from loot") or "Add from loot")
     dropHint:SetShown(officer)
     admin:SetShown(officer)
+    -- Lists run down to the officer controls, or to the bottom without them.
+    local qy = officer and 62 or 6
+    queue.frame:SetPoint("BOTTOMLEFT", lp, "BOTTOMLEFT", 4, qy)
+    local py = officer and 64 or 6
+    people.frame:SetPoint("BOTTOMLEFT", rp, "BOTTOMLEFT", 4, py)
+    people.frame:SetPoint("BOTTOMRIGHT", rp, "BOTTOMRIGHT", -26, py)
 
     local item = S and selKey and S.items[selKey]
     rp:SetShown(item ~= nil)
@@ -815,7 +1003,7 @@ announceBtn:SetPoint("RIGHT", syncBtn, "LEFT", -6, 0)
 
 local raidHelp = Text(rpg)
 raidHelp:SetPoint("TOPLEFT", 0, -30)
-raidHelp:SetWidth(680)
+raidHelp:SetPoint("TOPRIGHT", 0, -30)
 raidHelp:SetWordWrap(true)
 
 -- Reserve controls.
@@ -892,12 +1080,19 @@ local players = List(rpg, 690, 205, { 110, 90, 170, 50, 100, 70 }, false, functi
 end, { "Player", "Spec", "Reserve", "Won", "Status", "Role" })
 players.frame:SetPoint("TOPLEFT", 4, -142)
 players.frame:SetPoint("BOTTOMLEFT", rpg, "BOTTOMLEFT", 4, 62)
+players.frame:SetPoint("BOTTOMRIGHT", rpg, "BOTTOMRIGHT", -26, 62)
 players.onEnter = function(row, name)
     local S = NS.S()
     local id = S and S.reserves[name]
     if id then
         ItemTooltip(row, "item:" .. id)
+    else
+        GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(NS.ColorName(name))
     end
+    local v = name == NS.Me() and NS.VERSION or NS.versions[name]
+    GameTooltip:AddLine("Addon: " .. (v or "not heard from yet"), 0.6, 0.6, 0.6)
+    GameTooltip:Show()
 end
 
 local lockBtn = Button(rpg, "Unlock", 100, function()
@@ -928,6 +1123,9 @@ local owedClearBtn = Button(rpg, "Clear", 60, function()
 end)
 owedClearBtn:SetPoint("BOTTOMRIGHT", 0, 0)
 owedText:SetWordWrap(true)
+rpg:SetScript("OnSizeChanged", function(_, width)
+    owedText:SetWidth(width - 70)
+end)
 
 local function refreshRaid(S)
     local me = NS.Me()
@@ -1019,6 +1217,9 @@ local function refreshRaid(S)
         if S then
             status = S.locks[name] and "|cffff8800Has an item|r" or "|cff00ff00Can roll|r"
         end
+        if Rules.VersionNewer(NS.VERSION, NS.versions[name]) then
+            status = status .. " |cffff3333old addon|r"
+        end
         r.cols[5]:SetText(status)
         r.cols[6]:SetText(S and (S.host == name and "Host" or (S.officers[name] and "Officer")) or "")
         return name == raidSel
@@ -1059,6 +1260,16 @@ local function refreshRaid(S)
     announceBtn:SetShown(NS.IsHost())
     announceBtn:SetText(NS.DB.announce and "Announce: on" or "Announce: off")
     owedText:SetText("Still to trade: " .. table.concat(parts, ", "))
+
+    -- The list runs down to whatever is shown under it, so a raider with no
+    -- officer buttons and nothing owed gets the whole height.
+    local owed = #parts > 0
+    local btnY = owed and 28 or 0
+    lockBtn:SetPoint("BOTTOMLEFT", 0, btnY)
+    local top = officer and (btnY + 22) or owed and 22 or nil
+    local listY = top and (top + 12) or 6
+    players.frame:SetPoint("BOTTOMLEFT", rpg, "BOTTOMLEFT", 4, listY)
+    players.frame:SetPoint("BOTTOMRIGHT", rpg, "BOTTOMRIGHT", -26, listY)
 end
 
 -- ---- History page ---------------------------------------------------------------------
@@ -1092,9 +1303,10 @@ end, { "Date", "Raid" })
 raidsList.frame:SetPoint("TOPLEFT", 4, -20)
 raidsList.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 4, 4)
 
-local histItems = List(hp, 436, 350, { 180, 110, 80 }, true, nil, { "Item", "Winner", "How" })
+local histItems = List(hp, 436, 350, { 160, 100, 130 }, true, nil, { "Item", "Winner", "How" })
 histItems.frame:SetPoint("TOPLEFT", 250, -20)
 histItems.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 250, 34)
+histItems.frame:SetPoint("BOTTOMRIGHT", hp, "BOTTOMRIGHT", -26, 34)
 histItems.onEnter = function(row, item)
     GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(item.itemString)
@@ -1154,6 +1366,16 @@ local delBtn = Button(hp, "Delete raid", 100, function()
 end)
 delBtn:SetPoint("BOTTOMLEFT", 246, 0)
 logBtn:SetPoint("LEFT", delBtn, "RIGHT", 6, 0)
+local copyBtn = Button(hp, "Copy as text", 110, function()
+    local rec = histSel and NS.DB.history[histSel]
+    if rec then
+        local text = Rules.HistoryText(rec, date("%d %b %Y", rec.created or 0), function(s)
+            return C_Item.GetItemInfo(s) or ("item " .. (Rules.ItemIDOf(s) or "?"))
+        end, NS.Short)
+        NS.ShowCopy("Raid results", text)
+    end
+end)
+copyBtn:SetPoint("LEFT", logBtn, "RIGHT", 6, 0)
 
 local function refreshHistory()
     local hist = NS.DB.history
@@ -1209,10 +1431,11 @@ local function refreshHistory()
         r.icon:SetTexture(NS.IconOf(item.itemString))
         r.cols[1]:SetText(NS.LinkOf(item.itemString))
         r.cols[2]:SetText(NS.ColorName(item.winner))
-        r.cols[3]:SetText(HOW_TEXT[item.how] or "")
+        r.cols[3]:SetText((HOW_TEXT[item.how] or "") .. (item.delivered and " |cff00ff00delivered|r" or ""))
     end)
     delBtn:SetEnabled(rec ~= nil)
     logBtn:SetEnabled(rec ~= nil)
+    copyBtn:SetEnabled(rec ~= nil)
 end
 
 -- ---- Catalogue page ---------------------------------------------------------------------
@@ -1263,6 +1486,7 @@ local catItems = List(cp, 420, 330, { 165, 135, 58 }, true, function(rec)
 end, { "Item", "Dropped", "Last seen" })
 catItems.frame:SetPoint("TOPLEFT", 270, -46)
 catItems.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 270, 58)
+catItems.frame:SetPoint("BOTTOMRIGHT", cp, "BOTTOMRIGHT", -26, 58)
 catItems.onEnter = function(row, rec)
     ItemTooltip(row, rec.s)
 end
@@ -1297,7 +1521,7 @@ end)
 catForget:SetPoint("LEFT", catAsk, "RIGHT", 6, 0)
 local catHelp = Text(cp, "GameFontDisableSmall")
 catHelp:SetPoint("BOTTOMLEFT", 270, 4)
-catHelp:SetWidth(410)
+catHelp:SetPoint("BOTTOMRIGHT", 0, 4)
 catHelp:SetWordWrap(true)
 catHelp:SetText("Filled in by everyone's addon as bosses die. Shift-click an item to link it.")
 
@@ -1408,6 +1632,101 @@ local function refreshCatalog()
     catForget:SetEnabled(catBoss ~= nil)
 end
 
+-- ---- Stats page ----------------------------------------------------------------------
+-- Who has had what, over every saved raid: the check that loot is spread
+-- fairly. Free rolls are counted apart, as leftovers nobody needed.
+
+local sp = page("stats")
+local statsHelp = Text(sp, "GameFontDisableSmall")
+statsHelp:SetPoint("BOTTOMLEFT", 0, 4)
+statsHelp:SetPoint("BOTTOMRIGHT", 0, 4)
+statsHelp:SetWordWrap(true)
+statsHelp:SetText(
+    "From every raid in History. Raids counts the raids the addon saw a player in. "
+        .. "Items leaves out free rolls. Hover a player to see what they won."
+)
+local statsList = List(sp, 696, 360, { 150, 60, 60, 70, 70, 110 }, false, nil, {
+    "Player",
+    "Raids",
+    "Items",
+    "Free rolls",
+    "Per raid",
+    "Last item",
+})
+statsList.frame:SetPoint("TOPLEFT", 4, -20)
+statsList.frame:SetPoint("BOTTOMRIGHT", -26, 30)
+statsList.onEnter = function(row, name)
+    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(NS.ColorName(name))
+    local wins = {}
+    for _, rec in pairs(NS.DB.history) do
+        for _, it in pairs(rec.items or {}) do
+            if it.state == "done" and it.winner == name then
+                wins[#wins + 1] = { t = rec.created or 0, s = it.itemString, how = it.how }
+            end
+        end
+    end
+    table.sort(wins, function(a, b)
+        return a.t > b.t
+    end)
+    for i = 1, math.min(#wins, 20) do
+        local w = wins[i]
+        GameTooltip:AddDoubleLine(
+            NS.LinkOf(w.s) .. (w.how == "open" and " |cff999999(free)|r" or ""),
+            date("%d %b", w.t),
+            1,
+            1,
+            1,
+            0.6,
+            0.6,
+            0.6
+        )
+    end
+    if #wins == 0 then
+        GameTooltip:AddLine("Nothing won yet.", 0.6, 0.6, 0.6)
+    end
+    GameTooltip:Show()
+end
+
+local function refreshStats()
+    local stats = Rules.PlayerStats(NS.DB.history)
+    local names = {}
+    for name in pairs(stats) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    local function perRaid(name)
+        local e = stats[name]
+        return e.raids > 0 and e.won / e.raids or 0
+    end
+    statsList:Sort(names, {
+        NS.Short,
+        function(name)
+            return stats[name].raids
+        end,
+        function(name)
+            return stats[name].won
+        end,
+        function(name)
+            return stats[name].free
+        end,
+        perRaid,
+        function(name)
+            return stats[name].last
+        end,
+    })
+    statsList:Set(#names, function(r, i)
+        local name, e = names[i], stats[names[i]]
+        r.data = name
+        r.cols[1]:SetText(NS.ColorName(name))
+        r.cols[2]:SetText(e.raids)
+        r.cols[3]:SetText(e.won)
+        r.cols[4]:SetText(e.free > 0 and e.free or "")
+        r.cols[5]:SetText(string.format("%.2f", perRaid(name)))
+        r.cols[6]:SetText(e.last > 0 and date("%d %b %Y", e.last) or "|cff999999never|r")
+    end)
+end
+
 -- ---- refresh -------------------------------------------------------------------------
 
 local pendingRefresh = false
@@ -1419,12 +1738,22 @@ local lastActive
 -- follows your role in the raid. The list lives in NS.Commands (Core).
 
 local cmdPage = page("commands")
-local cmdHeader = Text(cmdPage, "GameFontNormal")
+local cmdScroll = CreateFrame("ScrollFrame", nil, cmdPage, "UIPanelScrollFrameTemplate")
+cmdScroll:SetPoint("TOPLEFT", 0, 0)
+cmdScroll:SetPoint("BOTTOMRIGHT", -26, 0)
+local cmdChild = CreateFrame("Frame", nil, cmdScroll)
+cmdChild:SetSize(600, 1)
+cmdScroll:SetScrollChild(cmdChild)
+
+local cmdHeader = Text(cmdChild, "GameFontNormal")
 cmdHeader:SetPoint("TOPLEFT", 0, -4)
-cmdHeader:SetWidth(690)
 cmdHeader:SetWordWrap(true)
 
+-- WoWClearance's layout: a gold rule and heading per section, then rows
+-- with the Run button in a column on the left and the text wrapping to
+-- the right of it.
 local SECTIONS = { "Everyone", "Officers", "Raid host", "Troubleshooting" }
+local LABEL_X = 72
 local cmdRows, cmdHeads = {}, {}
 
 local function runCommand(c)
@@ -1440,18 +1769,26 @@ local function runCommand(c)
 end
 
 local function refreshCommands()
+    local width = cmdScroll:GetWidth()
+    cmdChild:SetWidth(width)
+    cmdHeader:SetWidth(width)
     cmdHeader:SetText(
         "You are: |cffffd870"
             .. NS.RoleName()
             .. "|r. These are the commands you can use right now. "
             .. "Run does it; How tells you what to type for commands that need an item."
     )
-    local y = -34
+    local y = -4 - cmdHeader:GetStringHeight() - 6
     for _, section in ipairs(SECTIONS) do
         local head = cmdHeads[section]
         if not head then
-            head = Text(cmdPage, "GameFontNormal")
-            head:SetText("|cffffd870" .. section .. "|r")
+            head = {
+                rule = cmdChild:CreateTexture(nil, "ARTWORK"),
+                text = Text(cmdChild, "GameFontNormal"),
+            }
+            head.rule:SetColorTexture(0.4, 0.35, 0.25, 0.8)
+            head.rule:SetHeight(1)
+            head.text:SetText("|cffffd870" .. section .. "|r")
             cmdHeads[section] = head
         end
         local any = false
@@ -1459,43 +1796,45 @@ local function refreshCommands()
             local row = cmdRows[i]
             if not row then
                 row = {
-                    btn = Button(cmdPage, "Run", 64, function()
+                    btn = Button(cmdChild, "Run", 64, function()
                         runCommand(c)
                     end),
-                    label = Text(cmdPage),
+                    label = Text(cmdChild),
                 }
-                row.label:SetWidth(610)
+                row.btn:SetHeight(20)
+                row.label:SetWordWrap(true)
+                row.label:SetSpacing(2)
                 cmdRows[i] = row
             end
             local show = c.section == section and NS.CommandAvailable(c)
             if show then
                 if not any then
-                    head:ClearAllPoints()
-                    head:SetPoint("TOPLEFT", 0, y)
-                    y = y - 22
+                    y = y - 12
+                    head.rule:SetPoint("TOPLEFT", 0, y)
+                    head.rule:SetWidth(width - 16)
+                    head.text:SetPoint("TOPLEFT", LABEL_X, y - 6)
+                    y = y - 6 - head.text:GetStringHeight() - 8
                     any = true
                 end
-                row.btn:ClearAllPoints()
-                row.btn:SetPoint("TOPLEFT", 0, y)
-                row.btn:SetText(c.args and "How" or "Run")
-                row.label:ClearAllPoints()
-                row.label:SetPoint("LEFT", row.btn, "RIGHT", 8, 0)
                 local state = c.state and (c.state() and " |cff00ff00(on)|r" or " |cff999999(off)|r") or ""
+                row.label:SetWidth(width - LABEL_X - 16)
                 row.label:SetText(
                     "|cffffff00/rlc " .. c.cmd .. (c.args and (" " .. c.args) or "") .. "|r  " .. c.text .. state
                 )
-                y = y - 26
+                row.label:SetPoint("TOPLEFT", LABEL_X, y - 4)
+                row.btn:SetText(c.args and "How" or "Run")
+                row.btn:SetPoint("TOPLEFT", 0, y)
+                y = y - math.max(20, row.label:GetStringHeight() + 4) - 8
             end
             if c.section == section then
                 row.btn:SetShown(show)
                 row.label:SetShown(show)
             end
         end
-        head:SetShown(any)
-        if any then
-            y = y - 8
-        end
+        head.rule:SetShown(any)
+        head.text:SetShown(any)
     end
+    cmdChild:SetHeight(-y + 8)
 end
 
 local function refreshNow()
@@ -1507,6 +1846,7 @@ local function refreshNow()
     if NS.UpdateMinimapGlow then
         NS.UpdateMinimapGlow()
     end
+    Loot.PaintBags() -- the owed list may have changed
     -- A new item up for rolls pops the window open on the Loot page.
     local active = S and S.active
     if active and active ~= lastActive then
@@ -1536,6 +1876,8 @@ local function refreshNow()
         NS.RefreshHelp()
     elseif current == "commands" then
         refreshCommands()
+    elseif current == "stats" then
+        refreshStats()
     else
         refreshHistory()
     end
@@ -1549,7 +1891,12 @@ function NS.Refresh()
     end
 end
 
+local restored = false
 function NS.Show()
+    if not restored then
+        restored = true
+        restoreWindow()
+    end
     f:Show()
     showPage(current)
 end

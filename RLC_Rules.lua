@@ -256,6 +256,50 @@ end
 -- Turns the client's RANDOM_ROLL_RESULT ("%s rolls %d (%d-%d)") into a Lua
 -- pattern. Positional forms ("%1$s") used by some languages are flattened;
 -- the captures still come out name, roll, low, high in every shipped locale.
+-- Colour every case-insensitive match of `query` in `text` (Help search).
+-- Matches that touch an escape code (|cAARRGGBB, |r, |n, a link) are left
+-- alone, so the colour codes already in the text never break.
+function Rules.Highlight(text, query, color)
+    if query == "" then
+        return text
+    end
+    local code = {} -- byte positions inside an escape code
+    local i = 1
+    while true do
+        local s, e = text:find("|c%x%x%x%x%x%x%x%x", i)
+        local s2, e2 = text:find("|[rnHh]", i)
+        if s2 and (not s or s2 < s) then
+            s, e = s2, e2
+        end
+        if not s then
+            break
+        end
+        for k = s, e do
+            code[k] = true
+        end
+        i = e + 1
+    end
+    local lower, out, pos = text:lower(), {}, 1
+    local from = 1
+    while true do
+        local s, e = lower:find(query, from, true)
+        if not s then
+            break
+        end
+        local clean = true
+        for k = s, e do
+            clean = clean and not code[k]
+        end
+        if clean then
+            out[#out + 1] = text:sub(pos, s - 1) .. color .. text:sub(s, e) .. "|r"
+            pos = e + 1
+        end
+        from = e + 1
+    end
+    out[#out + 1] = text:sub(pos)
+    return table.concat(out)
+end
+
 function Rules.FormatPattern(fmt)
     local p = fmt:gsub("%%%d+%$", "%%")
     p = p:gsub("([%(%)%.%+%-%*%?%[%]%^%$])", "%%%1")
@@ -386,6 +430,8 @@ end
 --                                   for one addon message)
 --   DRY     name                    won nothing in their last raid
 --   LOG     time by what name key   an officer action, shown in History
+--   DELIV   key time                a won item reached its winner (trade,
+--                                   master loot, or the host won it)
 -- ITEM has a seventh field: the specs that may roll ("" = any).
 -- ADD has an optional third field: where the drop came from, so the same
 -- loot window slot is never added twice.
@@ -582,6 +628,12 @@ function Rules.Apply(S, op)
         if S.active == key then
             S.active = nil
         end
+    elseif kind == "DELIV" then
+        local t = Rules.Int(op[3], 0, 4e9)
+        if item.state ~= "done" or not t then
+            return nil, "bad DELIV"
+        end
+        item.delivered = t
     elseif kind == "UNDO" then
         -- A win given by mistake: the item goes back to waiting, and the
         -- winner is unlocked unless another locking win holds them. A taken
@@ -594,6 +646,7 @@ function Rules.Apply(S, op)
             S.reserves[winner] = item.itemID
         end
         item.state, item.winner, item.how, item.awardedAt, item.usedReserve = "pending", nil, nil, nil, nil
+        item.delivered = nil
         item.mode, item.restrict, item.wants, item.rolls, item.worn = "normal", nil, {}, {}, {}
         local other = false
         for _, it in pairs(S.items) do
@@ -614,7 +667,7 @@ end
 --
 -- ctx = { classOf = fn(name) -> classID|nil, now = number }
 -- Requests anyone may make:      WANT key 0|1, RES itemID, SPEC specKey
--- Officer requests:              ADD itemString, START key, CALL key,
+-- Officer requests:              ADD itemString, START key, CALL key, DELIV key,
 --                                CLOSE key, OPEN key, SPECS key csv,
 --                                UNDO key, SETSPEC name spec,
 --                                AWARD key name, CANCEL key, LOCK name 0|1,
@@ -972,8 +1025,117 @@ function Rules.Intent(S, who, req, ctx)
         end
         return { { "UNDO", item.key }, logOp(now, who, "undo", item.winner, item.key) },
             "Win taken back. This item is up again."
+    elseif kind == "DELIV" then
+        if st ~= "done" then
+            return nil, "Only a won item can be delivered."
+        elseif item.delivered then
+            return nil, "Already delivered."
+        end
+        return { { "DELIV", item.key, now } }
     end
     return nil, "Unknown request."
+end
+
+-- Everyone the addon saw in a saved raid (a spec, reserve, want, roll or
+-- win), as a set of names.
+function Rules.SeenIn(rec)
+    local seen = {}
+    for name in pairs(rec.specs or {}) do
+        seen[name] = true
+    end
+    for name in pairs(rec.reserves or {}) do
+        seen[name] = true
+    end
+    for _, it in pairs(rec.items or {}) do
+        for name in pairs(it.wants or {}) do
+            seen[name] = true
+        end
+        for name in pairs(it.rolls or {}) do
+            seen[name] = true
+        end
+        if it.winner then
+            seen[it.winner] = true
+        end
+    end
+    return seen
+end
+
+-- Per player across saved raids: raids seen in, items won (free rolls
+-- counted apart, they are leftovers), and the time of their last win.
+-- Only raids that started count. Returns name -> { raids, won, free, last }.
+function Rules.PlayerStats(history)
+    local out = {}
+    local function entry(name)
+        out[name] = out[name] or { raids = 0, won = 0, free = 0, last = 0 }
+        return out[name]
+    end
+    for _, rec in pairs(history or {}) do
+        if rec.started then
+            for name in pairs(Rules.SeenIn(rec)) do
+                entry(name).raids = entry(name).raids + 1
+            end
+            for _, it in pairs(rec.items or {}) do
+                if it.state == "done" and it.winner then
+                    local e = entry(it.winner)
+                    if it.how == "open" then
+                        e.free = e.free + 1
+                    else
+                        e.won = e.won + 1
+                    end
+                    e.last = math.max(e.last, rec.created or 0)
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- A saved raid as plain text, one line per item given, for pasting into
+-- Discord or a forum. itemName(itemString) and short(name) come from the
+-- caller (the client knows item names); when is the raid's date as text.
+local HOW_WORDS = { roll = "roll", open = "free roll", reserve = "reserve", manual = "given" }
+function Rules.HistoryText(rec, when, itemName, short)
+    local lines = { (rec.title and rec.title ~= "" and rec.title or "Raid") .. " - " .. when }
+    for _, key in ipairs(rec.order or {}) do
+        local it = rec.items[key]
+        if it and it.state == "done" and it.winner then
+            local roll = it.rolls and it.rolls[it.winner]
+            local how = HOW_WORDS[it.how] or "given"
+            if roll and (it.how == "roll" or it.how == "open") then
+                how = how .. " " .. roll
+            end
+            if it.delivered then
+                how = how .. ", delivered"
+            end
+            lines[#lines + 1] = string.format("[%s] - %s (%s)", itemName(it.itemString), short(it.winner), how)
+        end
+    end
+    if #lines == 1 then
+        lines[2] = "No items given."
+    end
+    return table.concat(lines, "\n")
+end
+
+-- Whether version a ("v1.2.3") is newer than b. Anything that is not
+-- three numbers (a dev copy, junk from the wire) is never newer.
+local function versionParts(v)
+    local x, y, z = tostring(v or ""):match("^v?(%d+)%.(%d+)%.(%d+)$")
+    return x and { tonumber(x), tonumber(y), tonumber(z) }
+end
+function Rules.VersionNewer(a, b)
+    local pa, pb = versionParts(a), versionParts(b)
+    if not pa or not pb then
+        return false
+    end
+    for i = 1, 3 do
+        if pa[i] ~= pb[i] then
+            return pa[i] > pb[i]
+        end
+    end
+    return false
+end
+Rules.ValidVersion = function(v)
+    return type(v) == "string" and #v <= 16 and versionParts(v) ~= nil
 end
 
 -- Players who won nothing (free rolls aside) in the most recent started
@@ -989,20 +1151,8 @@ function Rules.DryFrom(history, currentID)
     if not last then
         return {}
     end
-    local seen, won = {}, {}
-    for name in pairs(last.specs or {}) do
-        seen[name] = true
-    end
-    for name in pairs(last.reserves or {}) do
-        seen[name] = true
-    end
+    local seen, won = Rules.SeenIn(last), {}
     for _, it in pairs(last.items or {}) do
-        for name in pairs(it.wants or {}) do
-            seen[name] = true
-        end
-        for name in pairs(it.rolls or {}) do
-            seen[name] = true
-        end
         if it.state == "done" and it.winner and it.how ~= "open" then
             won[it.winner] = true
         end
@@ -1058,6 +1208,9 @@ function Rules.Snapshot(S)
         end
         if item.state == "done" then
             ops[#ops + 1] = { "AWARD", key, item.winner, item.how, item.awardedAt or 0, item.usedReserve and "r" or "" }
+            if item.delivered then
+                ops[#ops + 1] = { "DELIV", key, item.delivered }
+            end
             lockNames[item.winner] = true
         elseif item.state == "cancelled" then
             ops[#ops + 1] = { "CANCEL", key }

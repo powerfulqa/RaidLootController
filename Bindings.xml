@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="RAIDLOOTCONTROLLER_TOGGLE" header="RAIDLOOTCONTROLLER" category="ADDONS">
+        RaidLootController_Toggle()
+    </Binding>
+</Bindings>

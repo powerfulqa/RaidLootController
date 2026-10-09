@@ -132,6 +132,19 @@ function Net.SendSnapshot()
     snapshotWanted = true
 end
 
+-- For the bug report: ops waiting per lane, and the send budget left.
+function Net.Status()
+    return string.format(
+        "queued live %d, catalogue group %d, guild %d; budget live %.1f, catalogue %.1f; channel %s",
+        #LIVE.queue,
+        #CAT_GROUP.queue,
+        #CAT_GUILD.queue,
+        tokens[PREFIX],
+        tokens[CAT_PREFIX],
+        groupChannel() or "none"
+    )
+end
+
 C_Timer.NewTicker(0.25, function()
     for prefix, n in pairs(tokens) do
         tokens[prefix] = math.min(BURST, n + REGEN * 0.25)

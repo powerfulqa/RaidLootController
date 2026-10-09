@@ -168,5 +168,22 @@ do
     check(cat[77].name == "Blackwing Lair", "a real name replaces a placeholder")
 end
 
+-- ---- lookup by item ----------------------------------------------------------
+do
+    local cat = {}
+    C.Record(cat, 409, "Molten Core", 663, "Lucifron", "item:16800", "k1", 100)
+    check(C.Find(cat, 16800)[1].boss.name == "Lucifron", "finds the boss an item drops from")
+    check(C.Find(cat, 16801) == nil, "unknown item: nil")
+    -- A new drop after the first lookup must show up (the index is rebuilt).
+    C.Record(cat, 409, "Molten Core", 664, "Magmadar", "item:16800", "k2", 200)
+    check(#C.Find(cat, 16800) == 2, "a second boss for the same item shows after a new record")
+    C.Record(cat, 409, "Molten Core", 664, "Magmadar", "item:16800", "k3", 300)
+    local hits = C.Find(cat, 16800)
+    check(hits[1].rec.n + hits[2].rec.n == 3, "counts stay live without a rebuild")
+    cat[409].b[663] = nil
+    C.Forget(cat)
+    check(#C.Find(cat, 16800) == 1, "a forgotten boss drops out of the lookup")
+end
+
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

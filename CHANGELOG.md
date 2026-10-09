@@ -4,6 +4,26 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.4.0
+
+**A bigger window, and the addon now follows the loot after the roll.** First round of fixes from running it in game.
+
+- **Resize the window.** Drag the bottom right corner. Lists and text grow to fill it, and the size and place are saved.
+- **Delivered.** Trade a winner their item and it comes off the "still to trade" list, even if you put it in the trade window yourself. History marks it delivered (trade by the host or an officer, or master loot). Items you still owe someone glow green in your bags.
+- **Stats tab.** Every player from your saved raids: raids, items won, free rolls and their last win. A quick check that loot is spread fairly.
+- **Copy as text.** On the History tab, copy a raid's results to paste into Discord.
+- **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one. Turn them off with /rlc tooltip.
+- **Update notice.** When a guild or group member has a newer version you get one chat line, with a link to the download. The Raid tab shows who is on an old version.
+- **/rlc report** makes a bug report to copy and paste. A key binding opens the window (Keybindings, AddOns).
+- **Help search** shows the words you searched for in yellow.
+
+Fixes:
+
+- A raid left open (for example a test session) ends by itself after 12 hours, so you no longer log in to "Raid in progress".
+- Lists match WoWClearance's style, fill the space below them, and hide the scroll bar when everything fits.
+- The Commands tab is easier to read: sections with headings, and text that wraps instead of being cut off.
+- Search boxes no longer overlap the tab row.
+
 ### v0.3.0
 
 **Fairer over few raid nights, and much harder to game.** After a full audit, a fuzz test and a simulated raid full of players trying to cheat.

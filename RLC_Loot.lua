@@ -185,6 +185,7 @@ end
 function Loot.Deliver(item)
     local winner = item.winner
     if winner == NS.Me() then
+        Loot.MarkDelivered(winner, item.itemString)
         return -- the host won it and already has it
     end
     -- ponytail: master loot is unmeasured on Forever (checklist 3); without
@@ -198,6 +199,7 @@ function Loot.Deliver(item)
                 local name = GetMasterLootCandidate(slot, i)
                 if name and NS.Canon(name) == winner then
                     GiveMasterLoot(slot, i)
+                    Loot.MarkDelivered(winner, item.itemString)
                     return
                 end
             end
@@ -217,14 +219,39 @@ function Loot.Deliver(item)
     )
 end
 
--- Owed items placed in the current trade window. They leave `owed` only
--- when the trade completes; a cancelled trade leaves them owed, and the
--- next TRADE_SHOW starts a fresh list.
-local placed = {}
+-- Mark the win of `itemString` by `winner` delivered, if this raid has one
+-- not marked yet. Only the host and officers can (the host checks it).
+-- Deferred a frame: it is called from inside NS.ApplyOps.
+function Loot.MarkDelivered(winner, itemString)
+    C_Timer.After(0, function()
+        local S = NS.S()
+        if not (S and NS.IsOfficer()) then
+            return
+        end
+        for _, key in ipairs(S.order) do
+            local it = S.items[key]
+            if
+                it.state == "done"
+                and it.winner == winner
+                and not it.delivered
+                and sameItem(it.itemString, itemString)
+            then
+                NS.Act("DELIV", key)
+                return
+            end
+        end
+    end)
+end
+
+-- The trade in progress: who with, and what was in our slots when either
+-- side last accepted. Whatever we hand over in a completed trade comes off
+-- the owed list, however it got into the window.
+local tradeWho, given = nil, {}
 
 NS.On("TRADE_SHOW", function()
-    wipe(placed)
+    wipe(given)
     local who = NS.UnitIdentity("npc") -- the trade partner
+    tradeWho = who
     local list = who and NS.DB.owed[who]
     if not list or #list == 0 then
         return
@@ -240,9 +267,8 @@ NS.On("TRADE_SHOW", function()
         local b = bagSlots[i]
         return NS.ItemStringOf(C_Container.GetContainerItemLink(b.bag, b.slot))
     end
-    local tradeSlot = 1
-    local used = {}
-    for i, itemString in ipairs(list) do
+    local tradeSlot, placed, used = 1, 0, {}
+    for _, itemString in ipairs(list) do
         if tradeSlot > 6 then
             break
         end
@@ -252,43 +278,39 @@ NS.On("TRADE_SHOW", function()
             C_Container.PickupContainerItem(bagSlots[at].bag, bagSlots[at].slot)
             ClickTradeButton(tradeSlot)
             ClearCursor() -- a failed placement must not ride into the next pickup
-            placed[#placed + 1] = { who = who, index = i, slot = tradeSlot, itemString = itemString }
-            tradeSlot = tradeSlot + 1
+            tradeSlot, placed = tradeSlot + 1, placed + 1
         end
     end
-    if #placed > 0 then
-        NS.Print("Put %d won item(s) for %s in the trade window. Check them, then trade.", #placed, NS.ColorName(who))
+    if placed > 0 then
+        NS.Print("Put %d won item(s) for %s in the trade window. Check them, then trade.", placed, NS.ColorName(who))
     end
 end)
 
--- When either side accepts, check what is really in our trade slots. Only
--- items confirmed there leave the owed list when the trade completes.
+-- Accepting locks the window (any change un-accepts), so what is in our
+-- slots now is what the trade gives.
 NS.On("TRADE_ACCEPT_UPDATE", function()
-    for _, p in ipairs(placed) do
-        p.ok = sameItem(NS.ItemStringOf(GetTradePlayerItemLink(p.slot)), p.itemString) or false
+    wipe(given)
+    for slot = 1, 6 do
+        given[#given + 1] = NS.ItemStringOf(GetTradePlayerItemLink(slot))
     end
 end)
 
 NS.On("UI_INFO_MESSAGE", function(_, message)
-    if message ~= ERR_TRADE_COMPLETE or #placed == 0 then
+    if message ~= ERR_TRADE_COMPLETE or not tradeWho or #given == 0 then
         return
     end
-    for i = #placed, 1, -1 do
-        if not placed[i].ok then
-            table.remove(placed, i)
+    local list = NS.DB.owed[tradeWho] -- nil if nothing owed, or "/rlc owed" cleared it
+    for _, s in ipairs(given) do
+        for i = #(list or {}), 1, -1 do
+            if sameItem(list[i], s) then
+                table.remove(list, i)
+                break
+            end
         end
+        Loot.MarkDelivered(tradeWho, s)
     end
-    -- Remove from the back so earlier indexes stay valid.
-    table.sort(placed, function(a, b)
-        return a.index > b.index
-    end)
-    for _, p in ipairs(placed) do
-        local list = NS.DB.owed[p.who] -- nil if "/rlc owed" cleared it mid-trade
-        if list then
-            table.remove(list, p.index)
-        end
-    end
-    wipe(placed)
+    tradeWho = nil
+    wipe(given)
     if NS.Refresh then
         NS.Refresh()
     end
@@ -325,4 +347,139 @@ function Loot.TooltipClassMask(itemString)
         end
     end
     return 0
+end
+
+-- ---- tooltip lines and bag marks --------------------------------------------
+-- Any item tooltip (bags, chat links, the Loot tab) says what the addon
+-- knows about the item: who reserved it tonight, who the host still owes
+-- it to, where it drops, and when you last won one. Items the host owes
+-- someone are also marked in the bags, ready for the trade.
+
+-- itemID -> list of short names the host still owes it to.
+local function owedMap()
+    local map = {}
+    for name, list in pairs(NS.DB.owed) do
+        for _, s in ipairs(list) do
+            local id = Rules.ItemIDOf(s)
+            if id then
+                map[id] = map[id] or {}
+                table.insert(map[id], NS.Short(name))
+            end
+        end
+    end
+    return map
+end
+
+local function annotate(tooltip)
+    if not NS.DB or NS.DB.tooltip == false or (tooltip ~= GameTooltip and tooltip ~= ItemRefTooltip) then
+        return
+    end
+    local _, link = tooltip:GetItem()
+    local id = link and Rules.ItemIDOf(NS.ItemStringOf(link) or "")
+    if not id then
+        return
+    end
+    local lines = {}
+    local S = NS.S()
+    if S then
+        local set, n = Rules.Reservers(S, id)
+        if n > 0 then
+            local names = {}
+            for name in pairs(set) do
+                names[#names + 1] = NS.Short(name)
+            end
+            table.sort(names)
+            lines[#lines + 1] = "Reserved by " .. table.concat(names, ", ")
+        end
+    end
+    local owed = owedMap()[id]
+    if owed then
+        lines[#lines + 1] = "|cff00ff00Trade to " .. table.concat(owed, ", ") .. "|r"
+    end
+    local hits = NS.Catalog.Find(NS.DB.catalog, id)
+    if hits then
+        table.sort(hits, function(a, b)
+            return a.rec.n > b.rec.n
+        end)
+        local h = hits[1]
+        lines[#lines + 1] = string.format(
+            "Drops from %s (%d of %d kills)%s",
+            h.boss.name,
+            h.rec.n,
+            math.max(h.boss.kills, h.rec.n),
+            #hits > 1 and string.format(" and %d more", #hits - 1) or ""
+        )
+    end
+    local me, last = NS.Me(), nil
+    for _, rec in pairs(NS.DB.history) do
+        for _, it in pairs(rec.items or {}) do
+            if it.winner == me and it.state == "done" and Rules.ItemIDOf(it.itemString) == id then
+                last = math.max(last or 0, rec.created or 0)
+            end
+        end
+    end
+    if last then
+        lines[#lines + 1] = "You won this on " .. date("%d %b %Y", last)
+    end
+    for i, text in ipairs(lines) do
+        tooltip:AddLine((i == 1 and "|cffff8800RaidLoot:|r " or "    ") .. text, 1, 1, 1)
+    end
+end
+
+if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, annotate)
+end
+
+-- Bag marks. Forever's bags are Mainline container frames: hook each
+-- frame's UpdateItems (ContainerFrame_Update does not exist here; measured
+-- by WoWClearance 2026-09-19). GetSlotAndBagID returns slot first.
+local function paintFrame(frame)
+    if not (NS.DB and frame and frame.EnumerateItems) then
+        return
+    end
+    local owed = owedMap()
+    for _, button in frame:EnumerateItems() do
+        local slot, bag -- not "x and f()": that keeps only f's first return
+        if button.GetSlotAndBagID then
+            slot, bag = button:GetSlotAndBagID()
+        end
+        local info = bag and slot and C_Container.GetContainerItemInfo(bag, slot)
+        local on = info and owed[info.itemID] ~= nil or false
+        if on and not button.rlcOwed then
+            local t = button:CreateTexture(nil, "OVERLAY")
+            t:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+            t:SetBlendMode("ADD")
+            t:SetVertexColor(0.2, 1, 0.2)
+            t:SetAllPoints()
+            button.rlcOwed = t
+        end
+        if button.rlcOwed then
+            button.rlcOwed:SetShown(on)
+        end
+    end
+end
+
+local function containerFrames()
+    local frames = { _G.ContainerFrameCombinedBags }
+    for i = 1, _G.NUM_CONTAINER_FRAMES or 13 do
+        frames[#frames + 1] = _G["ContainerFrame" .. i]
+    end
+    return frames
+end
+
+NS.On("PLAYER_LOGIN", function()
+    for _, frame in ipairs(containerFrames()) do
+        if frame.UpdateItems then
+            hooksecurefunc(frame, "UpdateItems", paintFrame)
+        end
+    end
+end)
+
+-- Repaint open bags when the owed list changes (called from NS.Refresh).
+function Loot.PaintBags()
+    for _, frame in ipairs(containerFrames()) do
+        if frame:IsShown() then
+            paintFrame(frame)
+        end
+    end
 end

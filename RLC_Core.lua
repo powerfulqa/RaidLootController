@@ -17,12 +17,118 @@ local Rules = NS.Rules
 NS.VERSION = C_AddOns.GetAddOnMetadata(ADDON, "Version") or "dev"
 
 local HISTORY_MAX = 200
+local STALE = 12 * 3600 -- an unfinished raid this old ends at login
 
 -- ---- chat output -----------------------------------------------------------
 
 function NS.Print(fmt, ...)
     local text = select("#", ...) > 0 and fmt:format(...) or fmt
     DEFAULT_CHAT_FRAME:AddMessage("|cffff8800RaidLoot|r " .. text)
+end
+
+-- ---- versions --------------------------------------------------------------
+-- Other players' addon versions, heard on the catalogue "done asking"
+-- message every client sends its guild at login and its group on joining.
+-- One chat line per session when someone has a newer one.
+
+NS.versions = {} -- name -> version, this session only
+local toldNewer = false
+
+-- The chat line carries a green [Click here] link that opens the download
+-- address ready to copy (the game cannot open a browser). Registered with
+-- LinkUtil, never by replacing SetItemRef: replacing it taints, measured by
+-- the WoWClearance and BarWarden ports on Forever.
+local DOWNLOAD_URL = "https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip"
+local UPDATE_LINK = "|cff33ff33|Hrlcupdate:latest|h[Click here]|h|r"
+if LinkUtil and LinkUtil.RegisterLinkHandler then
+    -- Registering twice asserts, and a /reload keeps the old registration.
+    if not (LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered("rlcupdate")) then
+        LinkUtil.RegisterLinkHandler("rlcupdate", function()
+            NS.ShowCopy("Download the latest version", DOWNLOAD_URL, 600, 130)
+            return LinkProcessorResponse and LinkProcessorResponse.Handled or nil
+        end)
+    end
+end
+
+function NS.NoteVersion(name, v)
+    if not Rules.ValidVersion(v) then
+        return
+    end
+    NS.versions[name] = v
+    if not toldNewer and Rules.VersionNewer(v, NS.VERSION) then
+        toldNewer = true
+        NS.Print("|cffffff00A newer version (%s) is out|r; you have %s. %s to get it.", v, NS.VERSION, UPDATE_LINK)
+    end
+end
+
+-- What a bug report needs: version, client, where you are, the session and
+-- the message queues. Names stay in (it is your own raid), nothing else
+-- personal.
+function NS.BugReport()
+    local lines = {}
+    local function add(fmt, ...)
+        lines[#lines + 1] = select("#", ...) > 0 and fmt:format(...) or fmt
+    end
+    local build, buildNum = GetBuildInfo()
+    local S = NS.S()
+    add("Raid Loot Controller bug report")
+    add("Version %s, client %s (%s), %s, %s", NS.VERSION, build, buildNum, GetLocale(), date("%Y-%m-%d %H:%M"))
+    add("Me: %s, %s, role: %s", tostring(NS.Me()), select(2, UnitClass("player")) or "?", NS.RoleName())
+    local inInst, instType = IsInInstance()
+    local method = C_PartyInfo.GetLootMethod and C_PartyInfo.GetLootMethod()
+    for name, v in pairs(Enum.LootMethod or {}) do
+        if v == method then
+            method = name .. " (" .. v .. ")" -- the game's own name, e.g. Group (3)
+        end
+    end
+    add(
+        "Group: %s, %d players, instance: %s, loot method: %s",
+        IsInRaid() and "raid" or IsInGroup() and "party" or "none",
+        GetNumGroupMembers(),
+        inInst and instType or "no",
+        tostring(method)
+    )
+    add("Demo: %s, debug: %s", tostring(NS.Demo and NS.Demo.active or false), tostring(NS.debug or false))
+    add("Net: %s", NS.Net.Status())
+    add("Chat lockdown: %s", tostring(C_ChatInfo.InChatMessagingLockdown()))
+    if S then
+        local n, officers = 0, 0
+        for _ in pairs(S.items) do
+            n = n + 1
+        end
+        for _ in pairs(S.officers) do
+            officers = officers + 1
+        end
+        add(
+            "Session: %s, host %s, %s, %d items, active %s, %d officers, seq %d",
+            S.id,
+            S.host,
+            S.phase,
+            n,
+            tostring(S.active),
+            officers,
+            S.seq
+        )
+    else
+        add("Session: none")
+    end
+    local owed, hist = 0, 0
+    for _, list in pairs(NS.DB.owed) do
+        owed = owed + #list
+    end
+    for _ in pairs(NS.DB.history) do
+        hist = hist + 1
+    end
+    add("Owed items: %d, raids in history: %d", owed, hist)
+    local seen = {}
+    for name, v in pairs(NS.versions) do
+        seen[#seen + 1] = NS.Short(name) .. " " .. v
+    end
+    table.sort(seen)
+    add("Versions heard: %s", #seen > 0 and table.concat(seen, ", ") or "none")
+    add("")
+    add("What happened, and what did you expect?")
+    return table.concat(lines, "\n")
 end
 
 -- ---- names -----------------------------------------------------------------
@@ -470,6 +576,14 @@ NS.On("ADDON_LOADED", function(name)
         DB.session.specs = {} -- saved before specs existed
     end
     NS.DB = DB
+    -- A raid left open (the host logged off, or a test session) ends on its
+    -- own once it is STALE seconds old, so the next day never opens "in
+    -- progress". It stays in History like any ended raid.
+    local S = DB.session
+    if S and S.phase ~= "ended" and GetServerTime() - (tonumber(S.created) or 0) > STALE then
+        S.phase, S.ended, S.active = "ended", GetServerTime(), nil
+        saveHistory(S)
+    end
 end)
 
 local wasInGroup = false
@@ -548,6 +662,18 @@ NS.Commands = {
     },
     {
         section = "Everyone",
+        cmd = "tooltip",
+        text = "Show or hide the RaidLoot lines on item tooltips",
+        state = function()
+            return NS.DB.tooltip ~= false
+        end,
+        fn = function()
+            NS.DB.tooltip = NS.DB.tooltip == false
+            NS.Print("RaidLoot lines on item tooltips %s.", NS.DB.tooltip and "on" or "off")
+        end,
+    },
+    {
+        section = "Everyone",
         cmd = "minimap",
         text = "Hide or show the minimap button",
         state = function()
@@ -617,6 +743,14 @@ NS.Commands = {
     },
     {
         section = "Troubleshooting",
+        cmd = "report",
+        text = "Make a bug report to copy and paste",
+        fn = function()
+            NS.ShowCopy("Bug report", NS.BugReport())
+        end,
+    },
+    {
+        section = "Troubleshooting",
         cmd = "debug",
         text = "Debug output in chat on or off",
         state = function()
@@ -657,5 +791,12 @@ SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
 end
 
 function RaidLootController_OnAddonCompartmentClick()
+    NS.Toggle()
+end
+
+-- Key binding (Bindings.xml): Options > Keybindings > AddOns.
+BINDING_HEADER_RAIDLOOTCONTROLLER = "Raid Loot Controller"
+BINDING_NAME_RAIDLOOTCONTROLLER_TOGGLE = "Open or close the window"
+function RaidLootController_Toggle()
     NS.Toggle()
 end

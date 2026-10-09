@@ -53,7 +53,7 @@ jobs:
       - name: Package addon
         run: |
           mkdir -p RaidLootController
-          cp RLC_*.lua RaidLootController.toc LICENSE RaidLootController/
+          cp RLC_*.lua RaidLootController.toc Bindings.xml LICENSE RaidLootController/
           # Every file the .toc loads must be in the zip, or the addon
           # fails to load in game.
           grep -v '^##' RaidLootController.toc | sed 's/\r//' | grep -v '^\s*$' | while read -r f; do

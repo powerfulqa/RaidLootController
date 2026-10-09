@@ -100,8 +100,10 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc sync` | Fetch the session from the raid host |
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |
+| `/rlc tooltip` | Show or hide the RaidLoot lines on item tooltips (on by default) |
 | `/rlc minimap` | Hide or show the minimap button |
 | `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |
+| `/rlc report` | Make a bug report to copy and paste |
 | `/rlc debug` | Debug output in chat on or off |
 
 The **Commands** tab lists the commands you can use right now, each with a **Run** button (commands that need an item have a **How** button that says what to type). It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.

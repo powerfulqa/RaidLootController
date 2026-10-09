@@ -9,6 +9,7 @@
 local _, NS = ...
 
 local GREEN = "|cffb6ffb6"
+local YELLOW = "|cffffff00"
 local R = "|r"
 
 local ENTRIES = {
@@ -174,7 +175,11 @@ local ENTRIES = {
         q = "How does the winner get the item?",
         a = "If the loot window is still open, the addon gives it by master loot. "
             .. "Otherwise it's put in the trade window the next time you trade the winner. "
-            .. "The Raid tab lists what is still to trade. /rlc owed clears that list.",
+            .. "The Raid tab lists what is still to trade, and those items glow green in your bags. "
+            .. "Trade the winner and the item comes off the list, even if you put it in the window "
+            .. "yourself. /rlc owed clears that list.\n\n"
+            .. "History marks an item delivered when the host or an officer trades it to the winner, "
+            .. "or gives it by master loot.",
     },
     {
         q = "How do I make someone an officer, or unlock a player?",
@@ -204,12 +209,53 @@ local ENTRIES = {
             .. "with the officer who did it. Hover Officer log, or an item, to see it.",
         tab = "history",
     },
+    {
+        q = "Can I post a raid's loot in Discord?",
+        a = "Yes. On the History tab, pick the raid and click Copy as text. Click the text, press "
+            .. "Ctrl+C, then paste it anywhere.",
+        tab = "history",
+    },
+    {
+        q = "What is the Stats tab?",
+        a = "Every player from your saved raids: how many raids the addon saw them in, how many items "
+            .. "they won, and when they last won one. Free rolls are counted apart. Use it to check "
+            .. "that loot is spread fairly. Hover a player to see what they won.",
+        tab = "stats",
+    },
+    {
+        q = "What are the RaidLoot lines on item tooltips?",
+        a = "What the addon knows about that item: who reserved it tonight, who you still need to "
+            .. "trade it to, which boss it drops from (from the Catalogue), and when you last won one. "
+            .. "They are on by default; /rlc tooltip (or Run on the Commands tab) turns them off or on.",
+        tab = "commands",
+    },
 
     { section = "more", title = "Commands and problems" },
     {
         q = "Can I sort the lists?",
         a = "Yes. Click a column name to sort by it, and click it again to reverse. An arrow shows the "
             .. "column you sorted by.",
+    },
+    {
+        q = "Can I bind a key to open the window?",
+        a = "Yes. Open the game's Keybindings, then AddOns, and set Raid Loot Controller.",
+    },
+    {
+        q = "How do I report a bug?",
+        a = "Type /rlc report (or Run it on the Commands tab). It opens a short report about your "
+            .. "addon, game and raid. Copy it and paste it into your bug report with what happened.",
+        tab = "commands",
+    },
+    {
+        q = "Will I know when there is a new version?",
+        a = "Yes. When someone in your guild or group has a newer version, you get one line in chat. "
+            .. "Click the green Click here in it: it shows the download link, ready to copy into your browser. "
+            .. "On the Raid tab, hover a player to see their version; old ones show as old addon.",
+    },
+    {
+        q = "Can I make the window bigger?",
+        a = "Yes. Drag the bottom right corner. Lists and text grow to fill it, and the addon remembers "
+            .. "the size and where you put the window.",
     },
     {
         q = "Slash commands",
@@ -237,7 +283,14 @@ local ENTRIES = {
     },
 }
 
-local TAB_NAMES = { loot = "Loot", raid = "Raid", history = "History", catalog = "Catalogue", commands = "Commands" }
+local TAB_NAMES = {
+    loot = "Loot",
+    raid = "Raid",
+    history = "History",
+    stats = "Stats",
+    catalog = "Catalogue",
+    commands = "Commands",
+}
 
 -- ---- page ---------------------------------------------------------------------
 
@@ -273,6 +326,23 @@ child:SetSize(660, 1)
 sf:SetScrollChild(child)
 
 local WIDTH = 640
+
+-- Text wraps to the page: a resized window re-wraps and re-lays the entries.
+sf:SetScript("OnSizeChanged", function(_, width)
+    child:SetWidth(width)
+    WIDTH = width - 20
+    for _, e in ipairs(ENTRIES) do
+        if e.header then
+            e.header:SetWidth(WIDTH)
+        elseif e.qText then
+            e.qText:SetWidth(WIDTH)
+            e.aText:SetWidth(WIDTH - 12)
+        end
+    end
+    if p:IsShown() then
+        NS.RefreshHelp()
+    end
+end)
 
 -- Widgets per entry, made once.
 local built = false
@@ -353,6 +423,9 @@ function NS.RefreshHelp()
                 e.button:SetShown(show)
             end
             if show then
+                -- While searching, the matched words show in yellow.
+                e.qText:SetText(searching and NS.Rules.Highlight(e.q, query, YELLOW) or e.q)
+                e.aText:SetText(searching and NS.Rules.Highlight(e.a, query, YELLOW) or e.a)
                 e.qText:SetPoint("TOPLEFT", 10, y)
                 y = y - e.qText:GetStringHeight() - 4
                 e.aText:SetPoint("TOPLEFT", 22, y)

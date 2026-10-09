@@ -15,12 +15,13 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Rules.lua` | The loot rules and session model. Pure Lua, no WoW API. `Apply` (primitive ops), `Intent` (requests -> ops, host only), `Snapshot`, wire codec, roll-line parser. |
 | `RLC_Core.lua` | Saved data, names, roster, `NS.ApplyOps` / `NS.HandleRequest` / `NS.Act`, events, slash commands. |
 | `RLC_Net.lua` | Addon-message queue (prefix `RLC1`), throttle, chat lockdown wait, trust checks on receive. |
-| `RLC_Loot.lua` | Roll lines from `CHAT_MSG_SYSTEM`, loot window, master loot, trade delivery, tooltip class line. |
+| `RLC_Loot.lua` | Roll lines from `CHAT_MSG_SYSTEM`, loot window, master loot, trade delivery, tooltip class line, the "RaidLoot:" tooltip lines and the green marks on owed items in bags. |
+| `Bindings.xml` | The open/close key binding (labels and `RaidLootController_Toggle` in `RLC_Core.lua`). Shipped in the release zip. |
 | `RLC_Catalog.lua` | Loot catalogue by instance and boss. Pure data functions on top (`Record`, `CountKill`, `Digest`, `InstanceOps`, `ApplyOp`), event glue and guild/group sync (prefix `RLCC`) below. |
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
 | `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). Update it with any player-facing change. |
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
-| `RLC_UI.lua` | The window (Loot, Raid, History, Catalogue, Commands, Help tabs), the spec menus and the minimap button. The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
+| `RLC_UI.lua` | The window (Loot, Raid, History, Stats, Catalogue, Commands, Help tabs; resizable, size saved in `RaidLootControllerDB.window`), the copy window (`NS.ShowCopy`), the spec menus and the minimap button. The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
 `Rules.Intent`, applies the ops, and queues them to the group. On anyone
@@ -117,6 +118,10 @@ only from the session host (and `NEW` only from a leader or assistant).
 16. Commands tab: Run buttons fire, Type opens chat prefilled
     (`ChatFrameUtil.OpenChat`), and the list changes as you become an
     officer or host. Announce toggle and owed Clear work on the Raid tab.
+17. New in this round: the window resize grip and saved size; tooltip lines
+    via `TooltipDataProcessor` (GameTooltip and ItemRefTooltip); bag marks via
+    each container frame's `UpdateItems` and `GetSlotAndBagID`; the key binding
+    shows under Keybindings > AddOns; versions arrive on `CQE`.
 
 ## Dev tooling
 

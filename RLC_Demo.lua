@@ -214,6 +214,7 @@ function Demo.Toggle()
         announce = false,
         minQuality = real.minQuality,
         minimapButton = real.minimapButton,
+        tooltip = real.tooltip,
         minimapAngle = real.minimapAngle,
     }
     for _, r in ipairs(RAIDERS) do

@@ -519,6 +519,7 @@ do
     act(HOST, { "CALL", "4" })
     act(HOST, { "ROLLSEEN", C, 33, 1, 100 })
     act(HOST, { "CLOSE", "4" })
+    act(HOST, { "DELIV", "4" }) -- the snapshot must carry delivered too
     act(HOST, { "START", "1" })
     act(B, { "WANT", "1", 1 })
     act(HOST, { "CALL", "1" })
@@ -585,6 +586,93 @@ do
     check(not R.ValidName("|Hx|h-Realm"), "name with | refused")
     check(not R.ValidName("A,B-Realm"), "name with , refused")
     check(R.ValidName("Serv Aszune-Realm"), "surname name still valid")
+end
+
+-- Versions, player stats and the history text.
+do
+    check(R.VersionNewer("v0.4.0", "v0.3.9"), "minor beats patch")
+    check(R.VersionNewer("v1.0.0", "v0.9.9"), "major beats minor")
+    check(R.VersionNewer("v0.3.10", "v0.3.9"), "versions compare as numbers, not text")
+    check(not R.VersionNewer("v0.3.0", "v0.3.0"), "same version is not newer")
+    check(not R.VersionNewer("dev", "v0.3.0"), "a dev copy is never newer")
+    check(not R.VersionNewer("v9.9.9|r", "v0.3.0"), "junk version is never newer")
+    check(R.ValidVersion("v0.3.0") and not R.ValidVersion(("1."):rep(20)), "version validation")
+
+    local function raid(created, started, items, specs)
+        local order = {}
+        for k in pairs(items) do
+            order[#order + 1] = k
+        end
+        table.sort(order)
+        return { created = created, started = started, items = items, order = order, specs = specs or {}, title = "MC" }
+    end
+    local history = {
+        r1 = raid(100, 101, {
+            a = {
+                itemString = "item:1",
+                state = "done",
+                winner = A,
+                how = "roll",
+                rolls = { [A] = 87, [B] = 12 },
+                delivered = 150,
+            },
+            b = { itemString = "item:2", state = "done", winner = B, how = "open", rolls = { [B] = 50 } },
+            c = { itemString = "item:3", state = "cancelled", winner = B },
+        }, { [C] = "MAGE.FIRE" }),
+        r2 = raid(200, 201, {
+            a = { itemString = "item:4", state = "done", winner = A, how = "manual" },
+        }),
+        r3 = raid(300, nil, { a = { itemString = "item:5", state = "done", winner = C, how = "roll" } }),
+    }
+    local st = R.PlayerStats(history)
+    check(st[A].raids == 2 and st[A].won == 2 and st[A].last == 200, "stats: wins and raids for a winner")
+    check(st[B].won == 0 and st[B].free == 1, "stats: free roll counted apart")
+    check(st[C].raids == 1 and st[C].won == 0, "stats: a raid that never started does not count")
+
+    local text = R.HistoryText(history.r1, "9 Oct", function(s)
+        return "Item " .. s:match("%d+")
+    end, function(n)
+        return (n:gsub("%-.*", ""))
+    end)
+    check(text:find("^MC %- 9 Oct\n"), "history text: title and date first")
+    check(text:find("%[Item 1%] %- Ann %(roll 87, delivered%)"), "history text: roll winner with roll, delivered")
+    check(
+        text:find("%[Item 2%] %- Bob %(free roll 50%)\n") or text:find("%[Item 2%] %- Bob %(free roll 50%)$"),
+        "history text: not delivered says nothing"
+    )
+    check(text:find("%[Item 2%] %- Bob %(free roll 50%)"), "history text: free roll")
+    check(not text:find("Item 3"), "history text: removed items left out")
+    check(R.HistoryText(raid(1, 1, {}), "x", tostring, tostring):find("No items given"), "history text: empty raid")
+end
+
+-- Delivered: a won item reached its winner.
+do
+    fresh()
+    act(HOST, { "OFF", B, 1 })
+    act(HOST, { "ADD", "item:19019" })
+    local key = host.order[#host.order]
+    check(act(HOST, { "DELIV", key }) == nil, "an item nobody won can't be delivered")
+    act(HOST, { "AWARD", key, A })
+    check(host.items[key].state == "done", "delivered fixture: item won")
+    check(act(A, { "DELIV", key }) == nil, "a raider can't mark delivered")
+    check(act(B, { "DELIV", key }), "an officer marks a won item delivered")
+    check(host.items[key].delivered == ctx.now and client.items[key].delivered == ctx.now, "delivered reaches clients")
+    check(act(HOST, { "DELIV", key }) == nil, "delivered only once")
+    check(R.Apply(host, { "DELIV", key, "x" }) == nil, "DELIV with a bad time refused")
+    act(HOST, { "UNDO", key })
+    check(host.items[key].delivered == nil, "undo clears delivered")
+    check(R.Apply(host, { "DELIV", key, 5 }) == nil, "a DELIV op for an item not won is refused")
+end
+
+-- Help search highlight.
+do
+    local Y = "<"
+    check(R.Highlight("Roll for loot", "roll", Y) == "<Roll|r for loot", "highlight keeps the text's own case")
+    check(R.Highlight("a roll, a reroll", "roll", Y) == "a <roll|r, a re<roll|r", "highlight marks every match")
+    check(R.Highlight("|cffb6ffb6Keep|r it", "ff", Y) == "|cffb6ffb6Keep|r it", "never inside a colour code")
+    check(R.Highlight("|cffb6ffb6Keep|r it", "keep", Y) == "|cffb6ffb6<Keep|r|r it", "inside coloured text still marks")
+    check(R.Highlight("a|nb", "|n", Y) == "a|nb", "escape codes themselves never match")
+    check(R.Highlight("text", "", Y) == "text", "empty search changes nothing")
 end
 
 print(string.format("test_rules: %d passed, %d failed", passed, failed))
