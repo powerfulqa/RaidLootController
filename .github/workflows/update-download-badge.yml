@@ -1,0 +1,71 @@
+name: Update download-count badge
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout badge-data branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: badge-data
+
+      - name: Compute badge data
+        id: data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TOTAL=$(gh api "repos/${{ github.repository }}/releases" --paginate --jq '.[].assets[].download_count' | awk '{s+=$1} END {print s+0}')
+          VERSION=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name')
+          LATEST=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '[.assets[].download_count] | add // 0')
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Downloads: $TOTAL   This release: $LATEST   Latest version: $VERSION"
+
+      - name: Update JSON if changed
+        # Self-hosted shields endpoints on the badge-data branch. The Download
+        # (version), Downloads (lifetime), and Downloads (this release) badges
+        # all read these static JSON files, so none depend on shields.io's
+        # shared GitHub token pool (which intermittently fails with "unable
+        # to select next GitHub token from pool"). Updated on each release +
+        # every 6h.
+        env:
+          TOTAL: ${{ steps.data.outputs.total }}
+          VERSION: ${{ steps.data.outputs.version }}
+          LATEST: ${{ steps.data.outputs.latest }}
+        run: |
+          DL="{\"schemaVersion\":1,\"label\":\"Downloads\",\"message\":\"$TOTAL\",\"color\":\"blue\"}"
+          VER="{\"schemaVersion\":1,\"label\":\"Download\",\"message\":\"$VERSION\",\"color\":\"orange\"}"
+          LT="{\"schemaVersion\":1,\"label\":\"Downloads (this release)\",\"message\":\"$LATEST\",\"color\":\"blue\"}"
+          changed=0
+          if [ ! -f downloads.json ] || [ "$(cat downloads.json)" != "$DL" ]; then
+            echo "$DL" > downloads.json
+            changed=1
+          fi
+          if [ ! -f version.json ] || [ "$(cat version.json)" != "$VER" ]; then
+            echo "$VER" > version.json
+            changed=1
+          fi
+          if [ ! -f latest.json ] || [ "$(cat latest.json)" != "$LT" ]; then
+            echo "$LT" > latest.json
+            changed=1
+          fi
+          if [ "$changed" = "0" ]; then
+            echo "No change (downloads=$TOTAL, latest=$LATEST, version=$VERSION); skipping commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add downloads.json version.json latest.json
+          git commit -m "Update badge data (downloads=$TOTAL, latest=$LATEST, version=$VERSION)"
+          git push origin badge-data

@@ -145,3 +145,5 @@ Same flow as EbonClearance, driven by `.github/workflows/release.yml`.
 Download link for players (always the newest):
 https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip
 `test.yml` runs syntax, luacheck and tests on every push to `main`.
+`update-download-badge.yml` refreshes the README badges (JSON on the `badge-data`
+branch) on every release and every 6 hours.

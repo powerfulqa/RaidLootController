@@ -1,6 +1,8 @@
 # Raid Loot Controller
 
-[![Download Latest](https://img.shields.io/github/v/release/powerfulqa/RaidLootController?style=for-the-badge&label=Download&color=orange)](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)
+[![Download Latest](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpowerfulqa%2FRaidLootController%2Fbadge-data%2Fversion.json&style=for-the-badge&color=orange)](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)
+[![Downloads (this release)](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpowerfulqa%2FRaidLootController%2Fbadge-data%2Flatest.json&style=for-the-badge&color=blue)](https://github.com/powerfulqa/RaidLootController/releases/latest)
+[![Downloads (lifetime)](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpowerfulqa%2FRaidLootController%2Fbadge-data%2Fdownloads.json&style=for-the-badge&color=blue)](https://github.com/powerfulqa/RaidLootController/releases)
 [![Licence](https://img.shields.io/badge/Licence-Source--Available-blue?style=for-the-badge)](LICENSE)
 
 Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
