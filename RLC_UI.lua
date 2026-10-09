@@ -38,6 +38,47 @@ local function Button(parent, text, w, onClick)
     return b
 end
 
+-- A soft gold pulse over a frame, to point a player at the one thing to
+-- click next. Display only: it never clicks or rolls for anyone.
+-- frame.SetGlow(on) turns it on or off.
+local function AddGlow(frame, texture)
+    local t = frame:CreateTexture(nil, "OVERLAY")
+    t:SetTexture(texture or "Interface\\Buttons\\ButtonHilight-Square")
+    t:SetBlendMode("ADD")
+    t:SetVertexColor(1, 0.8, 0.2)
+    t:SetAllPoints()
+    t:Hide()
+    local ag = t:CreateAnimationGroup()
+    ag:SetLooping("BOUNCE")
+    local a = ag:CreateAnimation("Alpha")
+    a:SetFromAlpha(0.15)
+    a:SetToAlpha(1)
+    a:SetDuration(0.6)
+    function frame.SetGlow(on)
+        t:SetShown(on)
+        if on and not ag:IsPlaying() then
+            ag:Play()
+        elseif not on then
+            ag:Stop()
+        end
+    end
+end
+
+-- What the active item is waiting on from this player: "want", "roll" or nil.
+local function myTurn(S)
+    local item = S and S.active and S.items[S.active]
+    if not item then
+        return nil
+    end
+    local me = NS.Me()
+    local myClass = NS.ClassOf(me)
+    if item.state == "rolling" and Rules.CanRoll(S, item, me, myClass) then
+        return "roll"
+    elseif item.state == "interest" and not item.wants[me] and Rules.CanWant(S, item, me, myClass) then
+        return "want"
+    end
+end
+
 local function Text(parent, font, justify)
     local fs = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
     fs:SetJustifyH(justify or "LEFT")
@@ -347,6 +388,8 @@ end)
 wantBtn:SetPoint("TOPLEFT", myInfo, "BOTTOMLEFT", 0, -6)
 local rollBtn = Button(rp, "Roll (1-100)", 110, Loot.Roll)
 rollBtn:SetPoint("LEFT", wantBtn, "RIGHT", 6, 0)
+AddGlow(wantBtn)
+AddGlow(rollBtn)
 
 local people = List(rp, 390, 190, { 130, 150, 50 }, false, function(name)
     selPlayer = name
@@ -498,6 +541,10 @@ local function refreshLoot(S)
     wantBtn:SetText(wanted and "Not interested" or "I want this")
     rollBtn:SetShown(item.state == "rolling")
     rollBtn:SetEnabled(canRoll)
+    -- Glow only on the item that is up now, for the click it is waiting on.
+    local turn = item.key == S.active and myTurn(S)
+    wantBtn.SetGlow(turn == "want")
+    rollBtn.SetGlow(turn == "roll")
 
     -- Everyone who wants it, rolled, or may roll (reserve or tie), highest
     -- roll first.
@@ -1230,6 +1277,9 @@ local function refreshNow()
         return
     end
     local S = NS.S()
+    if NS.UpdateMinimapGlow then
+        NS.UpdateMinimapGlow()
+    end
     -- A new item up for rolls pops the window open on the Loot page.
     local active = S and S.active
     if active and active ~= lastActive then
@@ -1332,6 +1382,8 @@ local function createMinimapButton()
     border:SetSize(53, 53)
     border:SetPoint("CENTER", 10, -10)
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    AddGlow(btn, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    btn.SetGlow(myTurn(NS.S()) ~= nil)
 
     btn:SetScript("OnDragStart", function(self)
         self:SetScript("OnUpdate", function()
@@ -1384,3 +1436,11 @@ function NS.SetMinimapButton(show)
 end
 
 NS.On("PLAYER_LOGIN", createMinimapButton)
+
+-- The minimap button pulses while an item is waiting on you, so a player
+-- who closed the window still sees it.
+function NS.UpdateMinimapGlow()
+    if mmButton then
+        mmButton.SetGlow(myTurn(NS.S()) ~= nil)
+    end
+end

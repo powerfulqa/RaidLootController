@@ -76,7 +76,16 @@ function Net.QueueCatalog(op, dest)
     end
 end
 
-local SUCCESS = Enum.SendAddonMessageResult and Enum.SendAddonMessageResult.Success or 0
+local RESULT = Enum.SendAddonMessageResult or {}
+local SUCCESS = RESULT.Success or 0
+-- Errors a retry can never fix: drop the message instead of blocking the lane.
+local PERMANENT = {
+    [RESULT.InvalidPrefix or 1] = true,
+    [RESULT.InvalidMessage or 2] = true,
+    [RESULT.InvalidChatType or 4] = true,
+    [RESULT.TargetRequired or 6] = true,
+    [RESULT.InvalidChannel or 7] = true,
+}
 
 -- Send one message from a lane if it can go now. Returns nothing.
 local function serve(lane)
@@ -98,7 +107,7 @@ local function serve(lane)
         return
     end
     local result = C_ChatInfo.SendAddonMessage(lane.prefix, msg, ch)
-    if result ~= nil and result ~= SUCCESS then
+    if result ~= nil and result ~= SUCCESS and not PERMANENT[result] then
         tokens[lane.prefix] = 0 -- throttled or blocked; back off and retry
         return
     end
@@ -114,37 +123,62 @@ local function serve(lane)
     end
 end
 
+-- The whole session, for a player who reloaded or joined late. It goes to
+-- the whole group, so every request made before it goes out (a raid logging
+-- in at once, or one player spamming ?SYNC) shares one broadcast. It waits
+-- for the live queue to empty, so snapshots never pile up behind each other.
+local snapshotWanted, lastSnapshot = false, 0
+function Net.SendSnapshot()
+    snapshotWanted = true
+end
+
 C_Timer.NewTicker(0.25, function()
     for prefix, n in pairs(tokens) do
         tokens[prefix] = math.min(BURST, n + REGEN * 0.25)
+    end
+    if snapshotWanted and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 3 then
+        snapshotWanted, lastSnapshot = false, GetTime()
+        local S = NS.S()
+        if S then
+            for _, op in ipairs(Rules.Snapshot(S)) do
+                Net.Queue(op)
+            end
+        end
     end
     for _, lane in ipairs(lanes) do
         serve(lane)
     end
 end)
 
--- The whole session, for a player who reloaded or joined late. It goes to
--- the whole group, so requests arriving close together (a raid logging in
--- at once) share one broadcast. The short window means a later requester is
--- never left unanswered; RequestSync also retries.
-local lastSnapshot = 0
-function Net.SendSnapshot()
-    local now = GetTime()
-    if now - lastSnapshot < 3 then
-        return
-    end
-    lastSnapshot = now
-    for _, op in ipairs(Rules.Snapshot(NS.S())) do
-        Net.Queue(op)
-    end
-end
-
 local GROUP_CHANNELS = { RAID = true, PARTY = true, INSTANCE_CHAT = true }
+
+-- Requests per sender: REQ_BURST at once, then one per REQ_EVERY seconds.
+-- Each request can make the host broadcast an op, so one spamming raider
+-- would otherwise eat the send budget live rolls need.
+local REQ_BURST, REQ_EVERY = 8, 1
+local reqBudget = {} -- sender -> { tokens, lastTime }
+local function allowRequest(sender)
+    local now = GetTime()
+    local b = reqBudget[sender]
+    if not b then
+        b = { REQ_BURST, now }
+        reqBudget[sender] = b
+    end
+    b[1] = math.min(REQ_BURST, b[1] + (now - b[2]) / REQ_EVERY)
+    b[2] = now
+    if b[1] < 1 then
+        return false
+    end
+    b[1] = b[1] - 1
+    return true
+end
 
 -- Whether a NEW from `sender` may replace our session.
 local function acceptNew(S, op, sender)
-    if op[3] ~= sender then
-        return false -- a session can only be started in your own name
+    if op[3] ~= sender or op[2] ~= sender .. "-" .. tostring(op[5]) then
+        -- A session can only be started in your own name, with the id
+        -- NS.NewSession makes, so a reused id cannot overwrite saved history.
+        return false
     end
     if S and S.id == op[2] and S.host == sender then
         return true -- the host resending its own session (a snapshot)
@@ -186,8 +220,10 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
     for _, op in ipairs(Rules.Decode(msg)) do
         local kind = op[1] or ""
         if kind:sub(1, 1) == "?" then
-            op[1] = kind:sub(2)
-            NS.HandleRequest(sender, op)
+            if allowRequest(sender) then
+                op[1] = kind:sub(2)
+                NS.HandleRequest(sender, op)
+            end
         elseif kind == "NOTE" or kind == "ERR" then
             if S and sender == S.host and (kind == "NOTE" or op[2] == me) then
                 NS.Print(kind == "NOTE" and op[2] or op[3] or "")

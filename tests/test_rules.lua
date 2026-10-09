@@ -362,5 +362,39 @@ do
     check(ok, "client copy matches the host after live ops (differs at " .. tostring(where) .. ")")
 end
 
+-- ---- hostile wire input --------------------------------------------------
+do
+    fresh()
+    -- A spec key must be the sender's own class.
+    check(act(C, { "SPEC", "WARRIOR.PROT" }) == nil, "mage cannot report a warrior spec")
+    check(act(C, { "SPEC", "MAGE.FIRE" }), "mage can report a mage spec")
+    check(act(HOST, { "SETSPEC", C, "WARRIOR.PROT" }) == nil, "officer cannot set a spec of another class")
+    -- Numbers: no inf, NaN, fractions or out-of-range ids.
+    check(act(A, { "RES", "1e999" }) == nil, "reserve id inf refused")
+    check(act(A, { "RES", "1.5" }) == nil, "reserve id fraction refused")
+    check(act(A, { "RES", 19019 }), "reserve id accepted")
+    local S = R.Apply(nil, { "NEW", "Host-Realm-2", HOST, "Raid", 1 })
+    check(R.Apply(S, { "ADD", "1e999", "item:19019" }) == nil, "ADD key inf refused")
+    check(R.Apply(S, { "ADD", "07", "item:19019" }) == nil, "ADD key must be canonical")
+    check(R.Apply(S, { "ADD", "77", "item:19019" }), "ADD key accepted")
+    check(R.Apply(S, { "ROLL", "77", A, "0/0" }) == nil, "roll NaN refused")
+    check(R.Apply(S, { "ROLL", "77", A, "50.5" }) == nil, "roll fraction refused")
+    check(R.Apply(S, { "ITEM", "77", "done", "normal", "0", "", "" }) == nil, "ITEM done without winner refused")
+    check(R.Apply(S, { "ITEM", "77", "rolling", "normal", "1e999", "", "" }) == nil, "class mask inf refused")
+    -- A /roll from someone outside the group never counts, even on an open item.
+    act(HOST, { "ADD", "item:19019" })
+    local key = host.order[#host.order]
+    act(HOST, { "START", key })
+    act(HOST, { "OPEN", key })
+    act(HOST, { "CALL", key })
+    check(host.items[key].state == "rolling", "outsider fixture: item is rolling")
+    check(act(HOST, { "ROLLSEEN", "Stranger-Realm", 99, 1, 100 }) == nil, "outsider roll refused")
+    check(act(HOST, { "ROLLSEEN", A, 50, 1, 100 }), "group member roll counts")
+    -- Names: no UI escapes or CSV commas.
+    check(not R.ValidName("|Hx|h-Realm"), "name with | refused")
+    check(not R.ValidName("A,B-Realm"), "name with , refused")
+    check(R.ValidName("Serv Aszune-Realm"), "surname name still valid")
+end
+
 print(string.format("test_rules: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

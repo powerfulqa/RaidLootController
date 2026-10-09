@@ -33,6 +33,11 @@ only from the session host (and `NEW` only from a leader or assistant).
   API. No libraries are embedded and none should be added.
 - **New rule behaviour lands with a fixture in `tests/test_rules.lua`.**
   Mutate the source to prove a new check can fail.
+- For WoW API, event, widget or template questions, audits and new features,
+  use the `wow-addon-architect` agent (`.claude/agents/`). It checks Context7
+  first (`/alejandrotrevi/warcraft-wiki-md`, `/gethe/wow-ui-source`).
+- WoW tooling this project expects (see "Dev tooling" at the end). At the start
+  of WoW work, check it is in place and offer to set up whatever is missing.
 - Check every new API call, event name and template against Forever before
   using it (`wow` MCP, `flavor: "forever"`; the captured surface is
   `~/Projects/forever-addon-kit/data/forever_api.json`). luacheck cannot see
@@ -81,3 +86,39 @@ only from the session host (and `NEW` only from a leader or assistant).
     "Equip:" phrases cover spell damage, healing and defense on Forever's
     Classic-era items. `MenuUtil` menus open from the Who can roll and spec
     buttons.
+12. ~~Master loot API present~~ **Measured 2026-10-09:** `/dump GetMasterLootCandidate,
+    GiveMasterLoot, C_PartyInfo.GetLootMethod` returned three functions. Item 3
+    (the server actually offering master loot in a raid) is still open.
+13. A /roll by a player outside the group, standing near the host, does or
+    does not reach the host's `CHAT_MSG_SYSTEM` (the host ignores it either way).
+14. The glow (`AddGlow` in `RLC_UI.lua`) shows and pulses on the I want this,
+    Roll and minimap buttons, and stops after the click.
+
+## Dev tooling
+
+Declared in `.claude/settings.json` (committed). On a new machine Claude Code
+asks to trust the project and install both plugins; say yes. If it does not,
+run `/plugin` and install them from the marketplaces listed there.
+
+| Tool | Where | Use it for |
+|---|---|---|
+| `wow-addon-dev@wow-addon-workspace` (Wafhi3n) | plugin | `wow-forever-api` skill: facts measured on the Forever client, dated. Load before trusting any API on Forever. `api-gotcha-reviewer` agent on a diff before release. `/wow-addon-dev:patch-diff` after a client update. Skip its `/check` and `init` (they expect a multi-addon workspace). |
+| `wow-addon-dev@wow-addon-dev` (miyanko) | plugin | `wow-source.sh ui forever` keeps a local, daily-refreshed clone of Blizzard's Forever UI source (`~/.cache/wow-addon-dev/ui/forever`). Grep `Blizzard_APIDocumentationGenerated` for signatures and secret tags; `Camelot/` overrides `Mainline/`. Its skill also lists the CVars that force a restriction (e.g. chat/encounter) for testing. Ignore the WeakAura parts. |
+| `wow-addon-lifecycle` (TheMizeGuy, vendored) | `.claude/skills/wow-addon-lifecycle/` | PowerShell: `install-addon.ps1 . -Edition forever` copies this addon into the game, `package-addon.ps1`, `validate-toc.ps1`, `read-bugsack.ps1` (in-game Lua errors). References on taint, Midnight secrets, SavedVariables. Its Ace3 advice does not apply here. |
+| `wow-addon-architect` | `.claude/agents/` | API research and audits, Context7 first. |
+| Mechanic (Falkicon, GPL-3) | not in repo; set up on the machine that runs the game | In-game dev hub plus `mech` CLI and MCP server. Queue a Lua probe, `/reload`, read the result: the fastest way to tick off the in-game checklist below. Supports `16001`. |
+
+Mechanic setup, only where WoW is installed (ask before doing it):
+1. Clone https://github.com/Falkicon/Mechanic outside this repo.
+2. Copy its `!Mechanic/` and `Mechanic/` folders into the Forever `Interface/AddOns/`.
+3. `cd desktop && python -m pip install -e ".[mcp]"`, then `mech setup`.
+4. `claude mcp add mechanic --scope local -- mech mcp` (local scope: machines
+   without the game would only see a failing server).
+
+Verified 2026-10-09 against the Forever source (build 1.60.1.70291):
+`GetMasterLootCandidate` / `GiveMasterLoot` are called by Blizzard's own
+`GroupLootFrame.lua`, which loads on Forever; `C_SpecializationInfo.GetActiveSpecGroup`,
+`GetCombatConfigIDForSpecGroup`, `C_Traits.GetGroupDisplayInfoByTreeID` and
+`GetGroupCurrencyInfo`, `RandomRoll`, `RegionalUniqueNamesEnabled` and
+`InChatMessagingLockdown` are documented there. Whether the server offers master
+loot is still checklist item 3.

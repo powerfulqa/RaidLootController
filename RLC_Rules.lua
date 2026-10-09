@@ -32,6 +32,16 @@ local STATES = { pending = true, interest = true, rolling = true, done = true, c
 local MODES = { normal = true, open = true, reserve = true }
 local HOWS = { roll = true, open = true, reserve = true, manual = true }
 Rules.MAX_ITEMS = 500 -- per raid session; far above any real raid
+Rules.MAX_ID = 2147483647 -- item ids and session keys: rejects "1e999" (inf) and NaN
+
+-- A whole number in [lo, hi] from a wire field, or nil.
+function Rules.Int(v, lo, hi)
+    v = tonumber(v)
+    if not v or v ~= math.floor(v) or v < lo or v > hi then
+        return nil
+    end
+    return v
+end
 
 -- ---- small helpers -------------------------------------------------------
 
@@ -54,11 +64,11 @@ end
 
 -- Full player names only: "Name-Realm", or "First Surname-Realm" on a
 -- client with surnames (one space inside the name part). Anything else from
--- the wire is junk.
+-- the wire is junk. No "|" (UI escape codes) or "," (the CSV codec).
 function Rules.ValidName(s)
     return type(s) == "string"
         and #s <= 64
-        and (s:match("^[^%s%-]+%-[^%s%-]+$") ~= nil or s:match("^[^%s%-]+ [^%s%-]+%-[^%s%-]+$") ~= nil)
+        and (s:match("^[^%s%-|,]+%-[^%s%-|,]+$") ~= nil or s:match("^[^%s%-|,]+ [^%s%-|,]+%-[^%s%-|,]+$") ~= nil)
 end
 
 -- "item:12345:..." (the itemString inside a link). Links themselves never go
@@ -122,6 +132,12 @@ Rules.CLASS_TOKEN = {
 
 function Rules.ValidSpec(s)
     return type(s) == "string" and #s <= 32 and s:match("^[A-Z]+%.[A-Z]+$") ~= nil
+end
+
+-- A spec key of this player's own class (classID nil = unknown = no).
+function Rules.SpecFits(s, classID)
+    local token = classID and Rules.CLASS_TOKEN[classID]
+    return token ~= nil and Rules.ValidSpec(s) and s:sub(1, #token + 1) == token .. "."
 end
 
 function Rules.SpecsToCSV(set)
@@ -381,8 +397,8 @@ function Rules.Apply(S, op)
         elseif kind == "LOCK" then
             S.locks[name] = bool(op[3]) or nil
         else
-            local id = tonumber(op[3])
-            if not id or id < 0 then
+            local id = Rules.Int(op[3], 0, Rules.MAX_ID)
+            if not id then
                 return nil, "bad item"
             end
             S.reserves[name] = id > 0 and id or nil
@@ -391,8 +407,14 @@ function Rules.Apply(S, op)
     end
     local key = op[2]
     if kind == "ADD" then
-        local n = tonumber(key)
-        if not n or S.items[key] or not Rules.ValidItemString(op[3]) or #S.order >= Rules.MAX_ITEMS then
+        local n = Rules.Int(key, 1, Rules.MAX_ID)
+        if
+            not n
+            or tostring(n) ~= key
+            or S.items[key]
+            or not Rules.ValidItemString(op[3])
+            or #S.order >= Rules.MAX_ITEMS
+        then
             return nil, "bad ADD"
         end
         S.items[key] = {
@@ -416,11 +438,13 @@ function Rules.Apply(S, op)
         return nil, "no item"
     end
     if kind == "ITEM" then
-        if not STATES[op[3]] or not MODES[op[4]] then
+        -- "done" only comes with a winner, through AWARD.
+        local mask = Rules.Int(op[5] or 0, 0, 4095)
+        if not STATES[op[3]] or op[3] == "done" or not MODES[op[4]] or not mask then
             return nil, "bad ITEM"
         end
         item.state, item.mode = op[3], op[4]
-        item.classMask = tonumber(op[5]) or 0
+        item.classMask = mask
         item.restrict = Rules.CSVToSet(op[6])
         item.specs = Rules.CSVToSpecs(op[7])
         if item.state == "interest" or item.state == "rolling" then
@@ -436,8 +460,8 @@ function Rules.Apply(S, op)
         if kind == "WANT" then
             item.wants[name] = bool(op[4]) or nil
         else
-            local n = tonumber(op[4])
-            if not n or n < 1 or n > 100 then
+            local n = Rules.Int(op[4], 1, 100)
+            if not n then
                 return nil, "bad roll"
             end
             item.rolls[name] = n
@@ -547,8 +571,8 @@ function Rules.Intent(S, who, req, ctx)
         if S.phase ~= "reserve" then
             return nil, "Reserves are closed once the raid starts."
         end
-        local id = tonumber(req[2])
-        if not id or id < 0 or id ~= math.floor(id) then
+        local id = Rules.Int(req[2], 0, Rules.MAX_ID)
+        if not id then
             return nil, "Not an item."
         end
         return { { "RES", who, id } }
@@ -556,7 +580,7 @@ function Rules.Intent(S, who, req, ctx)
         -- Your own spec: free to change until the raid starts, then locked
         -- (a first report from a late joiner still counts).
         local spec = req[2]
-        if not Rules.ValidSpec(spec) then
+        if not Rules.SpecFits(spec, classOf(who)) then
             return nil, "Not a spec."
         end
         if S.phase ~= "reserve" and S.specs[who] and S.specs[who] ~= spec then
@@ -585,6 +609,9 @@ function Rules.Intent(S, who, req, ctx)
         local item = S.active and S.items[S.active]
         if not item or item.state ~= "rolling" or not roll then
             return nil -- not rolling for anything: a /roll for some other reason
+        end
+        if not classOf(name) then
+            return nil -- not in the group: a bystander's /roll seen nearby
         end
         -- The reasons go back to the player who rolled.
         if low ~= 1 or high ~= 100 then
@@ -617,7 +644,7 @@ function Rules.Intent(S, who, req, ctx)
         end
         return ops
     elseif kind == "SETSPEC" then
-        if not Rules.ValidName(req[2]) or (req[3] ~= "" and not Rules.ValidSpec(req[3])) then
+        if not Rules.ValidName(req[2]) or (req[3] ~= "" and not Rules.SpecFits(req[3], classOf(req[2]))) then
             return nil, "Bad spec."
         end
         return { { "SPEC", req[2], req[3] } }

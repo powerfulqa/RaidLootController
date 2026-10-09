@@ -141,7 +141,9 @@ function Loot.Deliver(item)
     if winner == NS.Me() then
         return -- the host won it and already has it
     end
-    if Loot.lootOpen then
+    -- ponytail: master loot is unmeasured on Forever (checklist 3); without
+    -- the API the item falls through to the owed list and a trade.
+    if Loot.lootOpen and GetMasterLootCandidate and GiveMasterLoot then
         local slot = bestMatch(GetNumLootItems(), function(i)
             return NS.ItemStringOf(GetLootSlotLink(i))
         end, item.itemString)
@@ -203,11 +205,11 @@ NS.On("TRADE_SHOW", function()
             used[at] = true
             C_Container.PickupContainerItem(bagSlots[at].bag, bagSlots[at].slot)
             ClickTradeButton(tradeSlot)
+            ClearCursor() -- a failed placement must not ride into the next pickup
             placed[#placed + 1] = { who = who, index = i, slot = tradeSlot, itemString = itemString }
             tradeSlot = tradeSlot + 1
         end
     end
-    ClearCursor() -- never leave an item on the cursor if a placement failed
     if #placed > 0 then
         NS.Print("Put %d won item(s) for %s in the trade window. Check them, then trade.", #placed, NS.ColorName(who))
     end
@@ -235,7 +237,10 @@ NS.On("UI_INFO_MESSAGE", function(_, message)
         return a.index > b.index
     end)
     for _, p in ipairs(placed) do
-        table.remove(NS.DB.owed[p.who], p.index)
+        local list = NS.DB.owed[p.who] -- nil if "/rlc owed" cleared it mid-trade
+        if list then
+            table.remove(list, p.index)
+        end
     end
     wipe(placed)
     if NS.Refresh then

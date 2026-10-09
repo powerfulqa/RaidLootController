@@ -210,7 +210,7 @@ function Demo.Toggle()
         classes = {},
         owed = { [full("Shade")] = { "item:16453" } },
         catalog = {},
-        mySpec = real.mySpec, -- your own spec choice, unchanged
+        mySpec = CopyTable(real.mySpec or {}), -- your spec choice; a demo pick is not saved
         announce = false,
         minQuality = real.minQuality,
         minimapButton = real.minimapButton,

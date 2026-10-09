@@ -51,6 +51,14 @@ local ENTRIES = {
         tab = "loot",
     },
     {
+        q = "Why is a button glowing?",
+        a = "A glowing button is the next thing you can click for the item that is up now: "
+            .. "I want this while officers ask who wants it, then Roll once rolls are called. "
+            .. "The minimap button glows too, in case you closed the window. "
+            .. "The glow stops once you click, or if you can't roll for that item.",
+        tab = "loot",
+    },
+    {
         q = "Why can't I roll on this item?",
         a = "The line under the item says why. The usual reasons:\n"
             .. "- Rolls have not been called yet.\n"

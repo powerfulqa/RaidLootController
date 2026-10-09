@@ -1,0 +1,20 @@
+{
+  "enabledPlugins": {
+    "wow-addon-dev@wow-addon-workspace": true,
+    "wow-addon-dev@wow-addon-dev": true
+  },
+  "extraKnownMarketplaces": {
+    "wow-addon-workspace": {
+      "source": {
+        "source": "github",
+        "repo": "Wafhi3n/wow-addon-workspace"
+      }
+    },
+    "wow-addon-dev": {
+      "source": {
+        "source": "github",
+        "repo": "miyanko-dev/wow-addon-dev"
+      }
+    }
+  }
+}

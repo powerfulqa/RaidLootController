@@ -36,8 +36,11 @@ end
 
 local myRealm
 local function realm()
-    myRealm = myRealm or (GetNormalizedRealmName() or ""):gsub("[%s%-]", "")
-    return myRealm
+    if not myRealm then
+        local r = (GetNormalizedRealmName() or ""):gsub("[%s%-]", "")
+        myRealm = r ~= "" and r or nil -- empty before login: ask again later
+    end
+    return myRealm or ""
 end
 
 function NS.Full(name)
@@ -58,10 +61,17 @@ local SEP = Constants
 -- Canonical name and first name of a unit, or nil.
 local function unitIdentity(unit)
     local first, second = UnitName(unit)
+    -- Unit names can be secret on this client: comparing one throws.
+    if canaccessvalue and not (canaccessvalue(first) and canaccessvalue(second)) then
+        return nil
+    end
     if type(first) ~= "string" or first == "" then
         return nil
     end
     local _, unitRealm = UnitFullName(unit)
+    if canaccessvalue and not canaccessvalue(unitRealm) then
+        unitRealm = nil
+    end
     local surnames = RegionalUniqueNamesEnabled and RegionalUniqueNamesEnabled()
     local display = first
     if surnames and type(second) == "string" and second ~= "" and not first:find(SEP, 1, true) then
@@ -69,7 +79,7 @@ local function unitIdentity(unit)
     end
     unitRealm = (type(unitRealm) == "string" and unitRealm ~= "" and unitRealm ~= second) and unitRealm or realm()
     unitRealm = unitRealm:gsub("[%s%-]", "")
-    return display .. "-" .. unitRealm, (display:match("^([^" .. SEP .. "]+)") or display)
+    return display .. "-" .. unitRealm, (display:match("^([^" .. SEP:gsub("%p", "%%%0") .. "]+)") or display)
 end
 NS.UnitIdentity = unitIdentity
 
@@ -245,7 +255,19 @@ function NS.ApplyOps(ops, broadcast)
     local changedHistory = false
     local rejected = 0
     for _, op in ipairs(ops) do
+        -- An UNDO takes the win back, so the old winner is no longer owed it.
+        local undone = op[1] == "UNDO" and S and S.items[op[2]]
+        undone = undone and undone.winner and { who = undone.winner, s = undone.itemString }
         local newS = Rules.Apply(S, op)
+        local owedList = undone and newS and NS.DB.owed[undone.who]
+        if owedList then
+            for i, s in ipairs(owedList) do
+                if s == undone.s then
+                    table.remove(owedList, i)
+                    break
+                end
+            end
+        end
         if not newS then
             rejected = rejected + 1
         else
@@ -337,8 +359,10 @@ function NS.HandleRequest(who, req)
         describe = NS.Specs.DescribeItem,
     })
     if not ops then
-        -- A refused roll is told to the player who rolled, not the host.
-        local to = req[1] == "ROLLSEEN" and req[2] or who
+        -- A refused roll is told to the player who rolled, not the host. Only
+        -- the host's own ROLLSEEN names someone else; from anyone else the
+        -- reply goes back to the sender, so nobody can aim error spam.
+        local to = (req[1] == "ROLLSEEN" and who == S.host) and req[2] or who
         if NS.debug and req[1] == "ROLLSEEN" then
             NS.Print("debug: roll from %s refused: %s", tostring(req[2]), tostring(note))
         end

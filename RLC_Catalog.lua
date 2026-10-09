@@ -49,13 +49,7 @@ local function cleanName(s)
     return s ~= "" and s or nil
 end
 
-local function int(v, lo, hi)
-    v = tonumber(v)
-    if not v or v ~= math.floor(v) or v < lo or v > hi then
-        return nil
-    end
-    return v
-end
+local int = Rules.Int
 
 local function count(t)
     local n = 0
