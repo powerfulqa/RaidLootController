@@ -346,6 +346,14 @@ function NS.Announce(text, itemString)
     end
 end
 
+-- Players to roll first tonight (see Rules.DryFrom), from saved history.
+function NS.DryLastRaid()
+    local S = NS.S()
+    return Rules.DryFrom(NS.DB.history, S and S.id)
+end
+
+local lastSyncFrom, lastErrTo = {}, {}
+
 -- The host runs a request. `who` is the requester's full name.
 function NS.HandleRequest(who, req)
     local S = NS.S()
@@ -353,6 +361,13 @@ function NS.HandleRequest(who, req)
         return
     end
     if req[1] == "SYNC" then
+        -- One resend per player per 30 s: a spammed sync would keep the
+        -- host resending the whole raid ahead of live traffic.
+        local now = GetTime()
+        if who ~= NS.Me() and now - (lastSyncFrom[who] or -60) < 30 then
+            return
+        end
+        lastSyncFrom[who] = now
         NS.Net.SendSnapshot()
         return
     end
@@ -360,6 +375,7 @@ function NS.HandleRequest(who, req)
         classOf = NS.ClassOf,
         now = GetServerTime(),
         describe = NS.Specs.DescribeItem,
+        dry = NS.DryLastRaid,
     })
     if not ops then
         -- A refused roll is told to the player who rolled, not the host. Only
@@ -372,7 +388,10 @@ function NS.HandleRequest(who, req)
         if note and to then
             if to == NS.Me() then
                 NS.Print(note)
-            else
+            elseif GetTime() - (lastErrTo[to] or -60) >= 5 then
+                -- At most one error line per player per 5 s: a spammed
+                -- /roll must not flood the raid's addon channel.
+                lastErrTo[to] = GetTime()
                 NS.Net.Queue({ "ERR", to, note })
             end
         end

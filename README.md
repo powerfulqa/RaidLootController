@@ -39,8 +39,11 @@ Everyone in the raid should install it. Players without it can still roll with `
 
 An officer can **Unlock** a player on the Raid tab so they can roll normally again.
 
-- **Free rolls don't count.** Winning an item that was opened to everyone (usually off-spec) does not lock you and does not touch your reserve.
+- **Free rolls don't count.** Winning an item that was opened to everyone does not lock you and does not touch your reserve, if you already had an item or it was off-spec for you. If you could have asked for it normally, it counts: staying quiet on **I want this** does not buy a free first item.
 - **Your reserve is safe.** Winning another item first does not cost you your reserve: it still pays out when it drops, as your second item.
+- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls.
+- **Reserves close** at the raid start or when the first item is put up, whichever comes first. A reserve only pays out to someone still in the group.
+- **Officers are held to the rules.** They can't open an item while someone without an item wants it, or give items to players outside the group. Every item given by hand, win taken back, lock, unlock and spec change is in the **Officer log** on the History tab.
 - **Upgrade size.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the raw stat change. No scores, officers judge.
 
 ## The loot catalogue

@@ -37,7 +37,7 @@ local SLOTS = {
     INVTYPE_TRINKET = { 13, 14 },
     INVTYPE_CLOAK = { 15 },
     INVTYPE_WEAPON = { 16, 17 },
-    INVTYPE_2HWEAPON = { 16 },
+    INVTYPE_2HWEAPON = { 16, 17 }, -- replaces the off hand too
     INVTYPE_WEAPONMAINHAND = { 16 },
     INVTYPE_WEAPONOFFHAND = { 17 },
     INVTYPE_SHIELD = { 17 },
@@ -125,7 +125,7 @@ function Loot.AddFromWindow()
     for _, e in ipairs(lootSlots()) do
         if not added[e.key] then
             added[e.key] = true
-            NS.Act("ADD", e.itemString)
+            NS.Act("ADD", e.itemString, e.key)
         end
     end
 end

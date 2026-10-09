@@ -436,11 +436,11 @@ function Specs.Report(force)
     local mine, picked = Specs.Mine()
     -- Once per session: a spec only guessed from talents may be tonight's
     -- role (an off-tank in dps spec), not the one the player loots for.
-    if not picked and nudged ~= S.id and S.phase == "reserve" then
+    if mine and not picked and nudged ~= S.id and S.phase == "reserve" then
         nudged = S.id
         NS.Print(
             "Confirm your loot spec (the spec you want gear for) on the Raid tab. From your talents: %s.",
-            mine and Specs.BY_KEY[mine] and Specs.BY_KEY[mine].name or "unknown"
+            Specs.BY_KEY[mine] and Specs.BY_KEY[mine].name or mine
         )
     end
     local onRecord = S.specs[NS.Me()]

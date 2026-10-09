@@ -71,9 +71,12 @@ local ENTRIES = {
     {
         q = 'What does "Open to everyone" mean?',
         a = "Nobody it was meant for wants it, so anyone who can use it may roll, "
-            .. "including players who already won an item. Officers can also open an item by hand.\n\n"
-            .. "This is a free roll: winning it does not count as your item and does not touch your "
-            .. "reserve. Off-spec gear usually comes this way.",
+            .. "including players who already won an item. Officers can open an item by hand, "
+            .. "but not while someone without an item still wants it.\n\n"
+            .. "For players who already won something, or for whom it is off-spec, this is a free roll: "
+            .. "winning it does not count as your item and does not touch your reserve.\n\n"
+            .. "If it was an item you could have asked for normally, winning it counts as your item. "
+            .. "Staying quiet on I want this does not get you a free first item.",
     },
     {
         q = "Can I see if an item is an upgrade?",
@@ -81,6 +84,14 @@ local ENTRIES = {
             .. "When you click I want this, the addon also sends what you wear in that slot. "
             .. "Hover a name in the list to see their gear and the stat change the item would give them. "
             .. "It shows raw stats, not a score: officers judge how big the upgrade is.",
+        tab = "loot",
+    },
+    {
+        q = 'What does "no loot last raid" mean?',
+        a = "You were in the last raid and won nothing there (free rolls aside). "
+            .. "Tonight, when you want an item that suits you, only players with no loot last raid "
+            .. "roll on it first. If none of them want it, everyone rolls as usual. "
+            .. "It keeps loot moving when raid nights are few.",
         tab = "loot",
     },
     {
@@ -104,7 +115,9 @@ local ENTRIES = {
             .. "Shift-click the item into the box, type its item ID, or pick it from the Catalogue.\n\n"
             .. "If nobody else reserves it, it's yours when it drops. If several players reserve it, "
             .. "only they roll. Winning another item first does not cost you your reserve: "
-            .. "it still pays out when it drops, as your second item.",
+            .. "it still pays out when it drops, as your second item.\n\n"
+            .. "Reserves close when the raid starts or when the first item is put up, whichever comes first. "
+            .. "You must be in the group when it drops.",
         tab = "raid",
     },
     {
@@ -186,7 +199,9 @@ local ENTRIES = {
     {
         q = "What is in History?",
         a = "Every raid: who won what, how (roll, open roll, reserve or given), and everyone's rolls. "
-            .. "Hover an item to see the rolls.",
+            .. "Hover an item to see the rolls.\n\n"
+            .. "Officer log: every item given by hand, win taken back, lock, unlock and spec change, "
+            .. "with the officer who did it. Hover Officer log, or an item, to see it.",
         tab = "history",
     },
 

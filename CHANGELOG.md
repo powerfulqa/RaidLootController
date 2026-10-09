@@ -4,6 +4,24 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.3.0
+
+**Fairer over few raid nights, and much harder to game.** After a full audit, a fuzz test and a simulated raid full of players trying to cheat.
+
+- **No loot last raid? You roll first.** If you were in the last raid and won nothing there (free rolls aside), you roll first on items that suit you. If none of you want it, everyone rolls.
+- **Staying quiet doesn't pay.** Skipping I want this so an item opens to everyone no longer gets you a free first item: if you could have asked for it normally, winning it counts.
+- **Reserves close** at the raid start or when the first item is put up, so nobody reserves a drop after seeing it. A reserve only pays out to someone still in the group.
+- **Officers are held to the rules.** They can't open an item someone without an item wants, or give items to players outside the group. The new **Officer log** on the History tab shows every item given by hand, win taken back, lock, unlock and spec change, and who did it.
+- **Commands tab.** Every /rlc command you can use right now, with a Run button. It follows your role: raider, officer or raid host. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.
+
+Fixes:
+
+- Long reserver or "Who can roll" lists no longer get lost on the way to other players.
+- A player who leaves mid-roll can't win; spammed /roll, resync and I want this clicks can't flood the raid.
+- The same loot window drop can't be added twice after a reload.
+- Taking back a win always returns the reserve it used; a reopened raid syncs correctly.
+- Upgrade info: two-handers compare against both hands; no "stats loading" on statless items.
+
 ### v0.2.0
 
 **First public test build.** Fair raid loot for WoW: Forever without DKP: soft reserves, server /roll, one item each before anyone gets two, and a full raid history. Not yet run through a full raid: please report anything odd.

@@ -149,24 +149,177 @@ do
     check(client.reserves[A] == 500 and client.locks[A], "undo of a reserve win gives the reserve back")
 end
 
--- ---- a free roll (open item) does not lock or touch the reserve -----------
+-- ---- a free roll (open item) does not lock an off-spec winner -------------
 do
     fresh()
     act(A, { "RES", 500 })
     act(HOST, { "PHASE", "live" })
     act(HOST, { "ADD", "item:1" })
+    act(HOST, { "SPECS", "1", "MAGE.FIRE,MAGE.FROST" }) -- a mage item; A is a warrior
     act(HOST, { "START", "1" })
-    act(HOST, { "OPEN", "1" })
+    act(HOST, { "CALL", "1" }) -- no mage wants it: opens to everyone
     act(A, { "WANT", "1", 1 })
     act(HOST, { "CALL", "1" })
     act(HOST, { "ROLLSEEN", A, 20, 1, 100 })
     act(HOST, { "CLOSE", "1" })
-    check(client.items["1"].how == "open", "free roll recorded as open")
-    check(not client.locks[A], "a free-roll win does not lock")
+    check(client.items["1"].how == "open", "off-spec free roll recorded as open")
+    check(not client.locks[A], "an off-spec free-roll win does not lock")
     check(client.reserves[A] == 500, "a free-roll win keeps the reserve")
     act(HOST, { "ADD", "item:2" })
     act(HOST, { "START", "2" })
     check(act(A, { "WANT", "2", 1 }), "after a free roll the player can still want a normal item")
+end
+
+-- ---- staying quiet on I want this does not buy a free first item ---------
+do
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "CALL", "1" }) -- B could want it but stays quiet: it opens
+    check(client.items["1"].mode == "open", "nobody asked: open to everyone")
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", B, 70, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].how == "roll" and client.locks[B], "a quiet eligible player's open win counts and locks")
+end
+
+-- ---- officer limits and the officer log ----------------------------------
+do
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    check(act(HOST, { "OPEN", "1" }) == nil, "cannot open an item an unlocked player wants")
+    check(act(HOST, { "AWARD", "1", "Gone-Realm" }) == nil, "cannot give an item to someone not in the group")
+    check(act(HOST, { "AWARD", "1", B }), "can give an item by hand to a group member")
+    local e = client.log[#client.log]
+    check(e and e.by == HOST and e.what == "award" and e.name == B and e.key == "1", "manual award is logged")
+    act(HOST, { "LOCK", B, 0 })
+    check(client.log[#client.log].what == "unlock", "unlock is logged")
+end
+
+-- ---- reserves close at the first item; absent players never win -----------
+do
+    fresh()
+    act(A, { "RES", 500 })
+    act(HOST, { "ADD", "item:7" })
+    act(HOST, { "START", "1" }) -- first item up, still in the reserve phase
+    check(act(B, { "RES", 500 }) == nil, "reserves close once the first item is up")
+    check(act(A, { "RES", 0 }) == nil, "a reserve cannot be dropped once items are up")
+    act(HOST, { "CANCEL", "1" })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:500" })
+    local saved = CLASS[A]
+    CLASS[A] = nil -- A left the group
+    act(HOST, { "START", "2" })
+    check(client.items["2"].mode == "normal", "a reserver who left does not get reserve mode")
+    act(HOST, { "CANCEL", "2" })
+    CLASS[A] = saved
+    act(HOST, { "ADD", "item:3" })
+    act(HOST, { "START", "3" })
+    act(A, { "WANT", "3", 1 })
+    act(B, { "WANT", "3", 1 })
+    act(HOST, { "CALL", "3" })
+    act(HOST, { "ROLLSEEN", A, 99, 1, 100 })
+    act(HOST, { "ROLLSEEN", B, 10, 1, 100 })
+    CLASS[A] = nil -- A leaves mid-roll
+    act(HOST, { "CLOSE", "3" })
+    check(client.items["3"].winner == B, "a roller who left does not win")
+    CLASS[A] = saved
+    check(act(HOST, { "ROLLSEEN", B, -1, 1, 100 }) == nil, "a roll outside 1-100 is never recorded")
+end
+
+-- ---- players dry last raid roll first ------------------------------------
+do
+    fresh()
+    ctx.dry = function()
+        return { B }
+    end
+    act(HOST, { "PHASE", "live" })
+    ctx.dry = nil
+    check(client.dry[B], "dry list reaches clients at raid start")
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(B, { "WANT", "1", 1 })
+    local _, note = act(HOST, { "CALL", "1" })
+    check(note and note:find("no loot last raid"), "dry first pass announced")
+    check(act(HOST, { "ROLLSEEN", A, 99, 1, 100 }) == nil, "a non-dry player waits for the dry first pass")
+    act(HOST, { "ROLLSEEN", B, 5, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].winner == B and client.locks[B], "the dry player wins and is locked as normal")
+end
+
+-- ---- dry list from history; a loot slot is added once -------------------
+do
+    local history = {
+        old = { started = 1, created = 1, specs = { [A] = "WARRIOR.ARMS" }, items = {} },
+        last = {
+            started = 2,
+            created = 2,
+            specs = { [A] = "WARRIOR.ARMS", [B] = "PALADIN.HOLY" },
+            reserves = { [C] = 5 },
+            items = {
+                ["1"] = { state = "done", winner = A, how = "roll", wants = { [A] = true }, rolls = {} },
+                ["2"] = { state = "done", winner = B, how = "open", wants = {}, rolls = { [B] = 3 } },
+            },
+        },
+        now = { started = 3, created = 3, specs = {}, items = {} },
+    }
+    local dry = table.concat(R.DryFrom(history, "now"), ",")
+    check(dry == table.concat({ B, C }, ","), "dry: seen last raid, no non-free win (got " .. dry .. ")")
+    check(#R.DryFrom({}, nil) == 0, "no history: nobody is dry")
+
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    check(act(HOST, { "ADD", "item:1", "Creature-0-1-2-3-4-5:1" }), "a loot slot is added")
+    check(act(HOST, { "ADD", "item:1", "Creature-0-1-2-3-4-5:1" }) == nil, "the same loot slot is not added twice")
+    check(act(HOST, { "ADD", "item:1" }), "a hand-added copy still works")
+end
+
+-- ---- long lists split so every op fits one addon message -----------------
+do
+    fresh()
+    local names = {}
+    for i = 1, 9 do
+        local n = "Reservername" .. string.char(64 + i) .. " Longsurnameabcd-Realmname"
+        names[#names + 1] = n
+        CLASS[n] = 1
+        act(n, { "RES", 19019 })
+    end
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:19019" })
+    local ops = R.Intent(host, HOST, { "START", "1" }, ctx)
+    local fits = true
+    for _, op in ipairs(ops) do
+        fits = fits and #R.EncodeOp(op) <= 250
+    end
+    check(fits and #ops > 10, "a long reserver list is split into ops that fit")
+    act(HOST, { "START", "1" })
+    local all = true
+    for _, n in ipairs(names) do
+        all = all and client.items["1"].restrict[n] == true
+        CLASS[n] = nil
+    end
+    check(all, "every reserver reaches the client")
+    check(not R.ValidName("A^B-Realm"), "a name with the op separator is refused")
+end
+
+-- ---- undo of a reserved item won by hand gives the reserve back ----------
+do
+    fresh()
+    act(A, { "RES", 777 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:777" })
+    act(HOST, { "AWARD", "1", A }) -- given by hand, not via reserve mode
+    check(client.reserves[A] == nil, "winning the reserved item uses the reserve")
+    act(HOST, { "UNDO", "1" })
+    check(client.reserves[A] == 777, "undo gives the reserve back whatever way it was won")
+    act(HOST, { "PHASE", "ended" })
+    act(HOST, { "PHASE", "live" })
+    check(client.ended == nil, "a reopened raid is not marked ended")
 end
 
 -- ---- worn gear rides along with a want -----------------------------------

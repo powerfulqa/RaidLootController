@@ -90,11 +90,8 @@ local function ItemTooltip(owner, itemString)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(itemString)
     GameTooltip:Show()
-    -- Shift (or the "always compare" setting): the game's own side by side
-    -- with what you wear, like a bag item.
-    if TooltipUtil and TooltipUtil.ShouldDoItemComparison(GameTooltip) and GameTooltip_ShowCompareItem then
-        GameTooltip_ShowCompareItem(GameTooltip)
-    end
+    -- Shift (or "always compare") shows the game's own side by side: the
+    -- tooltip does it itself, and calling it from here would only taint it.
 end
 
 -- Lowest item level among a worn value ("item:1,item:2"), or nil.
@@ -126,10 +123,10 @@ local function WornTooltip(owner, name, item)
         local lvl = C_Item.GetDetailedItemLevelInfo(s)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Wears " .. (link or NS.LinkOf(s)) .. (lvl and (" (ilvl " .. lvl .. ")") or ""))
-        local delta = newLink and link and C_Item.GetItemStatDelta(newLink, link)
-        if not delta then
+        if not (newLink and link) then
             GameTooltip:AddLine("Stats loading, hover again.", 0.6, 0.6, 0.6)
         else
+            local delta = C_Item.GetItemStatDelta(newLink, link) or {}
             local keys = {}
             for k, v in pairs(delta) do
                 if v ~= 0 then
@@ -664,6 +661,9 @@ local function refreshLoot(S)
         if S.reserves[name] == item.itemID then
             tags[#tags + 1] = "|cff66ccffreserved|r"
         end
+        if S.dry and S.dry[name] and not S.locks[name] then
+            tags[#tags + 1] = "|cff66ff66no loot last raid|r"
+        end
         if S.locks[name] and item.winner ~= name then
             tags[#tags + 1] = "|cffff8800has an item|r"
         end
@@ -1066,6 +1066,25 @@ end
 local hp = page("history")
 local histSel
 
+-- Officer actions (manual awards, take-backs, locks, spec changes) so the
+-- raid can see who did what.
+local LOG_TEXT = {
+    award = "gave an item to %s",
+    undo = "took back %s's win",
+    lock = "locked %s",
+    unlock = "unlocked %s",
+    spec = "set %s's spec",
+    open = "opened an item to everyone",
+    cancel = "cancelled an item",
+}
+local function logLine(e)
+    return date("%H:%M", e.t)
+        .. "  "
+        .. NS.ColorName(e.by)
+        .. " "
+        .. LOG_TEXT[e.what]:format(e.name and NS.Short(e.name) or "")
+end
+
 local raidsList = List(hp, 230, 380, { 70, 130 }, false, function(id)
     histSel = id
     NS.Refresh()
@@ -1101,8 +1120,30 @@ histItems.onEnter = function(row, item)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Wanted by: " .. table.concat(wants, ", "), 1, 1, 1, true)
     end
+    local rec = histSel and NS.DB.history[histSel]
+    for _, e in ipairs(rec and rec.log or {}) do
+        if e.key == item.key then
+            GameTooltip:AddLine(logLine(e), 1, 0.8, 0.2, true)
+        end
+    end
     GameTooltip:Show()
 end
+
+local logBtn = Button(hp, "Officer log", 100, nil)
+logBtn:SetScript("OnEnter", function(self)
+    local rec = histSel and NS.DB.history[histSel]
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Officer actions")
+    local log = rec and rec.log or {}
+    if #log == 0 then
+        GameTooltip:AddLine("None in this raid.", 0.6, 0.6, 0.6)
+    end
+    for i = math.max(1, #log - 29), #log do
+        GameTooltip:AddLine(logLine(log[i]), 1, 1, 1)
+    end
+    GameTooltip:Show()
+end)
+logBtn:SetScript("OnLeave", GameTooltip_Hide)
 
 local delBtn = Button(hp, "Delete raid", 100, function()
     if histSel then
@@ -1112,6 +1153,7 @@ local delBtn = Button(hp, "Delete raid", 100, function()
     end
 end)
 delBtn:SetPoint("BOTTOMLEFT", 246, 0)
+logBtn:SetPoint("LEFT", delBtn, "RIGHT", 6, 0)
 
 local function refreshHistory()
     local hist = NS.DB.history
@@ -1170,6 +1212,7 @@ local function refreshHistory()
         r.cols[3]:SetText(HOW_TEXT[item.how] or "")
     end)
     delBtn:SetEnabled(rec ~= nil)
+    logBtn:SetEnabled(rec ~= nil)
 end
 
 -- ---- Catalogue page ---------------------------------------------------------------------
@@ -1386,12 +1429,9 @@ local cmdRows, cmdHeads = {}, {}
 
 local function runCommand(c)
     if c.args then
-        -- Needs more typed (an item): open chat with the command ready.
-        local text = "/rlc " .. c.cmd .. " "
-        local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-        if open then
-            open(text)
-        end
+        -- Needs an item. Opening chat from addon code would taint the chat
+        -- box (and secure commands typed in it later), so just say how.
+        NS.Print("Type /rlc %s in chat, then shift-click an item (or type its item ID) and press Enter.", c.cmd)
     else
         c.fn("")
         NS.Refresh()
@@ -1404,7 +1444,7 @@ local function refreshCommands()
         "You are: |cffffd870"
             .. NS.RoleName()
             .. "|r. These are the commands you can use right now. "
-            .. "Run does it; Type opens chat with the command ready for an item."
+            .. "Run does it; How tells you what to type for commands that need an item."
     )
     local y = -34
     for _, section in ipairs(SECTIONS) do
@@ -1437,7 +1477,7 @@ local function refreshCommands()
                 end
                 row.btn:ClearAllPoints()
                 row.btn:SetPoint("TOPLEFT", 0, y)
-                row.btn:SetText(c.args and "Type" or "Run")
+                row.btn:SetText(c.args and "How" or "Run")
                 row.label:ClearAllPoints()
                 row.label:SetPoint("LEFT", row.btn, "RIGHT", 8, 0)
                 local state = c.state and (c.state() and " |cff00ff00(on)|r" or " |cff999999(off)|r") or ""
