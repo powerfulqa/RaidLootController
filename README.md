@@ -15,25 +15,30 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 
 Everyone in the raid should install it. Players without it can still roll with `/roll`, but can't reserve or click I want this.
 
-- **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid.
+## What it does
+
+- **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid (free rolls aside, see below).
 - **Soft reserves.** Before the raid starts, reserve one item. If nobody else reserves it, it is yours when it drops. If several players reserve it, only they roll.
 - **Server-verified rolls.** The Roll button uses the game's own `/roll`, so nobody can fake a number. Everyone with the addon sees the rolls live.
 - **Best-for specs.** Each item is matched to the specs it suits (armor type, weapon type and stats), so a hunter can't roll on a rogue's leather. Your loot spec is guessed from your talents and confirmed by you once. Officers can change who may roll, and undo a win given by mistake.
 - **Officer controls.** The raid leader (or an assistant) hosts the session and can make other players officers. Officers put items up, call and close rolls, open an item to everyone, restrict an item to some classes, give an item by hand, and lock or unlock players.
-- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, and who wanted it.
+- **Fair over few raid nights.** Players who won nothing in their last raid roll first.
+- **Upgrade info.** Officers see what each player wears in that slot and the stat change the item would give them.
+- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action.
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
 
 ## How a raid runs
 
 1. The raid leader opens `/rlc`, goes to **Raid**, and clicks **New raid**.
 2. Raiders reserve an item on the **Raid** tab: shift-click it into the box, or type its item ID. One reserve each.
-3. The leader clicks **Start raid**. Reserves are now closed.
+3. The leader clicks **Start raid**. Reserves are now closed (they also close when the first item is put up).
 4. A boss dies. The master looter opens the loot window and clicks **Add N from loot** (or drops an item from their bags on the window). The items appear on the **Loot** tab for everyone.
 5. An officer picks an item and clicks **Start**. Raiders who can use it click **I want this**.
 6. The officer clicks **Call roll**:
    - If nobody without an item wants it, it opens to everyone instead. Call roll again to start the rolls.
    - If one player reserved it, they get it straight away.
-7. Raiders click **Roll (1-100)**. Rolls show up live.
+   - If anyone who won nothing last raid wants it, only they roll first.
+7. Raiders click **Roll (1-100)**. Rolls show up live. The button you need to click next glows, as does the minimap button.
 8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
 9. The winner gets the item by master loot if the loot window is still open. Otherwise it goes into the trade window the next time the host trades them.
 
@@ -71,7 +76,7 @@ Officers can:
 
 - change who may roll with **Who can roll** (Suggested, Any spec, or tick specs by hand)
 - set a player's spec with **Set spec**
-- take a mistaken win back with **Undo win**. The item goes back up, and the winner is unlocked.
+- take a mistaken win back with **Undo win**. The item goes back up, the winner is unlocked, and a reserve it used is given back.
 
 ## Who can roll
 
@@ -79,10 +84,11 @@ Officers can:
 |---|---|
 | For players without an item (default) | Everyone who has not won an item yet |
 | Open to everyone | Everyone, including players who already won |
-| Reserved | Only the players who reserved it |
+| Reserved | Only the players who reserved it and are still in the group |
+| Wanted by someone with no loot last raid | First pass: only those players |
 | Limited to specs | The above, limited to the specs it suits |
 
-A reserve ignores class limits: reserves are made before anyone knows how the item will be restricted. Any eligible player's `/roll 1-100` counts while rolls are open, even without clicking I want this, so players without the addon can still take part. A tie wipes all rolls and only the tied players roll again.
+A reserve ignores class limits: reserves are made before anyone knows how the item will be restricted. Any eligible player's `/roll 1-100` counts while rolls are open, even without clicking I want this, so players without the addon can still take part. Rolls from players who left the group don't count. A tie wipes all rolls and only the tied players roll again.
 
 ## Slash commands
 
@@ -98,25 +104,24 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |
 | `/rlc debug` | Debug output in chat on or off |
 
-The **Commands** tab lists the commands you can use right now, each with a **Run** button. It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.
+The **Commands** tab lists the commands you can use right now, each with a **Run** button (commands that need an item have a **How** button that says what to type). It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.
 
 The **Help** tab answers the common questions, with a search box. Click any column name to sort a list by it; click again to reverse.
 
 The minimap button opens the window (left-click) or the loot catalogue (right-click). Drag it to move it around the minimap.
 
-## Install
-
-Copy the `RaidLootController` folder into `Interface/AddOns`. Everyone in the raid should install it; players without it can still `/roll` and are counted, but they cannot reserve or click I want this.
-
 ## Development
 
 ```
 lua tests/test_rules.lua          # rules suite (stock lua5.1)
+lua tests/test_raid_sim.lua       # a raid night with cheaters, plus 8 weeks of fairness numbers
 lua tests/test_catalog.lua        # catalogue data and sync merge
 lua tests/test_specs.lua          # which specs an item suits
 lua tests/test_demo.lua           # demo mode builds cleanly
 luacheck *.lua tests/*.lua        # 0 warnings
 stylua --check *.lua tests/*.lua
 ```
+
+CI runs all of these on every push. Releases: see [CHANGELOG.md](CHANGELOG.md) and the release steps in CLAUDE.md.
 
 See [CLAUDE.md](CLAUDE.md) for the code map and the rules for working here.
