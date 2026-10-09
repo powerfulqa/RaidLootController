@@ -67,6 +67,8 @@ only from the session host (and `NEW` only from a leader or assistant).
    `SendAddonMessage` result codes behave as handled in `RLC_Net.lua`.
 2. `CHAT_MSG_SYSTEM` roll lines are readable (not secret) in a raid
    instance, and `RANDOM_ROLL_RESULT` parses on this client.
+   *Measured 2026-10-09 (Mechanic probe, solo):* `RANDOM_ROLL_RESULT` is
+   `%s rolls %d (%d-%d)`. Readability inside a raid instance is still open.
 3. Master loot is offered by the server: `GetMasterLootCandidate` /
    `GiveMasterLoot` work. If not, the trade path is the only delivery.
 4. Trade auto-fill: `UnitFullName("npc")` names the trade partner, and
@@ -75,8 +77,13 @@ only from the session host (and `NEW` only from a leader or assistant).
    focus.
 6. `C_TooltipInfo.GetHyperlink` lines carry the "Classes:" line as
    `leftText`.
+   *Measured 2026-10-09:* tooltip lines come back as `leftText`, and
+   `ITEM_CLASSES_ALLOWED` is `Classes: %s`. No class-restricted item was cached
+   (T1/T2 ids "exist" but the server sent no data), so the line itself is still open.
 7. Saved data survives a cold restart (it did for WoWClearance on build
    1.60.1.70245).
+   **Measured 2026-10-09:** a session saved at 00:52 was intact after a game
+   restart the next evening.
 8. `ENCOUNTER_END` name and `GetInstanceInfo()` instanceID (8th return) are
    readable after a kill, and boss loot is attributed within the 5-minute
    window. `ENCOUNTER_LOOT_RECEIVED` fires (or not) under master loot.
@@ -85,10 +92,17 @@ only from the session host (and `NEW` only from a leader or assistant).
 10. Spec detection: `C_SpecializationInfo.GetCombatConfigIDForSpecGroup` ->
     `C_Traits` group currency gives points per talent tab, and the tab order
     matches `Specs.LIST` `tree` indexes for every class.
+    *Measured 2026-10-09, rogue only:* the chain works. `GetGroupCurrencyInfo`
+    lists only tabs with points spent (empty with 0 spent); 1 point in Combat
+    came back on the 2nd display group, matching `tree = 2`. The trait data is
+    not ready at addon load; read it later. Other classes still open.
 11. `C_Item.GetItemStats` key names (`ITEM_MOD_*_SHORT`) and the English
     "Equip:" phrases cover spell damage, healing and defense on Forever's
     Classic-era items. `MenuUtil` menus open from the Who can roll and spec
     buttons.
+    *Measured 2026-10-09:* keys are `ITEM_MOD_STRENGTH/AGILITY/STAMINA/SPIRIT_SHORT`,
+    `ITEM_MOD_DAMAGE_PER_SECOND_SHORT`, armor as `RESISTANCE0_NAME`. Spell
+    damage, healing, defense and the menus are still open.
 12. ~~Master loot API present~~ **Measured 2026-10-09:** `/dump GetMasterLootCandidate,
     GiveMasterLoot, C_PartyInfo.GetLootMethod` returned three functions. Item 3
     (the server actually offering master loot in a raid) is still open.
