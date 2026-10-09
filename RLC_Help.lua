@@ -198,14 +198,10 @@ local ENTRIES = {
     },
     {
         q = "Slash commands",
-        a = "/rlc - open or close the window\n"
-            .. "/rlc reserve <item or ID> - reserve an item\n"
-            .. "/rlc add <item> - put an item up (officers)\n"
-            .. "/rlc sync - fetch the raid from the raid leader\n"
-            .. "/rlc announce - raid chat announcements on or off\n"
-            .. "/rlc owed - clear the list of items still to trade\n"
-            .. "/rlc minimap - hide or show the minimap button\n"
-            .. "/rlc demo - look around a made-up raid",
+        a = "Open the Commands tab: it lists the /rlc commands you can use right now, each with a "
+            .. "Run button. The list follows your role: officers and the raid host see more.\n\n"
+            .. "Type /rlc help in chat for the same list. /rlc on its own opens or closes the window.",
+        tab = "commands",
     },
     {
         q = "My window shows an old raid or no items.",
@@ -226,7 +222,7 @@ local ENTRIES = {
     },
 }
 
-local TAB_NAMES = { loot = "Loot", raid = "Raid", history = "History", catalog = "Catalogue" }
+local TAB_NAMES = { loot = "Loot", raid = "Raid", history = "History", catalog = "Catalogue", commands = "Commands" }
 
 -- ---- page ---------------------------------------------------------------------
 

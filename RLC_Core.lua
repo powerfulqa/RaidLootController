@@ -481,53 +481,160 @@ end)
 
 SLASH_RAIDLOOTCONTROLLER1 = "/rlc"
 SLASH_RAIDLOOTCONTROLLER2 = "/raidloot"
+-- Your role in the current raid, for the Commands tab and /rlc help.
+function NS.RoleName()
+    if NS.IsHost() then
+        return "Raid host"
+    elseif NS.IsOfficer() then
+        return "Officer"
+    end
+    return "Raider"
+end
+
+-- Every /rlc command, in the order the Commands tab lists them. One table
+-- drives the slash handler, /rlc help and the tab's Run buttons.
+--   args: the command needs more typed (the tab opens chat prefilled)
+--   state(): true/false for a toggle, shown as on/off
+--   when(S): shown only when it can do something for you right now. The
+--   host still re-checks every request, so this only tidies the list.
+NS.Commands = {
+    {
+        section = "Everyone",
+        cmd = "reserve",
+        args = "<item or ID>",
+        text = "Reserve an item before the raid starts",
+        when = function(S)
+            return S ~= nil and S.phase == "reserve"
+        end,
+        fn = function(rest)
+            local id = tonumber(rest) or Rules.ItemIDOf(NS.ItemStringOf(rest) or "")
+            if id then
+                NS.Act("RES", id)
+            else
+                NS.Print("Usage: /rlc reserve <shift-click an item, or its item ID>")
+            end
+        end,
+    },
+    {
+        section = "Everyone",
+        cmd = "sync",
+        text = "Fetch the raid from the raid host",
+        when = function()
+            return IsInGroup() and not NS.IsHost()
+        end,
+        fn = function()
+            NS.RequestSync(0)
+            NS.Print("Asked the raid host for the current session.")
+        end,
+    },
+    {
+        section = "Everyone",
+        cmd = "minimap",
+        text = "Hide or show the minimap button",
+        state = function()
+            return NS.DB.minimapButton ~= false
+        end,
+        fn = function()
+            NS.SetMinimapButton(NS.DB.minimapButton == false)
+            NS.Print("Minimap button %s.", NS.DB.minimapButton == false and "hidden" or "shown")
+        end,
+    },
+    {
+        section = "Everyone",
+        cmd = "demo",
+        text = "Look around a made-up raid (nothing is sent or saved)",
+        state = function()
+            return NS.Demo ~= nil and NS.Demo.active == true
+        end,
+        fn = function()
+            NS.Demo.Toggle()
+        end,
+    },
+    {
+        section = "Officers",
+        cmd = "add",
+        args = "<item>",
+        text = "Put an item up for rolls",
+        when = function(S)
+            return S ~= nil and S.phase ~= "ended" and NS.IsOfficer()
+        end,
+        fn = function(rest)
+            local s = NS.ItemStringOf(rest)
+            if s then
+                NS.Act("ADD", s)
+            else
+                NS.Print("Usage: /rlc add <shift-click an item>")
+            end
+        end,
+    },
+    {
+        section = "Raid host",
+        cmd = "announce",
+        text = "Raid chat announcements on or off",
+        state = function()
+            return NS.DB.announce == true
+        end,
+        when = function()
+            return NS.IsHost()
+        end,
+        fn = function()
+            NS.DB.announce = not NS.DB.announce
+            NS.Print("Raid chat announcements %s.", NS.DB.announce and "on" or "off")
+            NS.Refresh()
+        end,
+    },
+    {
+        section = "Raid host",
+        cmd = "owed",
+        text = "Clear the list of items still to trade",
+        when = function()
+            return next(NS.DB.owed) ~= nil
+        end,
+        fn = function()
+            wipe(NS.DB.owed)
+            NS.Print("Cleared the list of items still to trade.")
+            NS.Refresh()
+        end,
+    },
+    {
+        section = "Troubleshooting",
+        cmd = "debug",
+        text = "Debug output in chat on or off",
+        state = function()
+            return NS.debug == true
+        end,
+        fn = function()
+            NS.debug = not NS.debug or nil
+            NS.Print("Debug output %s.", NS.debug and "on" or "off")
+        end,
+    },
+}
+
+function NS.CommandAvailable(c)
+    return c.when == nil or c.when(NS.S()) == true
+end
+
 SlashCmdList.RAIDLOOTCONTROLLER = function(msg)
     local cmd, rest = (msg or ""):match("^%s*(%S*)%s*(.-)%s*$")
     cmd = cmd:lower()
     if cmd == "" then
         NS.Toggle()
-    elseif cmd == "add" then
-        local s = NS.ItemStringOf(rest)
-        if s then
-            NS.Act("ADD", s)
-        else
-            NS.Print("Usage: /rlc add <shift-click an item>")
-        end
-    elseif cmd == "reserve" then
-        local id = tonumber(rest) or Rules.ItemIDOf(NS.ItemStringOf(rest) or "")
-        if id then
-            NS.Act("RES", id)
-        else
-            NS.Print("Usage: /rlc reserve <shift-click an item, or its item ID>")
-        end
-    elseif cmd == "sync" then
-        NS.RequestSync(0)
-        NS.Print("Asked the raid host for the current session.")
-    elseif cmd == "demo" then
-        NS.Demo.Toggle()
-    elseif cmd == "debug" then
-        NS.debug = not NS.debug or nil
-        NS.Print("Debug output %s.", NS.debug and "on" or "off")
-    elseif cmd == "minimap" then
-        NS.SetMinimapButton(NS.DB.minimapButton == false)
-        NS.Print("Minimap button %s.", NS.DB.minimapButton == false and "hidden" or "shown")
-    elseif cmd == "owed" then
-        wipe(NS.DB.owed)
-        NS.Print("Cleared the list of items still to trade.")
-        NS.Refresh()
-    elseif cmd == "announce" then
-        NS.DB.announce = not NS.DB.announce
-        NS.Print("Raid chat announcements %s.", NS.DB.announce and "on" or "off")
-    else
-        NS.Print("/rlc - open the window")
-        NS.Print("/rlc add <item> - put an item up for rolls (officers)")
-        NS.Print("/rlc reserve <item or ID> - reserve an item before the raid starts")
-        NS.Print("/rlc sync - fetch the session from the raid host")
-        NS.Print("/rlc announce - turn raid chat announcements on or off (host)")
-        NS.Print("/rlc owed - clear the list of items still to trade (host)")
-        NS.Print("/rlc minimap - hide or show the minimap button")
-        NS.Print("/rlc demo - fill the window with a fake raid to look around (nothing is sent or saved)")
+        return
     end
+    -- Typed commands always run: the host decides what a request may do.
+    for _, c in ipairs(NS.Commands) do
+        if c.cmd == cmd then
+            c.fn(rest)
+            return
+        end
+    end
+    NS.Print("/rlc - open the window (you are: %s)", NS.RoleName())
+    for _, c in ipairs(NS.Commands) do
+        if NS.CommandAvailable(c) then
+            NS.Print("/rlc %s%s - %s", c.cmd, c.args and (" " .. c.args) or "", c.text)
+        end
+    end
+    NS.Print("The Commands tab has a Run button for each.")
 end
 
 function RaidLootController_OnAddonCompartmentClick()

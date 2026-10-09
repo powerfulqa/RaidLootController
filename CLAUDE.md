@@ -20,7 +20,7 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
 | `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). Update it with any player-facing change. |
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
-| `RLC_UI.lua` | The window (Loot, Raid, History, Catalogue tabs), the spec menus and the minimap button. |
+| `RLC_UI.lua` | The window (Loot, Raid, History, Catalogue, Commands, Help tabs), the spec menus and the minimap button. The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
 `Rules.Intent`, applies the ops, and queues them to the group. On anyone
@@ -43,8 +43,10 @@ only from the session host (and `NEW` only from a leader or assistant).
   `~/Projects/forever-addon-kit/data/forever_api.json`). luacheck cannot see
   event names, widget methods or template names, and on this client a bad
   event name throws and aborts the rest of the file.
-- Read the porting lessons in `~/Projects/WoWClearance/docs/PORT_STATUS.md`
-  before assuming anything about this client.
+- Read the porting lessons in WoWClearance's `docs/PORT_STATUS.md` (sister Forever
+  addon, private repo `powerfulqa/WoWClearance`; `gh api` reads it) before
+  assuming anything about this client. Its UI patterns (Help panel, Commands
+  Run buttons) are the house style here.
 - **Forever has character surnames.** The game spells a player as "Serv"
   (UnitName, with the surname as its SECOND return where retail puts the
   realm) and as "Serv Aszune" (roll lines, likely other chat). Never
@@ -97,6 +99,9 @@ only from the session host (and `NEW` only from a leader or assistant).
     wand, relic assume slot 18), `C_Item.GetItemStatDelta` returns readable
     deltas for Classic-era items, and Shift on a Loot tab item shows the
     game's compare tooltip.
+16. Commands tab: Run buttons fire, Type opens chat prefilled
+    (`ChatFrameUtil.OpenChat`), and the list changes as you become an
+    officer or host. Announce toggle and owed Clear work on the Raid tab.
 
 ## Dev tooling
 

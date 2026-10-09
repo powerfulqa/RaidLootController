@@ -357,6 +357,7 @@ local TABS = {
     { "raid", "Raid" },
     { "history", "History" },
     { "catalog", "Catalogue" },
+    { "commands", "Commands" },
     { "help", "Help" },
 }
 for i, def in ipairs(TABS) do
@@ -806,6 +807,11 @@ local syncBtn = Button(rpg, "Resync", 80, function()
     NS.RequestSync(0)
 end)
 syncBtn:SetPoint("TOPRIGHT", 0, 0)
+-- Host settings live where the host runs the raid (also on the Commands tab).
+local announceBtn = Button(rpg, "Announce: off", 110, function()
+    SlashCmdList.RAIDLOOTCONTROLLER("announce")
+end)
+announceBtn:SetPoint("RIGHT", syncBtn, "LEFT", -6, 0)
 
 local raidHelp = Text(rpg)
 raidHelp:SetPoint("TOPLEFT", 0, -30)
@@ -916,7 +922,11 @@ end)
 setSpecBtn:SetPoint("LEFT", offBtn, "RIGHT", 6, 0)
 local owedText = Text(rpg)
 owedText:SetPoint("BOTTOMLEFT", 0, 4)
-owedText:SetWidth(680)
+owedText:SetWidth(600)
+local owedClearBtn = Button(rpg, "Clear", 60, function()
+    SlashCmdList.RAIDLOOTCONTROLLER("owed")
+end)
+owedClearBtn:SetPoint("BOTTOMRIGHT", 0, 0)
 owedText:SetWordWrap(true)
 
 local function refreshRaid(S)
@@ -1045,6 +1055,9 @@ local function refreshRaid(S)
         end
     end
     owedText:SetShown(#parts > 0)
+    owedClearBtn:SetShown(#parts > 0)
+    announceBtn:SetShown(NS.IsHost())
+    announceBtn:SetText(NS.DB.announce and "Announce: on" or "Announce: off")
     owedText:SetText("Still to trade: " .. table.concat(parts, ", "))
 end
 
@@ -1357,6 +1370,94 @@ end
 local pendingRefresh = false
 local lastActive
 
+-- ---- Commands page --------------------------------------------------------------------
+-- Every /rlc command with its own button, as WoWClearance does. Only the
+-- commands that can do something for you right now are listed, so the page
+-- follows your role in the raid. The list lives in NS.Commands (Core).
+
+local cmdPage = page("commands")
+local cmdHeader = Text(cmdPage, "GameFontNormal")
+cmdHeader:SetPoint("TOPLEFT", 0, -4)
+cmdHeader:SetWidth(690)
+cmdHeader:SetWordWrap(true)
+
+local SECTIONS = { "Everyone", "Officers", "Raid host", "Troubleshooting" }
+local cmdRows, cmdHeads = {}, {}
+
+local function runCommand(c)
+    if c.args then
+        -- Needs more typed (an item): open chat with the command ready.
+        local text = "/rlc " .. c.cmd .. " "
+        local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+        if open then
+            open(text)
+        end
+    else
+        c.fn("")
+        NS.Refresh()
+    end
+    PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+end
+
+local function refreshCommands()
+    cmdHeader:SetText(
+        "You are: |cffffd870"
+            .. NS.RoleName()
+            .. "|r. These are the commands you can use right now. "
+            .. "Run does it; Type opens chat with the command ready for an item."
+    )
+    local y = -34
+    for _, section in ipairs(SECTIONS) do
+        local head = cmdHeads[section]
+        if not head then
+            head = Text(cmdPage, "GameFontNormal")
+            head:SetText("|cffffd870" .. section .. "|r")
+            cmdHeads[section] = head
+        end
+        local any = false
+        for i, c in ipairs(NS.Commands) do
+            local row = cmdRows[i]
+            if not row then
+                row = {
+                    btn = Button(cmdPage, "Run", 64, function()
+                        runCommand(c)
+                    end),
+                    label = Text(cmdPage),
+                }
+                row.label:SetWidth(610)
+                cmdRows[i] = row
+            end
+            local show = c.section == section and NS.CommandAvailable(c)
+            if show then
+                if not any then
+                    head:ClearAllPoints()
+                    head:SetPoint("TOPLEFT", 0, y)
+                    y = y - 22
+                    any = true
+                end
+                row.btn:ClearAllPoints()
+                row.btn:SetPoint("TOPLEFT", 0, y)
+                row.btn:SetText(c.args and "Type" or "Run")
+                row.label:ClearAllPoints()
+                row.label:SetPoint("LEFT", row.btn, "RIGHT", 8, 0)
+                local state = c.state and (c.state() and " |cff00ff00(on)|r" or " |cff999999(off)|r") or ""
+                row.label:SetText(
+                    "|cffffff00/rlc " .. c.cmd .. (c.args and (" " .. c.args) or "") .. "|r  " .. c.text .. state
+                )
+                y = y - 26
+            end
+            if c.section == section then
+                row.btn:SetShown(show)
+                row.label:SetShown(show)
+            end
+        end
+        head:SetShown(any)
+        if any then
+            y = y - 8
+        end
+    end
+end
+
 local function refreshNow()
     pendingRefresh = false
     if not NS.DB then
@@ -1393,6 +1494,8 @@ local function refreshNow()
         refreshCatalog()
     elseif current == "help" then
         NS.RefreshHelp()
+    elseif current == "commands" then
+        refreshCommands()
     else
         refreshHistory()
     end
