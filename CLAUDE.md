@@ -12,6 +12,7 @@ the end as open until someone ticks it off in a real group.
 
 | File | Owns |
 |---|---|
+| `RLC_Kit.lua` | Serv's shared kit, byte-identical to WoWClearance's `WoWClearance_Kit.lua`: palette, chat printer, `CanRead`, Help `Highlight`, glow, resize grip, copy window, minimap button and tooltip. Edit it here only, then `tools/sync-kit.sh` copies it across (`--check` compares). Loads first. |
 | `RLC_Rules.lua` | The loot rules and session model. Pure Lua, no WoW API. `Apply` (primitive ops), `Intent` (requests -> ops, host only), `Snapshot`, wire codec, roll-line parser. |
 | `RLC_Core.lua` | Saved data, names, roster, `NS.ApplyOps` / `NS.HandleRequest` / `NS.Act`, events, slash commands. |
 | `RLC_Net.lua` | Addon-message queue (prefix `RLC1`), throttle, chat lockdown wait, trust checks on receive. |
@@ -143,6 +144,18 @@ only from the session host (and `NEW` only from a leader or assistant).
       name, and a `WHISPER` reply to that raw sender spelling arrives.
     - Catalogue lanes pause during encounters
       (`C_InstanceEncounter.IsEncounterInProgress`).
+
+20. New in v0.6.0, all unmeasured:
+    - The minimap button background `UI-Minimap-Background` (the zoom-button
+      one is not in the Forever file index) and the shared kit's frames.
+    - `GET_ITEM_INFO_RECEIVED` passes `success` (Forever doc: `itemID, success`);
+      a failed load no longer redraws.
+    - `BAG_UPDATE_DELAYED` clears the trade-time cache.
+    - Name collisions: whether two group members can share a spelling (if
+      so, `NS.Canon` now refuses it).
+    - `C_Item.GetItemInfoInstant` knows every real raid item uncached
+      (catalogue merges drop items it does not know):
+      `/dump C_Item.GetItemInfoInstant(16800)` on a fresh login.
 
 ## Dev tooling
 

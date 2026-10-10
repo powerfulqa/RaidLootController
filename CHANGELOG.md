@@ -4,6 +4,30 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.6.0
+
+**Harder to cheat, lighter to run, and a family look.** A security and performance review, and the shared look with WoWClearance.
+
+Safer:
+
+- A raid can no longer be started with a faked start time, and a flood of new raids is cut off, so saved history and the "rolls first" list cannot be pushed out or rigged.
+- Once a raid ends, its old host can no longer change it.
+- If two players in the group share a name spelling, their rolls and messages are refused rather than credited to the wrong one.
+- One raider can no longer hold up live rolls by asking for resyncs or toggling "I want this" over and over.
+- The loot catalogue only takes drops from your own group, ignores items the game does not know, and limits how much one guildmate can add.
+
+Faster:
+
+- The Raid tab no longer scans your bags on every redraw to show trade time left.
+- A catalogue search shows the first 200 matches and stops re-reading every item; the Stats tab no longer recounts all history on every roll.
+- A large catalogue share is no longer cut short at 5000 entries.
+
+Looks:
+
+- Help looks like WoWClearance's: gold section headers, blue questions, more space between answers, a "no matches" line, and open or closed sections are remembered.
+- The minimap button uses a background that exists on this client, and starts at a different spot from WoWClearance's so the two never overlap. Its tooltip has the same layout as WoWClearance's.
+- Chat lines start with "RaidLoot:".
+
 ### v0.5.0
 
 **Tighter and lighter.** An audit against the Forever API, a performance pass, and ideas from RCLootCouncil, Gargul and RollFor.

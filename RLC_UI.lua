@@ -38,31 +38,7 @@ local function Button(parent, text, w, onClick)
     return b
 end
 
--- A soft gold pulse over a frame, to point a player at the one thing to
--- click next. Display only: it never clicks or rolls for anyone.
--- frame.SetGlow(on) turns it on or off.
-local function AddGlow(frame, texture)
-    local t = frame:CreateTexture(nil, "OVERLAY")
-    t:SetTexture(texture or "Interface\\Buttons\\ButtonHilight-Square")
-    t:SetBlendMode("ADD")
-    t:SetVertexColor(1, 0.8, 0.2)
-    t:SetAllPoints()
-    t:Hide()
-    local ag = t:CreateAnimationGroup()
-    ag:SetLooping("BOUNCE")
-    local a = ag:CreateAnimation("Alpha")
-    a:SetFromAlpha(0.15)
-    a:SetToAlpha(1)
-    a:SetDuration(0.6)
-    function frame.SetGlow(on)
-        t:SetShown(on)
-        if on and not ag:IsPlaying() then
-            ag:Play()
-        elseif not on then
-            ag:Stop()
-        end
-    end
-end
+local AddGlow, ResizeGrip = NS.Kit.AddGlow, NS.Kit.ResizeGrip
 
 -- What the active item is waiting on from this player: "want", "roll" or nil.
 local function myTurn(S)
@@ -106,20 +82,6 @@ function NS.InputBox(parent, w, hintText, onChange)
         self:ClearFocus()
     end)
     return box
-end
-
--- Drag the corner to resize, as in WoWClearance. onDone runs on release.
-local function ResizeGrip(frame, onDone)
-    local grip = CreateFrame("Button", nil, frame)
-    grip:SetSize(16, 16)
-    grip:SetPoint("BOTTOMRIGHT", -6, 6)
-    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    grip:SetScript("OnMouseDown", function()
-        frame:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
-    end)
-    grip:SetScript("OnMouseUp", onDone)
 end
 
 local function ItemTooltip(owner, itemString)
@@ -440,69 +402,9 @@ end)
 -- without keyboard focus so it can stay up while you play; clicking the
 -- text selects all of it for one Ctrl+C. As in WoWClearance.
 
-local copy
 -- w, h: optional size; a single link needs far less than a report.
 function NS.ShowCopy(title, text, w, h)
-    if not copy then
-        copy = CreateFrame("Frame", "RaidLootControllerCopy", UIParent, "ButtonFrameTemplate")
-        copy:SetSize(520, 360)
-        copy:SetPoint("CENTER", 40, -40)
-        copy:SetFrameStrata("DIALOG")
-        copy:SetToplevel(true)
-        copy:SetMovable(true)
-        copy:SetResizable(true)
-        copy:SetResizeBounds(320, 120)
-        copy:EnableMouse(true)
-        copy:RegisterForDrag("LeftButton")
-        copy:SetScript("OnDragStart", copy.StartMoving)
-        copy:SetScript("OnDragStop", copy.StopMovingOrSizing)
-        copy:SetClampedToScreen(true)
-        ButtonFrameTemplate_HidePortrait(copy)
-        tinsert(UISpecialFrames, "RaidLootControllerCopy")
-        local hint = Text(copy, "GameFontDisableSmall")
-        hint:SetPoint("TOPLEFT", 14, -34)
-        hint:SetText("Click the text, then Ctrl+C to copy.")
-        local sf = CreateFrame("ScrollFrame", nil, copy, "UIPanelScrollFrameTemplate")
-        sf.scrollBarHideable = true
-        sf:SetPoint("TOPLEFT", 12, -64)
-        sf:SetPoint("BOTTOMRIGHT", -32, 30)
-        local box = CreateFrame("EditBox", nil, sf)
-        box:SetMultiLine(true)
-        box:SetAutoFocus(false)
-        box:SetFontObject("GameFontHighlightSmall")
-        box:SetWidth(460)
-        box:SetScript("OnEscapePressed", box.ClearFocus)
-        box:SetScript("OnEditFocusGained", function(self)
-            self:HighlightText()
-        end)
-        -- Read only: typing puts the text back.
-        box:SetScript("OnTextChanged", function(self, user)
-            if user then
-                self:SetText(copy.text)
-                self:HighlightText()
-            end
-        end)
-        sf:SetScrollChild(box)
-        sf:SetScript("OnSizeChanged", function(_, width)
-            box:SetWidth(width)
-        end)
-        ResizeGrip(copy, function()
-            copy:StopMovingOrSizing()
-        end)
-        copy.box, copy.sf = box, sf
-    end
-    copy:SetSize(w or 520, h or 360)
-    copy:SetTitle(title)
-    copy.text = text
-    copy.box:SetText(text)
-    copy.box:ClearFocus()
-    copy:Show()
-    -- Text that fits needs no scroll bar (the template only checks when the
-    -- range changes). The box has its height a frame after SetText.
-    C_Timer.After(0, function()
-        copy.sf.ScrollBar:SetShown(copy.box:GetHeight() > copy.sf:GetHeight())
-    end)
-    copy:Raise()
+    NS.Kit.ShowCopy("RaidLootControllerCopy", title, text, w, h)
 end
 
 local pages, tabs = {}, {}
@@ -1131,8 +1033,8 @@ local function refreshRaid(S)
     titleBox:SetShown(canStart)
     newBtn:SetShown(canStart)
     local officer = NS.IsOfficer()
-    beginBtn:SetShown(officer and S.phase == "reserve")
-    endBtn:SetShown(officer and S.phase == "live")
+    beginBtn:SetShown(officer and S and S.phase == "reserve")
+    endBtn:SetShown(officer and S and S.phase == "live")
 
     if not S then
         raidHelp:SetText("No raid session. The raid leader or an assistant starts one with New raid.")
@@ -1247,9 +1149,13 @@ local function refreshRaid(S)
     mySpecLabel:SetText(line)
     mySpecLabel:SetWordWrap(true)
 
-    local parts = {}
-    for name, list in pairs(NS.DB.owed) do
-        for _, s in ipairs(list) do
+    local parts, owedNames = {}, {}
+    for name in pairs(NS.DB.owed) do
+        owedNames[#owedNames + 1] = name
+    end
+    table.sort(owedNames) -- the same order on every redraw
+    for _, name in ipairs(owedNames) do
+        for _, s in ipairs(NS.DB.owed[name]) do
             local left = Loot.TradeTimeLeft(s)
             parts[#parts + 1] = NS.ColorName(name)
                 .. ": "
@@ -1460,6 +1366,24 @@ local search = NS.InputBox(cp, 230, "Search all items", function()
     searchTimer = C_Timer.NewTimer(0.25, NS.Refresh)
 end)
 search:SetPoint("TOPLEFT", 8, -2)
+local CAT_SHOWN_MAX = 200
+local catMore = Text(cp, "GameFontDisableSmall")
+catMore:SetPoint("LEFT", search, "RIGHT", 10, 0)
+catMore:SetText("Showing the first " .. CAT_SHOWN_MAX .. " matches. Type more to narrow it.")
+catMore:Hide()
+
+-- itemString -> lower-case name, kept once the game knows it: a search
+-- reads every record, so it should not ask the item API for each again.
+local lowerNames = {}
+local function lowerName(s)
+    local name = lowerNames[s]
+    if not name then
+        name = C_Item.GetItemInfo(s)
+        name = name and name:lower()
+        lowerNames[s] = name
+    end
+    return name
+end
 
 local tree = List(cp, 260, 330, { 220 }, false, function(row)
     if row.bossKey == nil then
@@ -1570,13 +1494,18 @@ local function refreshCatalog()
     -- Right side: the selected boss's items, or every match for the search.
     local query = (search:GetText() or ""):lower()
     local shown = {}
+    catMore:Hide()
     if query ~= "" then
         for _, inst in pairs(cat) do
             for _, boss in pairs(inst.b) do
                 for _, rec in pairs(boss.i) do
-                    local name = C_Item.GetItemInfo(rec.s)
-                    if name and name:lower():find(query, 1, true) then
-                        shown[#shown + 1] = { rec = rec, label = boss.name }
+                    local name = lowerName(rec.s)
+                    if name and name:find(query, 1, true) then
+                        if #shown >= CAT_SHOWN_MAX then
+                            catMore:Show() -- one row frame per match: keep it bounded
+                        else
+                            shown[#shown + 1] = { rec = rec, label = boss.name }
+                        end
                     end
                 end
             end
@@ -1687,10 +1616,19 @@ end
 
 -- Worked out again only when history changes, not on every redraw (a
 -- window resize redraws every frame).
-local statsCache, statsGen
+-- Wants and rolls in the live raid count too, but those arrive many times a
+-- second during a roll: they redo the stats at most every 3 s.
+local statsCache, statsGen, statsOp, statsAt, statsLater
 local function refreshStats()
-    if statsGen ~= NS.historyGen then
-        statsCache, statsGen = Rules.PlayerStats(NS.DB.history), NS.historyGen
+    local stale = statsOp ~= NS.opGen
+    if statsGen ~= NS.historyGen or (stale and GetTime() - statsAt >= 3) then
+        statsCache, statsGen, statsOp, statsAt = Rules.PlayerStats(NS.DB.history), NS.historyGen, NS.opGen, GetTime()
+    elseif stale and not statsLater then
+        statsLater = true
+        C_Timer.After(3, function()
+            statsLater = false
+            NS.Refresh()
+        end)
     end
     local stats = statsCache
     local names = {}
@@ -1916,22 +1854,6 @@ end
 -- it round the minimap edge. /rlc minimap hides or shows it. Same shape as
 -- the WoWClearance button, which is measured working on this client.
 
-local EDGE = 10 -- how far outside the minimap edge the button sits
-
-local function placeButton(btn)
-    local angle = math.rad(NS.DB.minimapAngle or 200)
-    local rx = (Minimap:GetWidth() or 0) > 0 and Minimap:GetWidth() / 2 + EDGE or 80
-    local ry = (Minimap:GetHeight() or 0) > 0 and Minimap:GetHeight() / 2 + EDGE or 80
-    local x, y = math.cos(angle) * rx, math.sin(angle) * ry
-    -- A square minimap needs the button clamped to its edges, not a circle.
-    if ((GetMinimapShape and GetMinimapShape()) or "ROUND") ~= "ROUND" then
-        x = math.max(-rx, math.min(x * math.sqrt(2), rx))
-        y = math.max(-ry, math.min(y * math.sqrt(2), ry))
-    end
-    btn:ClearAllPoints()
-    btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
-end
-
 local mmButton
 local function createMinimapButton()
     -- Not created at all when hidden: parenting a frame to the minimap is
@@ -1939,66 +1861,40 @@ local function createMinimapButton()
     if mmButton or NS.DB.minimapButton == false then
         return
     end
-    local btn = CreateFrame("Button", "RaidLootControllerMinimapButton", Minimap)
-    mmButton = btn
-    btn:SetSize(31, 31)
-    btn:SetFrameStrata("MEDIUM")
-    btn:SetFrameLevel(8)
-    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    btn:RegisterForDrag("LeftButton")
-
-    local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Background")
-    bg:SetSize(53, 53)
-    bg:SetPoint("CENTER", -1, 1)
-    local icon = btn:CreateTexture(nil, "ARTWORK")
-    icon:SetTexture(133639) -- inv_misc_bag_10, same as the .toc icon
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER")
-    local border = btn:CreateTexture(nil, "OVERLAY")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetSize(53, 53)
-    border:SetPoint("CENTER", 10, -10)
-    btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-    AddGlow(btn, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-    btn.SetGlow(myTurn(NS.S()) ~= nil)
-
-    btn:SetScript("OnDragStart", function(self)
-        self:SetScript("OnUpdate", function()
-            local mx, my = Minimap:GetCenter()
-            local scale = Minimap:GetEffectiveScale()
-            local cx, cy = GetCursorPosition()
-            NS.DB.minimapAngle = math.deg(math.atan2(cy / scale - my, cx / scale - mx))
-            placeButton(self)
-        end)
-    end)
-    btn:SetScript("OnDragStop", function(self)
-        self:SetScript("OnUpdate", nil)
-    end)
-    btn:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then
-            current = "catalog"
-            NS.Show()
-        else
-            NS.Toggle()
-        end
-    end)
-    btn:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Raid Loot Controller")
-        local S = NS.S()
-        if S then
-            GameTooltip:AddLine((S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or ""), 1, 1, 1)
-            local item = S.active and S.items[S.active]
-            if item then
-                GameTooltip:AddLine("Up now: " .. NS.LinkOf(item.itemString), 1, 1, 1)
+    mmButton = NS.Kit.MinimapButton({
+        name = "RaidLootControllerMinimapButton",
+        icon = 133639, -- inv_misc_bag_10, same as the .toc icon
+        db = NS.DB,
+        key = "minimapAngle",
+        angle = 145, -- WoWClearance's sits at 190: keep them apart
+        onClick = function(_, button)
+            if button == "RightButton" then
+                current = "catalog"
+                NS.Show()
+            else
+                NS.Toggle()
             end
-        end
-        GameTooltip:AddLine("Left-click: open  |  Right-click: catalogue  |  Drag: move", 0.6, 0.6, 0.6)
-        GameTooltip:Show()
-    end)
-    btn:SetScript("OnLeave", GameTooltip_Hide)
-    placeButton(btn)
+        end,
+        onEnter = function(self)
+            local lines, S = {}, NS.S()
+            if S then
+                lines[1] = (S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or "")
+                local item = S.active and S.items[S.active]
+                if item then
+                    lines[2] = "Up now: " .. NS.LinkOf(item.itemString)
+                end
+            end
+            NS.Kit.MinimapTooltip(
+                self,
+                "Raid Loot Controller",
+                "ff8800",
+                lines,
+                "Left-click: open  |  Right-click: catalogue  |  Drag: move"
+            )
+        end,
+    })
+    AddGlow(mmButton, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    mmButton.SetGlow(myTurn(NS.S()) ~= nil)
 end
 
 function NS.SetMinimapButton(show)

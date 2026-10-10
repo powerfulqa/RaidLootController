@@ -5,6 +5,7 @@
 -- table, so it exercises exactly the code the client runs.
 
 local NS = {}
+assert(loadfile("RLC_Kit.lua"))("RaidLootController", NS)
 local chunk = assert(loadfile("RLC_Rules.lua"))
 chunk("RaidLootController", NS)
 local R = NS.Rules
@@ -685,15 +686,59 @@ do
     check(R.Apply(host, { "DELIV", key, 5 }) == nil, "a DELIV op for an item not won is refused")
 end
 
+-- Who may start a session on our copy (Rules.AcceptNew).
+do
+    local LEAD, ASSIST = "Lead-Realm", "Asst-Realm"
+    local nctx = {
+        now = 100000,
+        isLead = function(n)
+            return n == LEAD
+        end,
+        isLeadOrAssist = function(n)
+            return n == LEAD or n == ASSIST
+        end,
+        recent = {},
+    }
+    local function new(who, t)
+        return { "NEW", who .. "-" .. t, who, "x", tostring(t) }
+    end
+    check(R.AcceptNew(nil, new(ASSIST, 100000), ASSIST, nctx), "an assistant may start a session")
+    check(not R.AcceptNew(nil, new(B, 100000), B, nctx), "a plain raider may not")
+    check(not R.AcceptNew(nil, new(ASSIST, 100000), LEAD, nctx), "only in your own name")
+    check(not R.AcceptNew(nil, new(LEAD, 4000000000), LEAD, nctx), "a start time from the future is refused")
+    check(not R.AcceptNew(nil, new(LEAD, 100000 - 90000), LEAD, nctx), "a start time days old is refused")
+    check(not R.AcceptNew(nil, new(LEAD, "1e9"), LEAD, nctx), "a non-integer time is refused")
+    local running = R.Apply(nil, new(ASSIST, 99000))
+    check(running.created == 99000, "NEW keeps its start time")
+    check(not R.AcceptNew(running, new(B, 100000), B, nctx), "a raider cannot take over")
+    check(R.AcceptNew(running, new(ASSIST, 99000), ASSIST, nctx), "the host may resend its session")
+    running.phase = "ended"
+    check(not R.AcceptNew(running, new(ASSIST, 99000), ASSIST, nctx), "an ended raid cannot be resent and wiped")
+    local burst = { now = 100000, isLead = nctx.isLead, isLeadOrAssist = nctx.isLeadOrAssist, recent = {} }
+    local ok = 0
+    for i = 1, 10 do
+        if R.AcceptNew(nil, new(LEAD, 100000 - i), LEAD, burst) then
+            ok = ok + 1
+        end
+    end
+    check(ok == R.NEW_BURST, "a flood of new sessions is cut off")
+    burst.now = burst.now + R.NEW_WINDOW + 1
+    check(R.AcceptNew(nil, new(LEAD, burst.now), LEAD, burst), "and allowed again later")
+    check(R.Apply(nil, { "NEW", "X-R-9", "X-R", "", "1e999" }).created == 0, "NEW never stores an absurd time")
+end
+
 -- Help search highlight.
 do
     local Y = "<"
-    check(R.Highlight("Roll for loot", "roll", Y) == "<Roll|r for loot", "highlight keeps the text's own case")
-    check(R.Highlight("a roll, a reroll", "roll", Y) == "a <roll|r, a re<roll|r", "highlight marks every match")
-    check(R.Highlight("|cffb6ffb6Keep|r it", "ff", Y) == "|cffb6ffb6Keep|r it", "never inside a colour code")
-    check(R.Highlight("|cffb6ffb6Keep|r it", "keep", Y) == "|cffb6ffb6<Keep|r|r it", "inside coloured text still marks")
-    check(R.Highlight("a|nb", "|n", Y) == "a|nb", "escape codes themselves never match")
-    check(R.Highlight("text", "", Y) == "text", "empty search changes nothing")
+    check(NS.Kit.Highlight("Roll for loot", "roll", Y) == "<Roll|r for loot", "highlight keeps the text's own case")
+    check(NS.Kit.Highlight("a roll, a reroll", "roll", Y) == "a <roll|r, a re<roll|r", "highlight marks every match")
+    check(NS.Kit.Highlight("|cffb6ffb6Keep|r it", "ff", Y) == "|cffb6ffb6Keep|r it", "never inside a colour code")
+    check(
+        NS.Kit.Highlight("|cffb6ffb6Keep|r it", "keep", Y) == "|cffb6ffb6<Keep|r|r it",
+        "inside coloured text still marks"
+    )
+    check(NS.Kit.Highlight("a|nb", "|n", Y) == "a|nb", "escape codes themselves never match")
+    check(NS.Kit.Highlight("text", "", Y) == "text", "empty search changes nothing")
 end
 
 print(string.format("test_rules: %d passed, %d failed", passed, failed))

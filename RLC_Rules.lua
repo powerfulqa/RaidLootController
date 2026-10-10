@@ -246,51 +246,6 @@ function Rules.Decode(msg)
     return ops
 end
 
--- ---- text ------------------------------------------------------------------
--- Colour every case-insensitive match of `query` in `text` (Help search).
--- Matches that touch an escape code (|cAARRGGBB, |r, |n, a link) are left
--- alone, so the colour codes already in the text never break.
-function Rules.Highlight(text, query, color)
-    if query == "" then
-        return text
-    end
-    local code = {} -- byte positions inside an escape code
-    local i = 1
-    while true do
-        local s, e = text:find("|c%x%x%x%x%x%x%x%x", i)
-        local s2, e2 = text:find("|[rnHh]", i)
-        if s2 and (not s or s2 < s) then
-            s, e = s2, e2
-        end
-        if not s then
-            break
-        end
-        for k = s, e do
-            code[k] = true
-        end
-        i = e + 1
-    end
-    local lower, out, pos = text:lower(), {}, 1
-    local from = 1
-    while true do
-        local s, e = lower:find(query, from, true)
-        if not s then
-            break
-        end
-        local clean = true
-        for k = s, e do
-            clean = clean and not code[k]
-        end
-        if clean then
-            out[#out + 1] = text:sub(pos, s - 1) .. color .. text:sub(s, e) .. "|r"
-            pos = e + 1
-        end
-        from = e + 1
-    end
-    out[#out + 1] = text:sub(pos)
-    return table.concat(out)
-end
-
 -- Turns a client format string such as RANDOM_ROLL_RESULT ("%s rolls %d
 -- (%d-%d)") into a Lua pattern. Positional forms ("%1$s") used by some
 -- languages are flattened; the captures still come out name, roll, low,
@@ -311,6 +266,56 @@ function Rules.ParseRoll(text, pattern)
 end
 
 -- ---- session -------------------------------------------------------------
+
+-- How far a NEW's start time may sit from our clock: a host's server time
+-- is ours, so a NEW from the future is forged. The past bound lets a
+-- snapshot of a long raid through.
+Rules.NEW_FUTURE, Rules.NEW_PAST = 300, 86400
+Rules.NEW_BURST, Rules.NEW_WINDOW = 3, 1800
+
+-- Whether a NEW from `sender` may replace our session S. ctx: now (server
+-- time), isLead(name), isLeadOrAssist(name), recent (sender -> list of
+-- times they started a session we took; this function updates it).
+function Rules.AcceptNew(S, op, sender, ctx)
+    local t = Rules.Int(op[5], 0, Rules.MAX_ID)
+    if op[3] ~= sender or not t or op[2] ~= sender .. "-" .. op[5] then
+        -- A session can only be started in your own name, with the id
+        -- NS.NewSession makes, so a reused id cannot overwrite saved history.
+        return false
+    end
+    if S and S.id == op[2] and S.host == sender then
+        -- The host resending its own session (a snapshot). Never once it
+        -- ended: a former host could wipe the saved raid by resending.
+        return S.phase ~= "ended"
+    end
+    if t > ctx.now + Rules.NEW_FUTURE or t < ctx.now - Rules.NEW_PAST then
+        return false -- a forged time would sort first in history and dry lists
+    end
+    if S and S.phase ~= "ended" and S.host ~= sender then
+        -- Taking over a running session wipes it for everyone, so only the
+        -- group leader may do that, never an assistant.
+        if not ctx.isLead(sender) then
+            return false
+        end
+    elseif not ctx.isLeadOrAssist(sender) then
+        return false
+    end
+    -- A few new sessions per sender per half hour: a flood of them would
+    -- push every real raid out of saved history.
+    local list, kept = ctx.recent[sender] or {}, {}
+    for _, at in ipairs(list) do
+        if at > ctx.now - Rules.NEW_WINDOW then
+            kept[#kept + 1] = at
+        end
+    end
+    if #kept >= Rules.NEW_BURST then
+        ctx.recent[sender] = kept
+        return false
+    end
+    kept[#kept + 1] = ctx.now
+    ctx.recent[sender] = kept
+    return true
+end
 
 function Rules.NewSession(id, host, title, t)
     return {
@@ -440,7 +445,7 @@ function Rules.Apply(S, op)
             return nil, "bad NEW"
         end
         local title = tostring(op[4] or ""):gsub("[\t%^|]", ""):sub(1, 40)
-        return Rules.NewSession(op[2], op[3], title, tonumber(op[5]) or 0)
+        return Rules.NewSession(op[2], op[3], title, Rules.Int(op[5], 0, Rules.MAX_ID) or 0)
     end
     if not S then
         return nil, "no session"
@@ -756,8 +761,11 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "You can't ask for this item."
         end
         local worn = on and Rules.ValidWorn(req[4]) and req[4] or nil
-        if (item.wants[who] == true) == on and (item.worn and item.worn[who]) == worn then
-            return {} -- nothing changed: send nothing
+        if (item.wants[who] == true) == on then
+            -- Nothing changed, or only the worn item: send nothing. A worn
+            -- item alone is advice, not worth a broadcast that one player
+            -- could repeat to fill the host's send budget.
+            return {}
         end
         return { { "WANT", item.key, who, on and 1 or 0, worn } }
     elseif kind == "RES" then

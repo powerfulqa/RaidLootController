@@ -200,5 +200,22 @@ do
     )
 end
 
+-- What counts as a new entry for the per-sender limit.
+do
+    local cat = {}
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "E663:1", 100)
+    check(not C.IsNew(cat, { "CI", tostring(MC), "Molten Core" }), "a known instance is not new")
+    check(C.IsNew(cat, { "CI", "1", "Elsewhere" }), "an unknown instance is new")
+    check(not C.IsNew(cat, { "CB", tostring(MC), tostring(LUC), "Lucifron", "1", "1" }), "a known boss is not new")
+    check(C.IsNew(cat, { "CB", tostring(MC), "1", "Other", "1", "1" }), "an unknown boss is new")
+    check(not C.IsNew(cat, { "CE", tostring(MC), tostring(LUC), "item:16800", "2", "1" }), "a known item is not new")
+    check(C.IsNew(cat, { "CE", tostring(MC), tostring(LUC), "item:16801", "1", "1" }), "an unknown item is new")
+    check(
+        C.IsNew(cat, { "CD", tostring(MC), "MC", tostring(LUC), "L", "item:1", "k", "1" }),
+        "a CD of a new item is new"
+    )
+    check(C.IsNew(cat, { "CE", tostring(MC), tostring(LUC), {}, "1", "1" }), "junk fields do not throw")
+end
+
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

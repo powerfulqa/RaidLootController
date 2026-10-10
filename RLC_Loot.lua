@@ -386,13 +386,28 @@ end)
 
 -- How long a bag copy of itemString can still be traded, as the game
 -- words it ("1 hour 47 min"), or nil (not in the bags, or no time limit).
+-- Each answer is kept 30 s or until the bags change: the Raid tab asks on
+-- every redraw, and finding it means scanning every bag slot and building
+-- a tooltip. The game shows only minutes anyway.
 local tradeTimePattern
+local tradeLeft, tradeLeftAt = {}, -100 -- itemID -> text or false
+NS.On("BAG_UPDATE_DELAYED", function()
+    tradeLeftAt = -100
+end)
 function Loot.TradeTimeLeft(itemString)
     if not BIND_TRADE_TIME_REMAINING then
         return nil
     end
     tradeTimePattern = tradeTimePattern or Rules.FormatPattern(BIND_TRADE_TIME_REMAINING)
+    if GetTime() - tradeLeftAt > 30 then
+        wipe(tradeLeft)
+        tradeLeftAt = GetTime()
+    end
     local id = Rules.ItemIDOf(itemString)
+    if not id or tradeLeft[id] ~= nil then
+        return id and tradeLeft[id] or nil
+    end
+    tradeLeft[id] = false
     for bag = 0, NUM_BAG_SLOTS do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             if C_Container.GetContainerItemID(bag, slot) == id then
@@ -400,6 +415,7 @@ function Loot.TradeTimeLeft(itemString)
                 for _, line in ipairs(data and data.lines or {}) do
                     local left = type(line.leftText) == "string" and line.leftText:match(tradeTimePattern)
                     if left then
+                        tradeLeft[id] = left
                         return left
                     end
                 end

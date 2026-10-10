@@ -71,7 +71,10 @@ function Net.QueueCatalog(op, dest)
         return
     end
     local lane = dest == "GUILD" and CAT_GUILD or CAT_GROUP
-    if #lane.queue < 5000 then -- a full catalogue is about this size; never grow past it
+    -- A full catalogue (records plus its instance and boss lines) fits;
+    -- the cap only stops a runaway. Dropping part of an answer would leave
+    -- the asker with a hole nobody fills, since others saw it answered.
+    if #lane.queue < 25000 then
         lane.queue[#lane.queue + 1] = Rules.EncodeOp(op)
     end
 end
@@ -123,11 +126,18 @@ local function serve(lane)
     -- Drop the ops that went out: as many as the message holds, plus any
     -- oversize op Pack skipped on the way.
     local sent = select(2, msg:gsub("%^", "")) + 1
-    while sent > 0 and queue[1] do
-        if #queue[1] <= LIMIT then
+    local done = 0
+    while sent > 0 and queue[done + 1] do
+        done = done + 1
+        if #queue[done] <= LIMIT then
             sent = sent - 1
         end
-        table.remove(queue, 1)
+    end
+    -- One shift for the whole message, not one per op: a catalogue queue
+    -- holds thousands.
+    local n = #queue
+    for i = 1, n do
+        queue[i] = queue[i + done]
     end
 end
 
@@ -157,7 +167,9 @@ C_Timer.NewTicker(0.25, function()
     for prefix, n in pairs(tokens) do
         tokens[prefix] = math.min(BURST, n + REGEN * 0.25)
     end
-    if snapshotWanted and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 3 then
+    -- One snapshot per 30 s for the whole group: it covers everyone who
+    -- asked, and players taking turns asking cannot keep the queue full.
+    if snapshotWanted and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 30 then
         snapshotWanted, lastSnapshot = false, GetTime()
         local S = NS.S()
         if S then
@@ -176,7 +188,7 @@ local GROUP_CHANNELS = { RAID = true, PARTY = true, INSTANCE_CHAT = true }
 -- Requests per sender: REQ_BURST at once, then one per REQ_EVERY seconds.
 -- Each request can make the host broadcast an op, so one spamming raider
 -- would otherwise eat the send budget live rolls need.
-local REQ_BURST, REQ_EVERY = 8, 1
+local REQ_BURST, REQ_EVERY = 8, 2
 local reqBudget = {} -- sender -> { tokens, lastTime }
 local function allowRequest(sender)
     local now = GetTime()
@@ -194,23 +206,20 @@ local function allowRequest(sender)
     return true
 end
 
--- Whether a NEW from `sender` may replace our session.
-local function acceptNew(S, op, sender)
-    if op[3] ~= sender or op[2] ~= sender .. "-" .. tostring(op[5]) then
-        -- A session can only be started in your own name, with the id
-        -- NS.NewSession makes, so a reused id cannot overwrite saved history.
-        return false
-    end
-    if S and S.id == op[2] and S.host == sender then
-        return true -- the host resending its own session (a snapshot)
-    end
-    if S and S.phase ~= "ended" and S.host ~= sender then
-        -- Taking over a running session wipes it for everyone, so only the
-        -- group leader may do that, never an assistant.
-        local r = NS.roster[sender]
+-- Whether a NEW from `sender` may replace our session (Rules.AcceptNew).
+local newCtx = {
+    isLead = function(name)
+        local r = NS.roster[name]
         return r ~= nil and r.lead == true
-    end
-    return NS.IsLeadOrAssist(sender)
+    end,
+    isLeadOrAssist = function(name)
+        return NS.IsLeadOrAssist(name)
+    end,
+    recent = {},
+}
+local function acceptNew(S, op, sender)
+    newCtx.now = GetServerTime()
+    return Rules.AcceptNew(S, op, sender, newCtx)
 end
 
 NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
@@ -220,6 +229,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
     if not NS.CanRead(msg, sender) then
         return
     end
+    NS.FlushRoster()
     sender = NS.Canon(sender)
     local me = NS.Me()
     if not sender or sender == me then
@@ -255,7 +265,9 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
                 S = Rules.Apply(nil, op)
                 stateOps[#stateOps + 1] = op
             end
-        elseif S and sender == S.host then
+        elseif S and sender == S.host and S.phase ~= "ended" then
+            -- An ended raid is saved history: its former host may not
+            -- rewrite it. A snapshot still works: its NEW comes first.
             stateOps[#stateOps + 1] = op
         end
     end

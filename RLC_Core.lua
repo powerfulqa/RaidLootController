@@ -21,28 +21,10 @@ local STALE = 12 * 3600 -- an unfinished raid this old ends at login
 
 -- ---- chat output -----------------------------------------------------------
 
-function NS.Print(fmt, ...)
-    local text = select("#", ...) > 0 and fmt:format(...) or fmt
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff8800RaidLoot|r " .. text)
-end
+NS.Print = NS.Kit.Printer("RaidLoot", "ff8800")
 
--- Whether every value given can be read. On this client some event payloads
--- (chat senders, boss names during an encounter) can be secret, and
--- comparing or sending one throws. canaccessvalue takes ONE value, so each
--- is checked on its own; nils are skipped (whether it takes nil is
--- unmeasured).
-function NS.CanRead(...)
-    if not canaccessvalue then
-        return true
-    end
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        if v ~= nil and not canaccessvalue(v) then
-            return false
-        end
-    end
-    return true
-end
+-- Whether every value given can be read (secret values): see RLC_Kit.lua.
+NS.CanRead = NS.Kit.CanRead
 
 -- ---- versions --------------------------------------------------------------
 -- Other players' addon versions, heard on the catalogue "done asking"
@@ -224,6 +206,9 @@ NS.UnitIdentity = unitIdentity
 -- lower-case spelling -> canonical name, for everyone in the group. A bare
 -- first name maps only when no one else in the group shares it.
 local aliases = {}
+-- name -> { unit, classID, classFile, lead, assist }: see "roster" below.
+local roster = {}
+NS.roster = roster
 
 local function addAliases(canon, first)
     local display = canon:match("^(.+)%-[^%-]+$") or canon
@@ -243,17 +228,20 @@ function NS.Canon(name)
     if type(name) ~= "string" or name == "" then
         return nil
     end
+    if roster[name] then
+        return name -- already canonical, even if a shorter spelling is shared
+    end
     local hit = aliases[name:lower()]
-    if hit then
-        return hit
+    if hit == nil then
+        -- "First Surname-Realm" where the realm part differs in spacing.
+        hit = aliases[(name:match("^(.-)%-") or name):lower()]
     end
-    -- "First Surname-Realm" where the realm part differs in spacing.
-    local bare = name:match("^(.-)%-") or name
-    hit = aliases[bare:lower()]
-    if hit then
-        return hit
+    if hit == false then
+        -- Two group members share this spelling. Guessing would credit
+        -- one player's rolls and messages to the other (or to the host).
+        return nil
     end
-    return NS.Full(name)
+    return hit or NS.Full(name)
 end
 
 local myName
@@ -270,9 +258,6 @@ end
 -- name -> { unit, classID, classFile, lead, assist }. Rebuilt on
 -- GROUP_ROSTER_UPDATE. Class files are also remembered in saved data so
 -- history can colour names of players who have left.
-
-local roster = {}
-NS.roster = roster
 
 function NS.RefreshRoster()
     wipe(roster)
@@ -337,13 +322,15 @@ end
 
 -- A display link for an itemString, or a placeholder while the client
 -- fetches the item; GET_ITEM_INFO_RECEIVED refreshes the window.
+local requested = {} -- itemID -> true once asked for
 function NS.LinkOf(itemString)
     local _, link = C_Item.GetItemInfo(itemString)
     if link then
         return link
     end
     local id = Rules.ItemIDOf(itemString)
-    if id then
+    if id and not requested[id] then
+        requested[id] = true -- once: a redraw asks for every link it shows
         C_Item.RequestLoadItemDataByID(id)
     end
     return "[item " .. tostring(id) .. "]"
@@ -372,6 +359,7 @@ end
 -- Bumped whenever saved history changes, so views built from it (Stats,
 -- the tooltip's "You won this") rebuild only then.
 NS.historyGen = 0
+NS.opGen = 0
 
 -- History holds the live session table itself, not a copy: NEW always
 -- makes a fresh table, so an old raid's entry never changes again.
@@ -430,7 +418,7 @@ function NS.ApplyOps(ops, broadcast)
             end
             local k = op[1]
             gotNew = gotNew or k == "NEW"
-            if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" then
+            if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" or k == "UNDO" then
                 changedHistory = true
             end
             local winKey = S.id .. "\t" .. tostring(op[2])
@@ -454,8 +442,11 @@ function NS.ApplyOps(ops, broadcast)
     end
     if changedHistory and S then
         saveHistory(S)
+        NS.historyGen = NS.historyGen + 1 -- who won what, or which raids exist
     end
-    NS.historyGen = NS.historyGen + 1 -- history holds the live session: any op may change it
+    -- History holds the live session, so any op (a want, a roll) changes
+    -- it a little. Views that show those (Stats) also watch this.
+    NS.opGen = NS.opGen + 1
     if NS.Refresh then
         NS.Refresh()
     end
@@ -698,12 +689,32 @@ local function onRoster()
     end
 end
 NS.On("PLAYER_ENTERING_WORLD", onRoster)
-NS.On("GROUP_ROSTER_UPDATE", onRoster)
+-- The roster event fires in bursts while a raid forms or zones in:
+-- rebuild once per frame, not once per event.
+local rosterPending = false
+-- A message from a player who just joined can land before that frame:
+-- the receive path calls this first so the roster knows them.
+function NS.FlushRoster()
+    if rosterPending then
+        rosterPending = false
+        onRoster()
+    end
+end
+NS.On("GROUP_ROSTER_UPDATE", function()
+    if not rosterPending then
+        rosterPending = true
+        C_Timer.After(0, NS.FlushRoster)
+    end
+end)
 -- Item data arrives in bursts (a catalogue search asks for many items at
 -- once): redraw once per burst, not once per item.
 local itemInfoPending = false
-NS.On("GET_ITEM_INFO_RECEIVED", function()
-    if not itemInfoPending then
+NS.On("GET_ITEM_INFO_RECEIVED", function(itemID, success)
+    if success == false and itemID then
+        requested[itemID] = nil -- let the next redraw ask once more
+    end
+    -- A failed load brings no new name: redrawing would only ask again.
+    if success ~= false and not itemInfoPending then
         itemInfoPending = true
         C_Timer.After(0.25, function()
             itemInfoPending = false

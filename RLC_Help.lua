@@ -9,7 +9,6 @@
 local _, NS = ...
 
 local GREEN = "|cffb6ffb6"
-local YELLOW = "|cffffff00"
 local R = "|r"
 
 local ENTRIES = {
@@ -310,11 +309,15 @@ local TAB_NAMES = {
 -- ---- page ---------------------------------------------------------------------
 
 local p = NS.helpPage
-local collapsed = {} -- section -> true; every section but the first starts closed
-for _, e in ipairs(ENTRIES) do
-    if e.section and e.section ~= "start" then
-        collapsed[e.section] = true
+local K = NS.Kit
+-- Open or closed per section, saved (NS.DB.helpCollapsed: section ->
+-- true/false). A section never touched starts closed, except the first.
+local function isCollapsed(section)
+    local saved = NS.DB.helpCollapsed and NS.DB.helpCollapsed[section]
+    if saved == nil then
+        return section ~= "start"
     end
+    return saved
 end
 
 local search = NS.InputBox(p, 230, "Search help", function()
@@ -348,6 +351,12 @@ sf:SetScript("OnSizeChanged", function(_, width)
     end
 end)
 
+-- Shown when a search matches nothing.
+local noResults = child:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+noResults:SetPoint("TOPLEFT", 10, -4)
+noResults:SetText("No help entries match your search.")
+noResults:Hide()
+
 -- Widgets per entry, made once.
 local built = false
 local function build()
@@ -358,21 +367,29 @@ local function build()
             b:SetSize(WIDTH, 20)
             b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             b.text:SetPoint("LEFT", 2, 0)
-            b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            -- Gold header that turns white under the mouse (as WoWClearance).
+            b:SetScript("OnEnter", function()
+                b.text:SetTextColor(1, 1, 1)
+            end)
+            b:SetScript("OnLeave", function()
+                b.text:SetTextColor(1, 0.845, 0.44)
+            end)
             b:SetScript("OnClick", function()
-                collapsed[e.section] = not collapsed[e.section] or nil
+                NS.DB.helpCollapsed = NS.DB.helpCollapsed or {}
+                NS.DB.helpCollapsed[e.section] = not isCollapsed(e.section)
                 NS.RefreshHelp()
+                PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
             end)
             e.header = b
         else
-            e.qText = child:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            e.qText = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             e.qText:SetWidth(WIDTH)
             e.qText:SetJustifyH("LEFT")
-            e.qText:SetText(e.q)
+            e.qText:SetText(K.COLOR.question .. e.q .. "|r")
             e.aText = child:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             e.aText:SetWidth(WIDTH - 12)
             e.aText:SetJustifyH("LEFT")
-            e.aText:SetSpacing(2)
+            e.aText:SetSpacing(K.HELP.spacing)
             e.aText:SetText(e.a)
             e.aText:SetTextColor(0.85, 0.85, 0.85)
             e.search = (e.q .. " " .. e.a):lower()
@@ -408,14 +425,15 @@ function NS.RefreshHelp()
         end
     end
 
-    local y, open = 0, false
+    local y, open, any = 0, false, false
     for _, e in ipairs(ENTRIES) do
         if e.section then
             local show = not searching or hasMatch[e.section]
-            open = show and (searching or not collapsed[e.section])
+            any = any or show
+            open = show and (searching or not isCollapsed(e.section))
             e.header:SetShown(show)
             if show then
-                e.header.text:SetText((open and "- " or "+ ") .. e.title)
+                e.header.text:SetText(K.COLOR.section .. (open and "- " or "+ ") .. e.title .. "|r")
                 e.header:SetPoint("TOPLEFT", 0, y)
                 y = y - 24
             end
@@ -428,19 +446,21 @@ function NS.RefreshHelp()
             end
             if show then
                 -- While searching, the matched words show in yellow.
-                e.qText:SetText(searching and NS.Rules.Highlight(e.q, query, YELLOW) or e.q)
-                e.aText:SetText(searching and NS.Rules.Highlight(e.a, query, YELLOW) or e.a)
+                local q = K.COLOR.question .. e.q .. "|r"
+                e.qText:SetText(searching and K.Highlight(q, query, nil, K.COLOR.question) or q)
+                e.aText:SetText(searching and K.Highlight(e.a, query) or e.a)
                 e.qText:SetPoint("TOPLEFT", 10, y)
-                y = y - e.qText:GetStringHeight() - 4
+                y = y - e.qText:GetStringHeight() - K.HELP.answerGap
                 e.aText:SetPoint("TOPLEFT", 22, y)
-                y = y - e.aText:GetStringHeight() - 6
+                y = y - e.aText:GetStringHeight()
                 if e.button then
-                    e.button:SetPoint("TOPLEFT", 20, y)
-                    y = y - 24
+                    e.button:SetPoint("TOPLEFT", 20, y - 6)
+                    y = y - 30
                 end
-                y = y - 8
+                y = y - K.HELP.entryGap
             end
         end
     end
+    noResults:SetShown(not any)
     child:SetHeight(math.max(1, -y))
 end

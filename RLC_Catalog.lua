@@ -248,6 +248,28 @@ function Catalog.Covers(mine, theirs)
 end
 
 -- Ops that carry one instance's data.
+-- New entries (instances, bosses, items) one sender may add per session.
+-- A full honest answer fits; a guildmate sending junk fills only this much,
+-- not the whole catalogue, so real drops still find room.
+Catalog.SENDER_NEW = 5000
+
+-- Whether merging op would add an entry the catalogue does not have yet.
+function Catalog.IsNew(cat, op)
+    local inst = cat[tonumber(op[2])]
+    if not inst then
+        return true
+    end
+    if op[1] == "CI" then
+        return false
+    end
+    local boss = inst.b[tonumber(op[op[1] == "CD" and 4 or 3])]
+    if not boss then
+        return true
+    end
+    local s = op[1] == "CD" and op[6] or op[4]
+    return op[1] ~= "CB" and boss.i[Rules.ItemIDOf(type(s) == "string" and s or "") or 0] == nil
+end
+
 function Catalog.InstanceOps(cat, instID)
     local inst = cat[instID]
     local ops = { { "CI", instID, inst.name } }
@@ -454,6 +476,8 @@ local servedDest = {} -- dest -> GetTime() we last answered anyone there
 local SENDER_COOLDOWN = 600 -- one answer per asker per 10 minutes
 local DEST_COOLDOWN = 60 -- and one per channel per minute: our answer reaches everyone there
 
+local addedBy = {} -- sender -> new entries they added this session
+
 local function answer(sender, req)
     local now = GetTime()
     if
@@ -514,9 +538,26 @@ function Catalog.OnMessage(ops, dest, sender)
                     answeredAt[dest .. instID] = GetTime()
                 end
             elseif kind == "CD" then
-                heardDrop[tostring(op[6]) .. " " .. tostring(op[7])] = true
+                -- A live drop only counts from someone in our group: from
+                -- the guild channel it would be a kill nobody here saw.
+                if dest ~= "GROUP" or not NS.roster[sender] then
+                    op = nil
+                else
+                    heardDrop[tostring(op[6]) .. " " .. tostring(op[7])] = true
+                end
             end
-            changed = Catalog.ApplyOp(cat(), op) or changed
+            local s = op and (op[1] == "CD" and op[6] or op[4])
+            if op and op[1] ~= "CI" and op[1] ~= "CB" and not C_Item.GetItemInfoInstant(tostring(s)) then
+                op = nil -- an item id the game does not know is junk
+            end
+            if op and Catalog.IsNew(cat(), op) then
+                if (addedBy[sender] or 0) >= Catalog.SENDER_NEW then
+                    op = nil
+                else
+                    addedBy[sender] = (addedBy[sender] or 0) + 1
+                end
+            end
+            changed = op ~= nil and Catalog.ApplyOp(cat(), op) or changed
         end
     end
     if changed then
