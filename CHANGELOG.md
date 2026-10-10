@@ -4,6 +4,10 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.6.1
+
+- The minimap button no longer has a black disc spilling past its gold ring.
+
 ### v0.6.0
 
 **Harder to cheat, lighter to run, and a family look.** A security and performance review, and the shared look with WoWClearance.

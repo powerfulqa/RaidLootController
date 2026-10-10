@@ -240,19 +240,24 @@ function Kit.MinimapButton(opts)
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp", "MiddleButtonUp")
     btn:RegisterForDrag("LeftButton")
 
+    -- The usual minimap-button layout (as LibDBIcon): the ring texture is
+    -- 53x53 with the ring in its top-left corner, so everything anchors
+    -- top-left. The background is the minimap's own round backdrop, drawn
+    -- small: at the ring's size it shows as a black disc past the ring.
+    -- (The zoom-button background is not in the Forever files.)
     local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background") -- the zoom-button one is not in the Forever files
-    bg:SetSize(53, 53)
-    bg:SetPoint("CENTER", -1, 1)
+    bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    bg:SetSize(20, 20)
+    bg:SetPoint("TOPLEFT", 7, -5)
     local icon = btn:CreateTexture(nil, "ARTWORK")
     icon:SetTexture(opts.icon)
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER")
+    icon:SetSize(17, 17)
+    icon:SetPoint("TOPLEFT", 7, -6)
     btn.icon = icon
     local border = btn:CreateTexture(nil, "OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     border:SetSize(53, 53)
-    border:SetPoint("CENTER", 10, -10)
+    border:SetPoint("TOPLEFT")
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
     function btn.Place()
