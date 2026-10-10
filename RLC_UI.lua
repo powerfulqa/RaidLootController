@@ -86,6 +86,42 @@ local function Text(parent, font, justify)
     return fs
 end
 
+-- A one-line input box with a grey hint while it is empty. onChange(box)
+-- runs after every change. Escape empties it.
+function NS.InputBox(parent, w, hintText, onChange)
+    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    box:SetSize(w, 20)
+    box:SetAutoFocus(false)
+    box.hint = Text(box, "GameFontDisableSmall")
+    box.hint:SetPoint("LEFT", 2, 0)
+    box.hint:SetText(hintText)
+    box:SetScript("OnTextChanged", function(self)
+        self.hint:SetShown(self:GetText() == "")
+        if onChange then
+            onChange(self)
+        end
+    end)
+    box:SetScript("OnEscapePressed", function(self)
+        self:SetText("")
+        self:ClearFocus()
+    end)
+    return box
+end
+
+-- Drag the corner to resize, as in WoWClearance. onDone runs on release.
+local function ResizeGrip(frame, onDone)
+    local grip = CreateFrame("Button", nil, frame)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -6, 6)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function()
+        frame:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
+    end)
+    grip:SetScript("OnMouseUp", onDone)
+end
+
 local function ItemTooltip(owner, itemString)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(itemString)
@@ -385,17 +421,7 @@ end)
 f:SetScript("OnDragStart", f.StartMoving)
 f:SetScript("OnDragStop", saveWindow)
 
--- Drag the corner to resize, as in WoWClearance.
-local grip = CreateFrame("Button", nil, f)
-grip:SetSize(16, 16)
-grip:SetPoint("BOTTOMRIGHT", -6, 6)
-grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-grip:SetScript("OnMouseDown", function()
-    f:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
-end)
-grip:SetScript("OnMouseUp", saveWindow)
+ResizeGrip(f, saveWindow)
 ButtonFrameTemplate_HidePortrait(f)
 f:SetTitle("Raid Loot Controller")
 f:Hide()
@@ -460,16 +486,7 @@ function NS.ShowCopy(title, text, w, h)
         sf:SetScript("OnSizeChanged", function(_, width)
             box:SetWidth(width)
         end)
-        local cgrip = CreateFrame("Button", nil, copy)
-        cgrip:SetSize(16, 16)
-        cgrip:SetPoint("BOTTOMRIGHT", -6, 6)
-        cgrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-        cgrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-        cgrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-        cgrip:SetScript("OnMouseDown", function()
-            copy:StartSizing("BOTTOMRIGHT", true) -- true: grow from the mouse, no jump (as Blizzard's PanelResizeButtonMixin)
-        end)
-        cgrip:SetScript("OnMouseUp", function()
+        ResizeGrip(copy, function()
             copy:StopMovingOrSizing()
         end)
         copy.box, copy.sf = box, sf
@@ -615,7 +632,9 @@ local wantBtn = Button(rp, "I want this", 110, function()
     end
 end)
 wantBtn:SetPoint("TOPLEFT", myInfo, "BOTTOMLEFT", 0, -6)
-local rollBtn = Button(rp, "Roll (1-100)", 110, Loot.Roll)
+local rollBtn = Button(rp, "Roll (1-100)", 110, function()
+    RandomRoll(1, 100)
+end)
 rollBtn:SetPoint("LEFT", wantBtn, "RIGHT", 6, 0)
 AddGlow(wantBtn)
 AddGlow(rollBtn)
@@ -683,16 +702,11 @@ local cancelBtn = adminButton("Remove item", BW, BX * 2, 0, onSel("CANCEL"))
 local undoBtn = adminButton("Undo win", BW, BX * 3, 0, onSel("UNDO"))
 
 -- Class-coloured, localized class name for a class token.
-local CLASS_ID = {}
-for id, token in pairs(Rules.CLASS_TOKEN) do
-    CLASS_ID[token] = id
-end
 local function classLabel(token)
-    local name = GetClassInfo(CLASS_ID[token] or 0) or token
+    local name = GetClassInfo(Rules.CLASS_ID[token] or 0) or token
     local color = C_ClassColor.GetClassColor(token)
     return color and color:WrapTextInColorCode(name) or name
 end
-NS.ClassLabel = classLabel
 
 -- Sort key for an item: its name once the client has it, else its ID.
 local function itemKey(itemString)
@@ -883,7 +897,7 @@ function NS.ShowSpecMenu(owner)
         return
     end
     local function send(set)
-        NS.Act("SPECS", item.key, Rules.SpecsToCSV(set))
+        NS.Act("SPECS", item.key, Rules.SetToCSV(set))
     end
     local function currentSpecs()
         local now = {}
@@ -967,17 +981,9 @@ end
 local rpg = page("raid")
 local raidSel
 
-local titleBox = CreateFrame("EditBox", nil, rpg, "InputBoxTemplate")
-titleBox:SetSize(180, 20)
+local titleBox = NS.InputBox(rpg, 180, "Raid name (optional)")
 titleBox:SetPoint("TOPLEFT", 8, -2)
-titleBox:SetAutoFocus(false)
 titleBox:SetMaxLetters(40)
-titleBox.hint = Text(titleBox, "GameFontDisableSmall")
-titleBox.hint:SetPoint("LEFT", 2, 0)
-titleBox.hint:SetText("Raid name (optional)")
-titleBox:SetScript("OnTextChanged", function(self)
-    self.hint:SetShown(self:GetText() == "")
-end)
 local newBtn = Button(rpg, "New raid", 90, function()
     NS.NewSession(titleBox:GetText() or "")
     titleBox:ClearFocus()
@@ -1010,16 +1016,8 @@ raidHelp:SetWordWrap(true)
 local resLabel = Text(rpg, "GameFontNormal")
 resLabel:SetPoint("TOPLEFT", 0, -62)
 resLabel:SetWidth(400)
-local resBox = CreateFrame("EditBox", nil, rpg, "InputBoxTemplate")
-resBox:SetSize(220, 20)
+local resBox = NS.InputBox(rpg, 220, "Shift-click an item, or type its ID")
 resBox:SetPoint("TOPLEFT", 8, -84)
-resBox:SetAutoFocus(false)
-resBox.hint = Text(resBox, "GameFontDisableSmall")
-resBox.hint:SetPoint("LEFT", 2, 0)
-resBox.hint:SetText("Shift-click an item, or type its ID")
-resBox:SetScript("OnTextChanged", function(self)
-    self.hint:SetShown(self:GetText() == "")
-end)
 local function doReserve()
     local text = resBox:GetText() or ""
     local id = tonumber(text) or Rules.ItemIDOf(NS.ItemStringOf(text) or "")
@@ -1252,7 +1250,11 @@ local function refreshRaid(S)
     local parts = {}
     for name, list in pairs(NS.DB.owed) do
         for _, s in ipairs(list) do
-            parts[#parts + 1] = NS.ColorName(name) .. ": " .. NS.LinkOf(s)
+            local left = Loot.TradeTimeLeft(s)
+            parts[#parts + 1] = NS.ColorName(name)
+                .. ": "
+                .. NS.LinkOf(s)
+                .. (left and (" |cffffd100(" .. left .. " left)|r") or "")
         end
     end
     owedText:SetShown(#parts > 0)
@@ -1361,6 +1363,7 @@ local delBtn = Button(hp, "Delete raid", 100, function()
     if histSel then
         NS.DB.history[histSel] = nil
         histSel = nil
+        NS.historyGen = NS.historyGen + 1
         NS.Refresh()
     end
 end)
@@ -1448,21 +1451,15 @@ local catBoss -- { instID, bossKey } of the selected boss
 local catItem -- itemString of the selected item
 local expanded = {} -- instID -> true when its bosses are listed
 
-local search = CreateFrame("EditBox", nil, cp, "InputBoxTemplate")
-search:SetSize(230, 20)
+-- A search scans the whole catalogue, so it waits until typing pauses.
+local searchTimer
+local search = NS.InputBox(cp, 230, "Search all items", function()
+    if searchTimer then
+        searchTimer:Cancel()
+    end
+    searchTimer = C_Timer.NewTimer(0.25, NS.Refresh)
+end)
 search:SetPoint("TOPLEFT", 8, -2)
-search:SetAutoFocus(false)
-search.hint = Text(search, "GameFontDisableSmall")
-search.hint:SetPoint("LEFT", 2, 0)
-search.hint:SetText("Search all items")
-search:SetScript("OnTextChanged", function(self)
-    self.hint:SetShown(self:GetText() == "")
-    NS.Refresh()
-end)
-search:SetScript("OnEscapePressed", function(self)
-    self:SetText("")
-    self:ClearFocus()
-end)
 
 local tree = List(cp, 260, 330, { 220 }, false, function(row)
     if row.bossKey == nil then
@@ -1688,8 +1685,14 @@ statsList.onEnter = function(row, name)
     GameTooltip:Show()
 end
 
+-- Worked out again only when history changes, not on every redraw (a
+-- window resize redraws every frame).
+local statsCache, statsGen
 local function refreshStats()
-    local stats = Rules.PlayerStats(NS.DB.history)
+    if statsGen ~= NS.historyGen then
+        statsCache, statsGen = Rules.PlayerStats(NS.DB.history), NS.historyGen
+    end
+    local stats = statsCache
     local names = {}
     for name in pairs(stats) do
         names[#names + 1] = name
@@ -1846,7 +1849,6 @@ local function refreshNow()
     if NS.UpdateMinimapGlow then
         NS.UpdateMinimapGlow()
     end
-    Loot.PaintBags() -- the owed list may have changed
     -- A new item up for rolls pops the window open on the Loot page.
     local active = S and S.active
     if active and active ~= lastActive then

@@ -33,7 +33,8 @@ local ENTRIES = {
     {
         q = "Does everyone need the addon?",
         a = "It works best if they do. Players without it can still type /roll and their rolls count, "
-            .. "but they can't reserve, click I want this, or report their spec.",
+            .. "and they can reserve by whispering the raid host: !rlc reserve, then shift-click the item "
+            .. "(or type its item ID). They can't click I want this or report their spec.",
     },
 
     { section = "rolling", title = "Rolling for loot" },
@@ -118,7 +119,9 @@ local ENTRIES = {
             .. "only they roll. Winning another item first does not cost you your reserve: "
             .. "it still pays out when it drops, as your second item.\n\n"
             .. "Reserves close when the raid starts or when the first item is put up, whichever comes first. "
-            .. "You must be in the group when it drops.",
+            .. "You must be in the group when it drops.\n\n"
+            .. "No addon? Whisper the raid host: !rlc reserve, then shift-click the item (or type its ID). "
+            .. "The host's addon whispers back.",
         tab = "raid",
     },
     {
@@ -176,7 +179,9 @@ local ENTRIES = {
         a = "Set loot to Master Looter, with the host or an officer as master looter. The master "
             .. "looter's addon gives the item straight from the loot window. If the window is closed, "
             .. "it's put in the trade window the next time they trade the winner. "
-            .. "The Raid tab lists what is still to trade, and those items glow green in your bags. "
+            .. "If the give fails (full bags, a unique item, out of range), it goes on that list too.\n\n"
+            .. "The Raid tab lists what is still to trade, with the trade time left on bound items, "
+            .. "and those items glow green in your bags. "
             .. "Trade the winner and the item comes off the list, even if you put it in the window "
             .. "yourself. /rlc owed clears that list.\n\n"
             .. "History marks an item delivered when the host or an officer trades it to the winner, "
@@ -259,6 +264,7 @@ local ENTRIES = {
         q = "Will I know when there is a new version?",
         a = "Yes. When someone in your guild or group has a newer version, you get one line in chat. "
             .. "Click the green Click here in it: it shows the download link, ready to copy into your browser. "
+            .. "You also get it if the raid host's addon sends something yours does not know. "
             .. "On the Raid tab, hover a player to see their version; old ones show as old addon.",
     },
     {
@@ -311,21 +317,10 @@ for _, e in ipairs(ENTRIES) do
     end
 end
 
-local search = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
-search:SetSize(230, 20)
-search:SetPoint("TOPLEFT", 8, -2)
-search:SetAutoFocus(false)
-local hint = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-hint:SetPoint("LEFT", 2, 0)
-hint:SetText("Search help")
-search:SetScript("OnTextChanged", function(self)
-    hint:SetShown(self:GetText() == "")
+local search = NS.InputBox(p, 230, "Search help", function()
     NS.RefreshHelp()
 end)
-search:SetScript("OnEscapePressed", function(self)
-    self:SetText("")
-    self:ClearFocus()
-end)
+search:SetPoint("TOPLEFT", 8, -2)
 
 local sf = CreateFrame("ScrollFrame", nil, p, "UIPanelScrollFrameTemplate")
 sf:SetPoint("TOPLEFT", 4, -30)

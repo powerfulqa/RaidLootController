@@ -185,5 +185,20 @@ do
     check(#C.Find(cat, 16800) == 1, "a forgotten boss drops out of the lookup")
 end
 
+-- ---- old kill ids are dropped -----------------------------------------------
+do
+    local cat = {}
+    C.Record(cat, MC, "Molten Core", 0, "Trash", "item:17010", "Creature-0-1", 100)
+    C.Record(cat, MC, "Molten Core", 0, "Trash", "item:17011", "Creature-0-2", 900)
+    C.TrimKills(cat, 500)
+    local items = cat[MC].b[0].i
+    check(items[17010].k == nil and items[17011].k ~= nil, "kill ids go only from items last seen before the cutoff")
+    check(items[17010].n == 1, "trimming keeps the count")
+    check(
+        C.Record(cat, MC, "Molten Core", 0, "Trash", "item:17010", "Creature-0-3", 1000),
+        "a trimmed item records again"
+    )
+end
+
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

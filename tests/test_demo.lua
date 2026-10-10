@@ -38,6 +38,8 @@ NS.RefreshRoster, NS.Refresh, NS.Print = function() end, function() end, functio
 NS.Show = function()
     shown = true
 end
+NS.historyGen = 0
+NS.Loot = { OwedChanged = function() end }
 
 assert(loadfile("RLC_Demo.lua"))("RaidLootController", NS)
 

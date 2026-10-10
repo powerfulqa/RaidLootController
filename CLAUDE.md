@@ -115,8 +115,8 @@ only from the session host (and `NEW` only from a leader or assistant).
     wand, relic assume slot 18), `C_Item.GetItemStatDelta` returns readable
     deltas for Classic-era items, and Shift on a Loot tab item shows the
     game's compare tooltip.
-16. Commands tab: Run buttons fire, Type opens chat prefilled
-    (`ChatFrameUtil.OpenChat`), and the list changes as you become an
+16. Commands tab: Run buttons fire, How prints what to type (opening chat
+    from addon code would taint it), and the list changes as you become an
     officer or host. Announce toggle and owed Clear work on the Raid tab.
 17. New in this round: the window resize grip and saved size; tooltip lines
     via `TooltipDataProcessor` (GameTooltip and ItemRefTooltip); bag marks via
@@ -127,6 +127,22 @@ only from the session host (and `NEW` only from a leader or assistant).
     `C_PartyInfo.GetLootMethod`'s party/raid ID) and their addon gives the
     item. Also: whether Forever lets a player trade bound (BoP) raid loot to
     others at the kill, which the non-Master-Looter path depends on.
+19. New in v0.5.0, all unmeasured:
+    - `canaccessvalue(nil)`: `NS.CanRead` skips nils, so it does not matter
+      unless a nil is ever secret.
+    - Master loot confirmation: `LOOT_SLOT_CLEARED` fires after a
+      successful `GiveMasterLoot` (if not, every give lands on the owed list
+      at `LOOT_CLOSED`), and a failed give raises `UI_ERROR_MESSAGE` with
+      `ERR_LOOT_MASTER_INV_FULL` / `_UNIQUE_ITEM` / `_OTHER`.
+    - `ERR_TRADE_COMPLETE` arrives through `UI_INFO_MESSAGE` (if not, owed
+      items never clear after a trade).
+    - `BIND_TRADE_TIME_REMAINING` exists and its line is on
+      `C_TooltipInfo.GetBagItem` for a fresh BoP drop (also answers 18).
+    - Staggered trade fill (`C_Timer` per item) still places items.
+    - Whisper reserve: `CHAT_MSG_WHISPER` sender canonicalises to a roster
+      name, and a `WHISPER` reply to that raw sender spelling arrives.
+    - Catalogue lanes pause during encounters
+      (`C_InstanceEncounter.IsEncounterInProgress`).
 
 ## Dev tooling
 

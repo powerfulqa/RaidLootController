@@ -48,11 +48,6 @@ local RAIDERS = {
     { "Sel", "DRUID.BALANCE" },
 }
 
-local CLASS_ID = {}
-for id, token in pairs(Rules.CLASS_TOKEN) do
-    CLASS_ID[token] = id
-end
-
 local BARROW, HYJAL = 2001, 2002 -- made-up instance keys for the demo catalogue
 
 local function full(short)
@@ -68,7 +63,7 @@ function Demo.AddRoster(roster)
     for _, r in ipairs(RAIDERS) do
         local token = classOf(r[2])
         roster[full(r[1])] = {
-            classID = CLASS_ID[token],
+            classID = Rules.CLASS_ID[token],
             classFile = token,
             lead = false,
             assist = r[1] == "Lyssa",
@@ -199,7 +194,8 @@ function Demo.Toggle()
         Demo.active = false
         NS.DB = RaidLootControllerDB
         NS.RefreshRoster()
-        NS.Refresh()
+        NS.historyGen = NS.historyGen + 1
+        NS.Loot.OwedChanged() -- also redraws
         NS.Print("Demo mode off. Your real raid data is back.")
         return
     end
@@ -243,9 +239,11 @@ function Demo.Toggle()
     for _, S in ipairs(past) do
         db.history[S.id] = S
     end
-    db.history[db.session.id] = CopyTable(db.session)
+    db.history[db.session.id] = db.session
     db.catalog = buildCatalog(now)
     NS.RefreshRoster()
+    NS.historyGen = NS.historyGen + 1
+    NS.Loot.OwedChanged()
     NS.Show()
     NS.Print("Demo mode on: a made-up raid to look around. Nothing is sent or saved. /rlc demo again to leave.")
     NS.Print("Real Forever raids and bosses, but which boss drops which item is made up.")

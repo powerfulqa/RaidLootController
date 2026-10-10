@@ -26,6 +26,24 @@ function NS.Print(fmt, ...)
     DEFAULT_CHAT_FRAME:AddMessage("|cffff8800RaidLoot|r " .. text)
 end
 
+-- Whether every value given can be read. On this client some event payloads
+-- (chat senders, boss names during an encounter) can be secret, and
+-- comparing or sending one throws. canaccessvalue takes ONE value, so each
+-- is checked on its own; nils are skipped (whether it takes nil is
+-- unmeasured).
+function NS.CanRead(...)
+    if not canaccessvalue then
+        return true
+    end
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if v ~= nil and not canaccessvalue(v) then
+            return false
+        end
+    end
+    return true
+end
+
 -- ---- versions --------------------------------------------------------------
 -- Other players' addon versions, heard on the catalogue "done asking"
 -- message every client sends its guild at login and its group on joining.
@@ -58,6 +76,15 @@ function NS.NoteVersion(name, v)
     if not toldNewer and Rules.VersionNewer(v, NS.VERSION) then
         toldNewer = true
         NS.Print("|cffffff00A newer version (%s) is out|r; you have %s. %s to get it.", v, NS.VERSION, UPDATE_LINK)
+    end
+end
+
+-- The host sent something this version does not know: say so once, since
+-- this copy of the raid is now missing it.
+function NS.TellOutdated()
+    if not toldNewer then
+        toldNewer = true
+        NS.Print("|cffffff00The raid host has a newer version|r; you have %s. %s to get it.", NS.VERSION, UPDATE_LINK)
     end
 end
 
@@ -168,17 +195,19 @@ local SEP = Constants
     or " "
 
 -- Canonical name and first name of a unit, or nil.
+local FIRST_NAME = "^([^" .. SEP:gsub("%p", "%%%0") .. "]+)"
+
 local function unitIdentity(unit)
     local first, second = UnitName(unit)
     -- Unit names can be secret on this client: comparing one throws.
-    if canaccessvalue and not (canaccessvalue(first) and canaccessvalue(second)) then
+    if not NS.CanRead(first, second) then
         return nil
     end
     if type(first) ~= "string" or first == "" then
         return nil
     end
     local _, unitRealm = UnitFullName(unit)
-    if canaccessvalue and not canaccessvalue(unitRealm) then
+    if not NS.CanRead(unitRealm) then
         unitRealm = nil
     end
     local surnames = RegionalUniqueNamesEnabled and RegionalUniqueNamesEnabled()
@@ -188,7 +217,7 @@ local function unitIdentity(unit)
     end
     unitRealm = (type(unitRealm) == "string" and unitRealm ~= "" and unitRealm ~= second) and unitRealm or realm()
     unitRealm = unitRealm:gsub("[%s%-]", "")
-    return display .. "-" .. unitRealm, (display:match("^([^" .. SEP:gsub("%p", "%%%0") .. "]+)") or display)
+    return display .. "-" .. unitRealm, (display:match(FIRST_NAME) or display)
 end
 NS.UnitIdentity = unitIdentity
 
@@ -340,9 +369,19 @@ function NS.IsOfficer()
     return S ~= nil and Rules.IsOfficer(S, NS.Me())
 end
 
+-- Bumped whenever saved history changes, so views built from it (Stats,
+-- the tooltip's "You won this") rebuild only then.
+NS.historyGen = 0
+
+-- History holds the live session table itself, not a copy: NEW always
+-- makes a fresh table, so an old raid's entry never changes again.
 local function saveHistory(S)
     local H = NS.DB.history
-    H[S.id] = CopyTable(S)
+    local isNew = H[S.id] == nil
+    H[S.id] = S
+    if not isNew then
+        return
+    end
     local ids = {}
     for id, rec in pairs(H) do
         ids[#ids + 1] = { id = id, t = rec.created or 0 }
@@ -359,26 +398,29 @@ end
 
 -- Apply ops to our copy. The host also broadcasts them. Returns how many
 -- ops did not fit our copy (a sign we missed some).
-local handedOver = {} -- session id .. item key -> true, this session only
+local seenWin = {} -- session id .. item key -> true: that win was news once
 function NS.ApplyOps(ops, broadcast)
     local S = NS.S()
-    local changedHistory = false
+    local changedHistory, gotNew = false, false
     local rejected = 0
     for _, op in ipairs(ops) do
         -- An UNDO takes the win back, so the old winner is no longer owed it.
         local undone = op[1] == "UNDO" and S and S.items[op[2]]
         undone = undone and undone.winner and { who = undone.winner, s = undone.itemString }
-        local newS = Rules.Apply(S, op)
+        local newS, why = Rules.Apply(S, op)
         local owedList = undone and newS and NS.DB.owed[undone.who]
         if owedList then
             for i, s in ipairs(owedList) do
                 if s == undone.s then
                     table.remove(owedList, i)
+                    NS.Loot.OwedChanged()
                     break
                 end
             end
         end
-        if not newS then
+        if why == "unknown op" then
+            NS.TellOutdated() -- not a missed op: asking for a resync would not help
+        elseif not newS then
             rejected = rejected + 1
         else
             S = newS
@@ -387,22 +429,25 @@ function NS.ApplyOps(ops, broadcast)
                 NS.Net.Queue(op)
             end
             local k = op[1]
+            gotNew = gotNew or k == "NEW"
             if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" then
                 changedHistory = true
             end
-            if k == "AWARD" then
+            local winKey = S.id .. "\t" .. tostring(op[2])
+            if k == "UNDO" then
+                seenWin[winKey] = nil -- a later win of this item is news again
+            elseif k == "AWARD" and not seenWin[winKey] then
+                seenWin[winKey] = true
                 local item = S.items[op[2]]
-                -- Only fresh wins are news; a snapshot replays old ones.
-                local fresh = (item.awardedAt or 0) >= GetServerTime() - 120
-                if fresh then
+                -- Only fresh wins are news; a snapshot replays old ones,
+                -- and one we already saw stays quiet.
+                if (item.awardedAt or 0) >= GetServerTime() - 120 then
                     NS.Print("%s won %s.", NS.ColorName(op[3]), NS.LinkOf(item.itemString))
-                end
-                -- The master looter's addon hands the item over (the host's
-                -- when loot is not on Master Looter). Once per win: a
-                -- resync replays recent wins.
-                if fresh and NS.Loot and NS.Loot.IAmGiver() and not handedOver[S.id .. op[2]] then
-                    handedOver[S.id .. op[2]] = true
-                    NS.Loot.Deliver(item)
+                    -- The master looter's addon hands the item over (the
+                    -- host's when loot is not on Master Looter).
+                    if NS.Loot and NS.Loot.IAmGiver() then
+                        NS.Loot.Deliver(item)
+                    end
                 end
             end
         end
@@ -410,12 +455,14 @@ function NS.ApplyOps(ops, broadcast)
     if changedHistory and S then
         saveHistory(S)
     end
+    NS.historyGen = NS.historyGen + 1 -- history holds the live session: any op may change it
     if NS.Refresh then
         NS.Refresh()
     end
-    -- A new or replayed session may not have our spec yet.
-    if S and NS.Specs and not broadcast then
-        NS.Specs.Report()
+    -- A new or replayed session may not have our spec yet. Asked once the
+    -- rest of a snapshot (with the specs) has had time to arrive.
+    if gotNew and NS.Specs and not broadcast then
+        C_Timer.After(5, NS.Specs.Report)
     end
     return rejected
 end
@@ -466,8 +513,10 @@ end
 
 local lastSyncFrom, lastErrTo = {}, {}
 
--- The host runs a request. `who` is the requester's full name.
-function NS.HandleRequest(who, req)
+-- The host runs a request. `who` is the requester's full name. Returns
+-- true when it went through, else nil and the reason (if any). `quiet`:
+-- the caller tells the player itself (they have no addon to hear it).
+function NS.HandleRequest(who, req, quiet)
     local S = NS.S()
     if not NS.IsHost() then
         return
@@ -497,7 +546,7 @@ function NS.HandleRequest(who, req)
         if NS.debug and req[1] == "ROLLSEEN" then
             NS.Print("debug: roll from %s refused: %s", tostring(req[2]), tostring(note))
         end
-        if note and to then
+        if note and to and not quiet then
             if to == NS.Me() then
                 NS.Print(note)
             elseif GetTime() - (lastErrTo[to] or -60) >= 5 then
@@ -507,13 +556,14 @@ function NS.HandleRequest(who, req)
                 NS.Net.Queue({ "ERR", to, note })
             end
         end
-        return
+        return nil, note
     end
     NS.ApplyOps(ops, true)
     if note then
         local item = req[2] and S.items[req[2]]
         NS.Announce(note, item and item.itemString)
     end
+    return true
 end
 
 -- Every button and slash command goes through here.
@@ -540,7 +590,9 @@ function NS.NewSession(title)
     local me = NS.Me()
     local t = GetServerTime()
     NS.ApplyOps({ { "NEW", me .. "-" .. t, me, title ~= "" and title or (GetInstanceInfo() or "Raid"), t } }, true)
-    NS.Announce("New raid session. Open /rlc to reserve an item before the raid starts.")
+    NS.Announce(
+        "New raid session. Open /rlc to reserve an item before the raid starts. No addon? Whisper me: !rlc reserve <item>"
+    )
     NS.Specs.Report(true)
 end
 
@@ -555,9 +607,14 @@ function NS.On(event, fn)
     frame:RegisterEvent(event)
 end
 
+-- One handler failing (a secret value, an unmeasured API) must not stop
+-- the others for the same event; its error still reaches the error frame.
 frame:SetScript("OnEvent", function(_, event, ...)
     for _, fn in ipairs(handlers[event]) do
-        fn(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            geterrorhandler()(err)
+        end
     end
 end)
 
@@ -588,7 +645,39 @@ NS.On("ADDON_LOADED", function(name)
     local S = DB.session
     if S and S.phase ~= "ended" and GetServerTime() - (tonumber(S.created) or 0) > STALE then
         S.phase, S.ended, S.active = "ended", GetServerTime(), nil
-        saveHistory(S)
+    end
+    if S then
+        saveHistory(S) -- history and session are one table again after a reload
+    end
+    -- Saved data only keeps what is still used. Worn gear on finished items
+    -- (saved before v0.5.0), catalogue kill ids older than a day, empty owed
+    -- lists, and class colours of players in no saved raid.
+    local keep = {}
+    for _, rec in pairs(DB.history) do
+        for _, it in pairs(rec.items or {}) do
+            if it.state == "done" or it.state == "cancelled" then
+                it.worn = nil
+            end
+        end
+        for who in pairs(Rules.SeenIn(rec)) do
+            keep[who] = true
+        end
+        keep[rec.host or ""] = true
+        for _, e in ipairs(rec.log or {}) do
+            keep[e.by], keep[e.name or ""] = true, true
+        end
+    end
+    NS.Catalog.TrimKills(DB.catalog, GetServerTime() - 86400)
+    for who, list in pairs(DB.owed) do
+        if #list == 0 then
+            DB.owed[who] = nil
+        end
+        keep[who] = true
+    end
+    for who in pairs(DB.classes) do
+        if not keep[who] then
+            DB.classes[who] = nil
+        end
     end
 end)
 
@@ -610,9 +699,43 @@ local function onRoster()
 end
 NS.On("PLAYER_ENTERING_WORLD", onRoster)
 NS.On("GROUP_ROSTER_UPDATE", onRoster)
+-- Item data arrives in bursts (a catalogue search asks for many items at
+-- once): redraw once per burst, not once per item.
+local itemInfoPending = false
 NS.On("GET_ITEM_INFO_RECEIVED", function()
-    if NS.Refresh then
-        NS.Refresh()
+    if not itemInfoPending then
+        itemInfoPending = true
+        C_Timer.After(0.25, function()
+            itemInfoPending = false
+            NS.Refresh()
+        end)
+    end
+end)
+
+-- Reserving by whisper, for raiders without the addon: "!rlc reserve
+-- <item link or ID>" to the host. It runs as their own RES request, so the
+-- rules are the same; the answer goes back by whisper, at most one per
+-- player per 5 s.
+local lastWhisperTo = {}
+NS.On("CHAT_MSG_WHISPER", function(text, sender)
+    if not NS.IsHost() or not NS.CanRead(text, sender) or type(text) ~= "string" then
+        return
+    end
+    local cmd, arg = text:match("^!rlc%s*(%a*)%s*(.-)%s*$")
+    local who = cmd and NS.Canon(sender)
+    if not who or not NS.roster[who] or GetTime() - (lastWhisperTo[who] or -60) < 5 then
+        return -- not a command, or not from someone in the group
+    end
+    lastWhisperTo[who] = GetTime()
+    local reply
+    local id = tonumber(arg) or Rules.ItemIDOf(NS.ItemStringOf(arg) or "")
+    if cmd:lower() == "reserve" and id then
+        local ok, note = NS.HandleRequest(who, { "RES", id }, true)
+        reply = ok and ("Reserved " .. NS.LinkOf("item:" .. id) .. ".") or note
+    end
+    reply = reply or "Reserve with: !rlc reserve <shift-click the item, or its item ID>"
+    if not C_ChatInfo.InChatMessagingLockdown() then
+        C_ChatInfo.SendChatMessage(reply, "WHISPER", nil, sender)
     end
 end)
 
@@ -744,7 +867,7 @@ NS.Commands = {
         fn = function()
             wipe(NS.DB.owed)
             NS.Print("Cleared the list of items still to trade.")
-            NS.Refresh()
+            NS.Loot.OwedChanged()
         end,
     },
     {

@@ -175,10 +175,7 @@ Specs.TELLING = set("STR", "AGI", "INT", "SPI", "AP", "SP", "HEAL", "DEF")
 -- none: hunters use intellect, so it decides nothing on its own.
 local GROUPS = { set("STR", "AGI", "AP"), set("SP", "HEAL"), set("DEF") }
 
-local CLASS_ID = {}
-for id, token in pairs(Rules.CLASS_TOKEN) do
-    CLASS_ID[token] = id
-end
+local CLASS_ID = Rules.CLASS_ID
 
 -- item = { classID, subclassID, equipLoc, reqLevel, stats = {KIND = true},
 --          classMask }. Returns the set of suited spec keys (possibly empty).
@@ -306,7 +303,7 @@ local EQUIP_PHRASES = {
     { "block", "DEF" },
 }
 
-local function readStats(itemString)
+local function readStats(itemString, data)
     local kinds = {}
     local _, link = C_Item.GetItemInfo(itemString)
     for key in pairs(C_Item.GetItemStats(link or itemString) or {}) do
@@ -314,7 +311,6 @@ local function readStats(itemString)
             kinds[STAT_KEYS[key]] = true
         end
     end
-    local data = C_TooltipInfo.GetHyperlink(itemString)
     for _, line in ipairs(data and data.lines or {}) do
         local text = type(line.leftText) == "string" and line.leftText:lower()
         if text and text:find("^equip:") then
@@ -332,7 +328,8 @@ end
 -- "Classes:" line, and the suited specs as a list. Items that are not
 -- gear get no spec limit; an officer can always change it.
 function Specs.DescribeItem(itemString)
-    local mask = NS.Loot.TooltipClassMask(itemString)
+    local data = C_TooltipInfo.GetHyperlink(itemString) -- read once for both uses
+    local mask = NS.Loot.TooltipClassMask(itemString, data)
     local _, _, _, equipLoc, _, classID, subclassID = C_Item.GetItemInfoInstant(itemString)
     if classID ~= 2 and classID ~= 4 then
         return mask, ""
@@ -343,10 +340,10 @@ function Specs.DescribeItem(itemString)
         subclassID = subclassID,
         equipLoc = equipLoc,
         reqLevel = reqLevel,
-        stats = readStats(itemString),
+        stats = readStats(itemString, data),
         classMask = mask,
     })
-    return mask, Rules.SpecsToCSV(suited)
+    return mask, Rules.SetToCSV(suited)
 end
 
 -- ---- the player's own spec -------------------------------------------------
@@ -372,7 +369,7 @@ local function topTalentTab()
     for _, info in ipairs(C_Traits.GetGroupCurrencyInfo(configID, ids) or {}) do
         local c = info.currencyInfos and info.currencyInfos[1]
         local n = c and c.spent
-        if canaccessvalue and not canaccessvalue(n) then
+        if not NS.CanRead(n) then
             return nil
         end
         spent[info.traitNodeGroupID] = n
@@ -393,8 +390,13 @@ local function myClassToken()
 end
 
 -- Spec key from talents, or nil. pcall: an unmeasured call chain must never
--- break the addon; failing just means the player picks by hand.
+-- break the addon; failing just means the player picks by hand. Kept until
+-- talents change; a nil (data not ready at login) is read again next time.
+local detected
 function Specs.Detect()
+    if detected then
+        return detected
+    end
     local ok, tab = pcall(topTalentTab)
     local class = myClassToken()
     if not ok or not tab or not class then
@@ -402,7 +404,8 @@ function Specs.Detect()
     end
     for _, spec in ipairs(Specs.LIST) do
         if spec.class == class and spec.tree == tab then
-            return spec.key -- the first match: cat for the Feral tab
+            detected = spec.key -- the first match: cat for the Feral tab
+            return detected
         end
     end
 end
@@ -455,6 +458,7 @@ function Specs.Report(force)
 end
 
 NS.On("TRAIT_CONFIG_UPDATED", function()
+    detected = nil
     Specs.Report(true)
 end)
 NS.On("PLAYER_ENTERING_WORLD", function()

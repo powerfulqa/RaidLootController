@@ -13,7 +13,7 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. During the beta that folder is `World of Warcraft\_classic_beta_\Interface\AddOns`.
 3. Restart the game (or `/reload`) and type `/rlc`.
 
-Everyone in the raid should install it. Players without it can still roll with `/roll`, but can't reserve or click I want this.
+Everyone in the raid should install it. Players without it can still roll with `/roll`, and reserve by whispering the raid host `!rlc reserve <item or ID>`, but can't click I want this.
 
 > **Set loot to Master Looter.** The addon decides who gets each item, and the master looter's addon hands it over straight from the loot window. Make the master looter the raid host or an officer, with the addon installed.
 >
@@ -30,11 +30,11 @@ Everyone in the raid should install it. Players without it can still roll with `
 - **Upgrade info.** Officers see what each player wears in that slot and the stat change the item would give them.
 - **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action.
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
-- **Delivery tracking.** Items still to trade are listed on the Raid tab and glow green in the host's bags. Trading the winner takes the item off the list, and History marks it delivered.
+- **Delivery tracking.** Items still to trade are listed on the Raid tab, with the trade time left on bound items, and glow green in the giver's bags. A master loot give that fails (full bags, unique item, out of range) goes on that list too. Trading the winner takes the item off the list, and History marks it delivered.
 - **Stats.** Every player from your saved raids: raids, items won, free rolls and their last win, to check that loot is spread fairly.
 - **Copy as text.** Copy a raid's results from the History tab to paste into Discord.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one (`/rlc tooltip` turns them off).
-- **Update notice.** When a guild or group member has a newer version you get one chat line with a link to the download, and the Raid tab flags old versions.
+- **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.
 
 ## How a raid runs
 
@@ -106,6 +106,7 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc` | Open or close the window |
 | `/rlc add <item>` | Put an item up for rolls (officers) |
 | `/rlc reserve <item or ID>` | Reserve an item before the raid starts |
+| `!rlc reserve <item or ID>` | The same, whispered to the raid host, for players without the addon |
 | `/rlc sync` | Fetch the session from the raid host |
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |

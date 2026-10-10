@@ -205,6 +205,21 @@ function Catalog.Record(cat, instID, instName, bossKey, bossName, itemString, ki
     return true
 end
 
+-- Kill ids only stop one kill counting twice, which matters for minutes.
+-- Drop them from items last seen before `cutoff`: trash ids are corpse
+-- GUIDs, and 20000 records of them would bloat saved data.
+function Catalog.TrimKills(cat, cutoff)
+    for _, inst in pairs(cat) do
+        for _, boss in pairs(inst.b) do
+            for _, rec in pairs(boss.i) do
+                if rec.t < cutoff then
+                    rec.k = nil
+                end
+            end
+        end
+    end
+end
+
 -- Per instance: entries, sum of drop counts, sum of kills.
 function Catalog.Digest(cat)
     local out = {}
@@ -343,10 +358,8 @@ local function killKey(encID)
 end
 
 NS.On("ENCOUNTER_END", function(encID, encName, _, _, success)
-    if success ~= 1 then
-        return
-    end
-    if canaccessvalue and not canaccessvalue(encID, encName) then
+    -- Checked before any comparison: comparing a secret value throws.
+    if not NS.CanRead(encID, encName, success) or success ~= 1 then
         return
     end
     local instID, instName = where()
@@ -366,27 +379,39 @@ local function attribution(instID, sourceGUID)
     return 0, "Trash", sourceGUID or ("T" .. GetServerTime())
 end
 
+-- Drops heard from other raiders, "itemString killId" -> true, so only one
+-- looter broadcasts each drop.
+local heardDrop = {}
+
 NS.On("LOOT_OPENED", function()
     local instID, instName = where()
     if not instID then
         return
     end
     local now = GetServerTime()
-    for slot = 1, GetNumLootItems() do
-        local s = NS.ItemStringOf(GetLootSlotLink(slot))
-        local _, _, _, _, quality = GetLootSlotInfo(slot)
-        if s and quality and quality >= NS.DB.minQuality then
-            local bossKey, bossName, killId = attribution(instID, GetLootSourceInfo(slot))
-            if Catalog.Record(cat(), instID, instName, bossKey, bossName, s, killId, now) then
-                NS.Net.QueueCatalog({ "CD", instID, instName, bossKey, bossName, s, killId, now }, "GROUP")
-            end
+    local news = {}
+    for _, e in ipairs(NS.Loot.LootSlots()) do
+        local bossKey, bossName, killId = attribution(instID, e.source)
+        if Catalog.Record(cat(), instID, instName, bossKey, bossName, e.itemString, killId, now) then
+            news[#news + 1] = { "CD", instID, instName, bossKey, bossName, e.itemString, killId, now }
         end
+    end
+    -- Under group loot the whole raid opens the corpse. Each waits a random
+    -- moment and stays quiet if someone else already sent the drop.
+    if #news > 0 then
+        C_Timer.After(math.random() * 3, function()
+            for _, op in ipairs(news) do
+                if not heardDrop[op[6] .. " " .. op[7]] then
+                    NS.Net.QueueCatalog(op, "GROUP")
+                end
+            end
+        end)
     end
     NS.Refresh()
 end)
 
 NS.On("ENCOUNTER_LOOT_RECEIVED", function(encID, _, itemLink)
-    if canaccessvalue and not canaccessvalue(encID, itemLink) then
+    if not NS.CanRead(encID, itemLink) then
         return
     end
     local instID, instName = where()
@@ -488,6 +513,8 @@ function Catalog.OnMessage(ops, dest, sender)
                 if instID then
                     answeredAt[dest .. instID] = GetTime()
                 end
+            elseif kind == "CD" then
+                heardDrop[tostring(op[6]) .. " " .. tostring(op[7])] = true
             end
             changed = Catalog.ApplyOp(cat(), op) or changed
         end

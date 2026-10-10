@@ -336,6 +336,27 @@ do
     check(not client.items["1"].worn[A], "taking a want back clears the worn gear")
     check(not R.ValidWorn("item:1,item:2,item:3"), "at most two worn items")
     check(not R.ValidWorn(string.rep("item:1", 30)), "worn value is length capped")
+    -- Worn gear is advice for a live roll: a finished item drops it, on
+    -- every copy, so saved history and snapshots never carry it.
+    act(A, { "WANT", "1", 1, "item:900" })
+    act(HOST, { "AWARD", "1", A })
+    check(host.items["1"].worn == nil and client.items["1"].worn == nil, "a won item drops the worn gear")
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "START", "2" })
+    act(B, { "WANT", "2", 1, "item:902" })
+    act(HOST, { "CANCEL", "2" })
+    check(client.items["2"].worn == nil, "a removed item drops the worn gear")
+    check(client.items["2"].wants[B], "removing an item keeps who wanted it")
+end
+
+-- ---- comma lists -----------------------------------------------------------
+do
+    local set = R.CSVToSet("Ann-Realm,junk,Bob-Realm")
+    check(set["Ann-Realm"] and set["Bob-Realm"] and not set.junk, "name list drops junk")
+    local specs = R.CSVToSpecs("ROGUE.COMBAT,Ann-Realm")
+    check(specs["ROGUE.COMBAT"] and not specs["Ann-Realm"], "spec list checks specs, not names")
+    check(R.CSVToSet("junk") == nil and R.CSVToSpecs("") == nil, "nothing valid: nil")
+    check(R.CLASS_ID.ROGUE == 4 and R.CLASS_ID.DRUID == 11, "class token -> classID")
 end
 
 -- ---- lockout, open-to-all, unlock -----------------------------------------

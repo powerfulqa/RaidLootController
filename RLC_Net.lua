@@ -85,6 +85,10 @@ local PERMANENT = {
     [RESULT.InvalidChatType or 4] = true,
     [RESULT.TargetRequired or 6] = true,
     [RESULT.InvalidChannel or 7] = true,
+    -- The server disagrees with IsInGroup / IsInGuild (mid group change):
+    -- retrying the same message would only stall the lane.
+    [RESULT.NotInGroup or 5] = true,
+    [RESULT.NotInGuild or 10] = true,
 }
 
 -- Send one message from a lane if it can go now. Returns nothing.
@@ -99,6 +103,10 @@ local function serve(lane)
         return
     end
     if tokens[lane.prefix] < 1 or C_ChatInfo.InChatMessagingLockdown() then
+        return
+    end
+    -- Catalogue sharing can wait out a fight; live rolls cannot.
+    if lane.prefix == CAT_PREFIX and (InCombatLockdown() or C_InstanceEncounter.IsEncounterInProgress()) then
         return
     end
     local msg = Rules.Pack(queue, LIMIT, 1)[1]
@@ -209,7 +217,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
     if (prefix ~= PREFIX and prefix ~= CAT_PREFIX) or demo() then
         return
     end
-    if canaccessvalue and not canaccessvalue(msg, sender) then
+    if not NS.CanRead(msg, sender) then
         return
     end
     sender = NS.Canon(sender)

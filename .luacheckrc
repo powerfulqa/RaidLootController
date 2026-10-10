@@ -21,15 +21,17 @@ globals = {
 }
 read_globals = {
     "C_AddOns", "C_ChatInfo", "C_ClassColor", "C_Container", "C_Item", "C_Timer", "C_TooltipInfo",
-    "CANCEL", "ChatEdit_InsertLink", "ChatFrameUtil", "ClearCursor", "ClickTradeButton", "CopyTable",
+    "ChatEdit_InsertLink", "ChatFrameUtil", "ClearCursor", "ClickTradeButton", "CopyTable",
     "CreateFrame", "DEFAULT_CHAT_FRAME", "Enum", "ERR_TRADE_COMPLETE", "GameTooltip", "GameTooltip_Hide",
-    "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetInventoryItemLink", "ChatFrame_OpenChat", "PlaySound", "SOUNDKIT", "GameTooltip_ShowCompareItem", "TooltipUtil", "GetLootSlotInfo", "GetLootSlotLink",
+    "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetInventoryItemLink", "PlaySound", "SOUNDKIT", "GetLootSlotInfo", "GetLootSlotLink",
     "GetLootSourceInfo", "GetMasterLootCandidate", "GetNormalizedRealmName", "GetNumClasses",
     "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetCursorPosition", "GetMinimapShape", "GetTime", "GetTradePlayerItemLink",
     "GiveMasterLoot", "Constants", "RegionalUniqueNamesEnabled", "MenuUtil", "C_SpecializationInfo", "C_Traits", "HandleModifiedItemClick", "hooksecurefunc", "IsInGroup", "IsInGuild", "IsModifiedClick", "IsInRaid", "ITEM_CLASSES_ALLOWED",
     "LE_PARTY_CATEGORY_INSTANCE", "NUM_BAG_SLOTS", "RANDOM_ROLL_RESULT", "RandomRoll",
     "ButtonFrameTemplate_HidePortrait", "Minimap", "UIParent", "UnitClass", "UnitFullName", "UnitIsGroupAssistant",
     "UnitIsGroupLeader", "UnitName", "canaccessvalue", "date", "strtrim", "tinsert", "wipe",
-    "GetBuildInfo", "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
+    "GetBuildInfo", "geterrorhandler", "InCombatLockdown", "C_InstanceEncounter", "TradeFrame",
+    "ERR_LOOT_MASTER_INV_FULL", "ERR_LOOT_MASTER_UNIQUE_ITEM", "ERR_LOOT_MASTER_OTHER", "BIND_TRADE_TIME_REMAINING",
+    "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
 }
 files["tests/*.lua"] = { std = "lua51", globals = { "GetServerTime", "CopyTable" } } -- client stubs

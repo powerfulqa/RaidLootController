@@ -4,6 +4,28 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.5.0
+
+**Tighter and lighter.** An audit against the Forever API, a performance pass, and ideas from RCLootCouncil, Gargul and RollFor.
+
+- **No addon? Reserve by whisper.** Players without the addon whisper the raid host `!rlc reserve <item or ID>`, and the host's addon whispers back. Same rules as the Reserve button.
+- **Master loot is confirmed.** An item only counts as delivered once it leaves the loot window. If the give fails (full bags, a unique item, out of range), it goes on the "still to trade" list instead of being lost.
+- **Trade time left.** The "still to trade" list on the Raid tab shows how long each bound item can still be traded.
+- **Safer trade window.** Won items go into the trade window one at a time, and stop if the trade closes. If the game hides who you are trading with, you are told.
+- **Out of date?** If the raid host's addon sends something yours does not know, you get one line with the download link.
+
+Faster:
+
+- A resync after a reload sends a third less, so live rolls wait less behind it.
+- Less work on every message, bag update and tooltip: history is no longer copied on each change, bags are only repainted when the "still to trade" list changes, and your spec is read from talents once.
+- The catalogue search waits until you stop typing, and only one raider shares each drop with the group. Catalogue sharing waits until a fight ends.
+- Saved data is smaller: gear notes are dropped once an item is won, and old catalogue kill records are cleared.
+
+Fixes:
+
+- Boss names, item links and chat senders that the game hides during a fight are now checked properly before use.
+- A resync no longer prints "X won Y" a second time.
+
 ### v0.4.1
 
 **Master Looter is the way to run it.**
