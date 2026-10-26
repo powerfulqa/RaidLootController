@@ -4,6 +4,31 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### Unreleased
+
+**Fairer and steadier.** A second security review, fixes for a crash and for raids that could lock players out.
+
+Fixed:
+
+- Clicking Who can roll, Change loot spec or Set spec could crash the game. Those lists are now the addon's own.
+- A raid opened the day before for reserves no longer shuts players out the next evening.
+- When rolls can't be read (usually during a boss fight), the raid host is now told so.
+
+Safer:
+
+- Reserves close as soon as the first drop is added, so nobody reserves an item after seeing it drop.
+- You can only reserve gear your class and loot spec can use.
+- A whispered reserve must really come from that raider, not someone sharing their first name.
+- A master looter's addon only hands loot out by itself for a raid started by the raid leader (or by themselves). Otherwise it says who won, and you give it by hand. Raids started by an assistant also no longer decide who rolls first next week.
+- A player who joins late with no spec must set it before asking for items.
+- Players who roll first can no longer hold an item up by never rolling.
+- An officer who closes a roll they won themselves shows in the officer log, and only the raid host can take back a delivered win. The log keeps the newest entries.
+- Guild catalogue sharing ignores made-up drops and counts, and can no longer be silenced or flooded by one player.
+
+Lighter:
+
+- Resizing the window, searching the catalogue and hovering Stats do far less work.
+
 ### v0.6.1
 
 - The minimap button no longer has a black disc spilling past its gold ring.

@@ -92,6 +92,7 @@ local ENTRIES = {
         a = "You were in the last raid and won nothing there (free rolls aside). "
             .. "Tonight, when you want an item that suits you, only players with no loot last raid "
             .. "roll on it first. If none of them want it, everyone rolls as usual. "
+            .. "If none of them roll, the officer's Close opens the roll to everyone who wants it. "
             .. "It keeps loot moving when raid nights are few.",
         tab = "loot",
     },
@@ -115,9 +116,10 @@ local ENTRIES = {
             .. " (before Start raid), you can reserve one item on the Raid tab. "
             .. "Shift-click the item into the box, type its item ID, or pick it from the Catalogue.\n\n"
             .. "If nobody else reserves it, it's yours when it drops. If several players reserve it, "
-            .. "only they roll. Winning another item first does not cost you your reserve: "
+            .. "only they roll. You can only reserve gear your class and loot spec can use. "
+            .. "Winning another item first does not cost you your reserve: "
             .. "it still pays out when it drops, as your second item.\n\n"
-            .. "Reserves close when the raid starts or when the first item is put up, whichever comes first. "
+            .. "Reserves close when the raid starts or when the first item is added, whichever comes first. "
             .. "You must be in the group when it drops.\n\n"
             .. "No addon? Whisper the raid host: !rlc reserve, then shift-click the item (or type its ID). "
             .. "The host's addon whispers back.",
@@ -144,7 +146,7 @@ local ENTRIES = {
             .. "Change loot spec"
             .. R
             .. ". It is saved for this character. You can change it until the raid starts. "
-            .. "After that only an officer can.",
+            .. "After that only an officer can. Joined late with no spec? Set it before asking for any item.",
         tab = "raid",
     },
     {

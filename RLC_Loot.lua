@@ -64,15 +64,23 @@ function Loot.WornFor(itemString)
     return worn ~= "" and worn or nil
 end
 
-local rollPattern
+local rollPattern, toldHidden = nil, false
+local function resetHidden()
+    toldHidden = false
+end
+NS.On("ENCOUNTER_END", resetHidden)
+NS.On("PLAYER_ENTERING_WORLD", resetHidden)
 NS.On("CHAT_MSG_SYSTEM", function(text)
     if not NS.IsHost() and not NS.debug then
         return
     end
-    -- System lines can be secret on this client; reading one would throw.
+    -- System lines can be secret on this client (a boss fight, some
+    -- instances); reading one would throw. The host hears it once per
+    -- fight or zone.
     if not NS.CanRead(text) then
-        if NS.debug then
-            NS.Print("debug: a system chat line is hidden from addons, so rolls can't be read")
+        if not toldHidden then
+            toldHidden = true
+            NS.Print("Rolls can't be read right now (usually during a boss fight). Ask for them again later.")
         end
         return
     end
@@ -197,14 +205,19 @@ function Loot.Deliver(item)
     local winner = item.winner
     -- ponytail: master loot is unmeasured on Forever (checklist 3); without
     -- the API the item falls through to the owed list and a trade.
-    if Loot.lootOpen and GetMasterLootCandidate and GiveMasterLoot then
+    if
+        Loot.lootOpen
+        and GetMasterLootCandidate
+        and GiveMasterLoot
+        and C_PartyInfo.GetLootMethod() == Enum.LootMethod.Masterlooter
+    then
         local slot = bestMatch(GetNumLootItems(), function(i)
             return NS.ItemStringOf(GetLootSlotLink(i))
         end, item.itemString)
         if slot then
             for i = 1, 40 do
                 local name = GetMasterLootCandidate(slot, i)
-                if name and NS.Canon(name) == winner then
+                if name and NS.CanRead(name) and NS.Canon(name) == winner then
                     giving[slot], lastGive = { winner = winner, itemString = item.itemString }, slot
                     GiveMasterLoot(slot, i)
                     return
@@ -301,7 +314,15 @@ local tradeWho, given = nil, {}
 
 NS.On("TRADE_SHOW", function()
     wipe(given)
-    local who = NS.UnitIdentity("npc") -- the trade partner
+    -- The trade partner, by unit: their roster name is the one owed lists
+    -- use, however the realm part reads for "npc".
+    local who
+    for name, r in pairs(NS.roster) do
+        if UnitIsUnit(r.unit, "npc") then
+            who = name
+        end
+    end
+    who = who or NS.UnitIdentity("npc")
     tradeWho = who
     if not who then
         if next(NS.DB.owed) then

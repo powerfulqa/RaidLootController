@@ -157,6 +157,22 @@ only from the session host (and `NEW` only from a leader or assistant).
       (catalogue merges drop items it does not know):
       `/dump C_Item.GetItemInfoInstant(16800)` on a fresh login.
 
+21. New after the 2026-10-26 audit, all unmeasured:
+    - The home-made spec flyout (`showFlyout` in `RLC_UI.lua`, replacing
+      `MenuUtil`, which crashes Forever) opens, ticks stick for a non-host
+      officer, it opens upward near the screen bottom, and an outside click
+      closes it (`IsMouseButtonDown()` with no argument means any button).
+    - `CHAT_MSG_WHISPER` fills `guid` (12th arg) and it equals
+      `UnitGUID(unit)` of the raider, or `!rlc reserve` stops working.
+    - Master loot gives only on `Enum.LootMethod.Masterlooter`, and only
+      for a session hosted by the leader or the master looter itself.
+    - The "rolls can't be read" line shows once per fight when roll lines
+      are secret.
+    - Catalogue: addon messages arrive in send order (a CE before its CB is
+      refused), and `Net.CatalogBacklog` returns to 0 so answers resume.
+    - Name collisions on the addon sender ("First-Realm" shared by two
+      group members) silence both; measure how Forever spells the sender.
+
 ## Dev tooling
 
 Declared in `.claude/settings.json` (committed). On a new machine Claude Code

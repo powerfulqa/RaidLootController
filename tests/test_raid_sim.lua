@@ -310,9 +310,11 @@ do -- specs: another class, switching after start, late joiner; worn gear
     act(HOST, { "CANCEL", heal })
     local cloth = up(106)
     should(not (healOK and act(LATE, { "WANT", cloth, 1 })), "No spec on record: heal AND shadow items [L301-308]")
-    local first = act(LATE, { "SPEC", "PRIEST.SHADOW" })
-    check(first and act(LATE, { "SPEC", "PRIEST.HOLY" }) == nil, "late joiner's first spec counts, then locks")
-    should(not first, "Spec-less raider picks a spec after seeing drops [L620]")
+    check(act(LATE, { "SPEC", "PRIEST.SHADOW" }) == nil, "no first spec after asking for items specless")
+    local LATE2 = "Later-Realm" -- joins after start, asks for nothing first
+    CLASS[LATE2] = 5
+    local first = act(LATE2, { "SPEC", "PRIEST.SHADOW" })
+    check(first and act(LATE2, { "SPEC", "PRIEST.HOLY" }) == nil, "late joiner's first spec counts, then locks")
     act("Fire-Realm", { "WANT", cloth, 1, "item:99999" })
     should(not host.items[cloth].worn["Fire-Realm"], "Made-up worn gear shown to officers as real [L486,602]")
     act("Doom-Realm", { "WANT", cloth, 1, string.rep("item:1,", 40) })

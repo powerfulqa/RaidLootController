@@ -17,7 +17,6 @@ local Rules = NS.Rules
 NS.VERSION = C_AddOns.GetAddOnMetadata(ADDON, "Version") or "dev"
 
 local HISTORY_MAX = 200
-local STALE = 12 * 3600 -- an unfinished raid this old ends at login
 
 -- ---- chat output -----------------------------------------------------------
 
@@ -246,8 +245,17 @@ end
 
 local myName
 function NS.Me()
-    myName = myName or unitIdentity("player")
-    return myName
+    -- Not cached before login knows the realm: "Name-" would stick.
+    myName = myName or (realm() ~= "" and unitIdentity("player") or nil)
+    return myName or (unitIdentity("player"))
+end
+
+-- Whether wins in session S may be handed over by this client without
+-- asking: we host it, or its host leads the group. Any assistant can start
+-- a session, so a master looter must not give loot on theirs alone.
+function NS.TrustedHost(S)
+    local r = S and roster[S.host]
+    return S ~= nil and (S.host == NS.Me() or (r ~= nil and r.lead == true))
 end
 
 function NS.Short(name)
@@ -372,13 +380,20 @@ local function saveHistory(S)
     end
     local ids = {}
     for id, rec in pairs(H) do
-        ids[#ids + 1] = { id = id, t = rec.created or 0 }
+        if id ~= S.id then -- never the raid just saved
+            ids[#ids + 1] = { id = id, t = rec.created or 0, u = rec.untrusted == true }
+        end
     end
-    if #ids > HISTORY_MAX then
+    if #ids >= HISTORY_MAX then
+        -- Untrusted raids go first, so a flood of made-up ones never pushes
+        -- real raids out; then the oldest.
         table.sort(ids, function(a, b)
+            if a.u ~= b.u then
+                return a.u
+            end
             return a.t < b.t
         end)
-        for i = 1, #ids - HISTORY_MAX do
+        for i = 1, #ids - HISTORY_MAX + 1 do
             H[ids[i].id] = nil
         end
     end
@@ -418,6 +433,7 @@ function NS.ApplyOps(ops, broadcast)
             end
             local k = op[1]
             gotNew = gotNew or k == "NEW"
+            S.untrusted = S.untrusted or (k == "NEW" and op.untrusted) or nil
             if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" or k == "UNDO" then
                 changedHistory = true
             end
@@ -432,9 +448,26 @@ function NS.ApplyOps(ops, broadcast)
                 if (item.awardedAt or 0) >= GetServerTime() - 120 then
                     NS.Print("%s won %s.", NS.ColorName(op[3]), NS.LinkOf(item.itemString))
                     -- The master looter's addon hands the item over (the
-                    -- host's when loot is not on Master Looter).
-                    if NS.Loot and NS.Loot.IAmGiver() then
-                        NS.Loot.Deliver(item)
+                    -- host's when loot is not on Master Looter). Next frame:
+                    -- an error there must not cut this batch of ops short.
+                    if NS.Loot and NS.Loot.IAmGiver() and not item.delivered then
+                        if NS.TrustedHost(S) then
+                            local id, key, winner = S.id, op[2], item.winner
+                            C_Timer.After(0, function()
+                                -- The live item: a snapshot this frame may have
+                                -- replaced the session tables.
+                                local now = NS.S()
+                                local live = now and now.id == id and now.items[key]
+                                if live and live.state == "done" and live.winner == winner and not live.delivered then
+                                    NS.Loot.Deliver(live)
+                                end
+                            end)
+                        else
+                            NS.Print(
+                                "The raid host %s does not lead the group, so the item was not handed over. Give it by hand if the win is right.",
+                                NS.ColorName(S.host)
+                            )
+                        end
                     end
                 end
             end
@@ -475,7 +508,9 @@ function NS.RequestSync(tries)
     tries = (tries or 0) + 1
     if tries < 3 then
         C_Timer.After(15, function()
-            if not NS.S() then
+            -- No session yet, or only an ended one: the ask may have been lost.
+            local S = NS.S()
+            if not S or S.phase == "ended" then
                 NS.RequestSync(tries)
             end
         end)
@@ -513,10 +548,10 @@ function NS.HandleRequest(who, req, quiet)
         return
     end
     if req[1] == "SYNC" then
-        -- One resend per player per 30 s: a spammed sync would keep the
+        -- One resend per player per 60 s: a spammed sync would keep the
         -- host resending the whole raid ahead of live traffic.
         local now = GetTime()
-        if who ~= NS.Me() and now - (lastSyncFrom[who] or -60) < 30 then
+        if who ~= NS.Me() and now - (lastSyncFrom[who] or -60) < 60 then
             return
         end
         lastSyncFrom[who] = now
@@ -631,11 +666,13 @@ NS.On("ADDON_LOADED", function(name)
     end
     NS.DB = DB
     -- A raid left open (the host logged off, or a test session) ends on its
-    -- own once it is STALE seconds old, so the next day never opens "in
-    -- progress". It stays in History like any ended raid.
+    -- own once it is idle long enough (Rules.IsStale), so the next day never
+    -- opens "in progress". It stays in History like any ended raid.
     local S = DB.session
-    if S and S.phase ~= "ended" and GetServerTime() - (tonumber(S.created) or 0) > STALE then
-        S.phase, S.ended, S.active = "ended", GetServerTime(), nil
+    if S and S.phase ~= "ended" and Rules.IsStale(S, GetServerTime()) then
+        -- autoEnded: if the host is in fact still running it, their next
+        -- snapshot is taken (Rules.AcceptNew).
+        S.phase, S.ended, S.active, S.autoEnded = "ended", GetServerTime(), nil, true
     end
     if S then
         saveHistory(S) -- history and session are one table again after a reload
@@ -712,6 +749,8 @@ local itemInfoPending = false
 NS.On("GET_ITEM_INFO_RECEIVED", function(itemID, success)
     if success == false and itemID then
         requested[itemID] = nil -- let the next redraw ask once more
+    elseif NS.ForgetItemMisses then
+        NS.ForgetItemMisses() -- the catalogue search may now find its name
     end
     -- A failed load brings no new name: redrawing would only ask again.
     if success ~= false and not itemInfoPending then
@@ -728,13 +767,17 @@ end)
 -- rules are the same; the answer goes back by whisper, at most one per
 -- player per 5 s.
 local lastWhisperTo = {}
-NS.On("CHAT_MSG_WHISPER", function(text, sender)
-    if not NS.IsHost() or not NS.CanRead(text, sender) or type(text) ~= "string" then
+NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid)
+    if not NS.IsHost() or not NS.CanRead(text, sender, guid) or type(text) ~= "string" then
         return
     end
     local cmd, arg = text:match("^!rlc%s*(%a*)%s*(.-)%s*$")
     local who = cmd and NS.Canon(sender)
-    if not who or not NS.roster[who] or GetTime() - (lastWhisperTo[who] or -60) < 5 then
+    -- The GUID, not the name: first names are not unique here, and a
+    -- stranger sharing one would otherwise reserve as that raider.
+    local r = who and NS.roster[who]
+    local unitGUID = r and UnitGUID(r.unit)
+    if not guid or not NS.CanRead(unitGUID) or unitGUID ~= guid or GetTime() - (lastWhisperTo[who] or -60) < 5 then
         return -- not a command, or not from someone in the group
     end
     lastWhisperTo[who] = GetTime()

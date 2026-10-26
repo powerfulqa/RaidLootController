@@ -145,9 +145,15 @@ end
 -- the whole group, so every request made before it goes out (a raid logging
 -- in at once, or one player spamming ?SYNC) shares one broadcast. It waits
 -- for the live queue to empty, so snapshots never pile up behind each other.
-local snapshotWanted, lastSnapshot = false, 0
+local snapshotWanted, snapshotSending, lastSnapshot = false, false, 0
 function Net.SendSnapshot()
     snapshotWanted = true
+end
+
+-- Catalogue ops still waiting to go to "GROUP" or "GUILD": an answer is
+-- skipped while the last one is still on its way.
+function Net.CatalogBacklog(dest)
+    return #(dest == "GUILD" and CAT_GUILD or CAT_GROUP).queue
 end
 
 -- For the bug report: ops waiting per lane, and the send budget left.
@@ -167,10 +173,14 @@ C_Timer.NewTicker(0.25, function()
     for prefix, n in pairs(tokens) do
         tokens[prefix] = math.min(BURST, n + REGEN * 0.25)
     end
-    -- One snapshot per 30 s for the whole group: it covers everyone who
-    -- asked, and players taking turns asking cannot keep the queue full.
-    if snapshotWanted and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 30 then
-        snapshotWanted, lastSnapshot = false, GetTime()
+    -- One snapshot for the whole group, at least 30 s after the last one
+    -- FINISHED sending: it covers everyone who asked, and players taking
+    -- turns asking cannot keep the live lane busy with snapshots.
+    if snapshotSending and #LIVE.queue == 0 then
+        snapshotSending, lastSnapshot = false, GetTime()
+    end
+    if snapshotWanted and not snapshotSending and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 30 then
+        snapshotWanted, snapshotSending = false, true
         local S = NS.S()
         if S then
             for _, op in ipairs(Rules.Snapshot(S)) do
@@ -217,6 +227,7 @@ local newCtx = {
     end,
     recent = {},
 }
+local refusedNew = {} -- sender -> true: we refused their last NEW
 local function acceptNew(S, op, sender)
     newCtx.now = GetServerTime()
     return Rules.AcceptNew(S, op, sender, newCtx)
@@ -247,7 +258,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
         return
     end
     local S = NS.S()
-    local stateOps = {}
+    local stateOps, wantSync = {}, false
     for _, op in ipairs(Rules.Decode(msg)) do
         local kind = op[1] or ""
         if kind:sub(1, 1) == "?" then
@@ -257,23 +268,42 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
             end
         elseif kind == "NOTE" or kind == "ERR" then
             if S and sender == S.host and (kind == "NOTE" or op[2] == me) then
-                NS.Print(kind == "NOTE" and op[2] or op[3] or "")
+                local text = kind == "NOTE" and op[2] or op[3] or ""
+                -- A host who does not lead the group gets no links or colours.
+                NS.Print(S.untrusted and text:gsub("|", "") or text)
             end
         elseif kind == "NEW" then
             -- Later ops in this message come from the new host.
-            if acceptNew(S, op, sender) then
+            refusedNew[sender] = nil
+            if not acceptNew(S, op, sender) then
+                refusedNew[sender] = true -- its later ops are not a missed NEW
+            else
                 S = Rules.Apply(nil, op)
+                -- Not started by the group leader: never trusted for the
+                -- roll-first list (Rules.DryFrom). ApplyOps makes its own
+                -- table from the op, so the mark goes on the op.
+                op.untrusted = not newCtx.isLead(sender) or nil
                 stateOps[#stateOps + 1] = op
             end
         elseif S and sender == S.host and S.phase ~= "ended" then
             -- An ended raid is saved history: its former host may not
             -- rewrite it. A snapshot still works: its NEW comes first.
             stateOps[#stateOps + 1] = op
+        elseif
+            NS.IsLeadOrAssist(sender)
+            and not refusedNew[sender]
+            and (not S or (S.host == sender and S.autoEnded))
+        then
+            -- Session ops while we have no session, or from the host of a
+            -- raid we only ended for age: we likely missed their NEW (a lost
+            -- snapshot). Never for a sender whose NEW we refused, or a
+            -- second host could keep the whole raid resyncing.
+            wantSync = true
         end
     end
     -- An op from the host that does not fit our copy means we missed
     -- something (a loading screen, a late join): fetch the whole session.
-    if #stateOps > 0 and NS.ApplyOps(stateOps, false) > 0 then
+    if (#stateOps > 0 and NS.ApplyOps(stateOps, false) > 0) or wantSync then
         NS.RequestSync()
     end
 end)

@@ -112,6 +112,11 @@ local function bool(v)
     return v == 1 or v == "1" or v == true
 end
 
+-- Where a drop came from (loot source + slot), or nil.
+local function cleanSrc(s)
+    return type(s) == "string" and #s <= 80 and s:match("^[%w:%-]+$") and s or nil
+end
+
 -- Sorted comma list <-> set. Sorted so two clients encode one set identically.
 function Rules.SetToCSV(set)
     if not set then
@@ -270,7 +275,9 @@ end
 -- How far a NEW's start time may sit from our clock: a host's server time
 -- is ours, so a NEW from the future is forged. The past bound lets a
 -- snapshot of a long raid through.
-Rules.NEW_FUTURE, Rules.NEW_PAST = 300, 86400
+-- NEW_PAST matches Rules.STALE_RESERVE: a reserve session opened days
+-- ahead must still reach a player who joins late.
+Rules.NEW_FUTURE, Rules.NEW_PAST = 300, 72 * 3600
 Rules.NEW_BURST, Rules.NEW_WINDOW = 3, 1800
 
 -- Whether a NEW from `sender` may replace our session S. ctx: now (server
@@ -285,8 +292,9 @@ function Rules.AcceptNew(S, op, sender, ctx)
     end
     if S and S.id == op[2] and S.host == sender then
         -- The host resending its own session (a snapshot). Never once it
-        -- ended: a former host could wipe the saved raid by resending.
-        return S.phase ~= "ended"
+        -- ended: a former host could wipe the saved raid by resending. A raid
+        -- this client only ended for age at login is still the host's.
+        return S.phase ~= "ended" or S.autoEnded == true
     end
     if t > ctx.now + Rules.NEW_FUTURE or t < ctx.now - Rules.NEW_PAST then
         return false -- a forged time would sort first in history and dry lists
@@ -317,6 +325,21 @@ function Rules.AcceptNew(S, op, sender, ctx)
     return true
 end
 
+-- When a session was last used: its start, last win or last officer
+-- action, else its creation. A raid idle this long ends at login.
+Rules.STALE_LIVE, Rules.STALE_RESERVE = 12 * 3600, 72 * 3600
+function Rules.IsStale(S, now)
+    local last = tonumber(S.started) or tonumber(S.created) or 0
+    for _, it in pairs(S.items or {}) do
+        last = math.max(last, tonumber(it.awardedAt) or 0)
+    end
+    for _, e in ipairs(S.log or {}) do
+        last = math.max(last, tonumber(e.t) or 0)
+    end
+    -- Reserves often open the day before: give that phase longer.
+    return now - last > (S.phase == "reserve" and Rules.STALE_RESERVE or Rules.STALE_LIVE)
+end
+
 function Rules.NewSession(id, host, title, t)
     return {
         v = 1,
@@ -340,29 +363,28 @@ function Rules.NewSession(id, host, title, t)
     }
 end
 
+-- Whether `item` suits `name`'s class and loot spec, ignoring locks.
+function Rules.Suits(S, item, name, classID)
+    if not Rules.HasClass(item.classMask, classID) then
+        return false
+    end
+    if item.mode == "open" or not item.specs then
+        return true -- open to everyone who can use it: specs no longer matter
+    end
+    local spec = S.specs[name]
+    if spec then
+        return item.specs[spec] == true
+    end
+    -- No spec on record (no addon): the class must suit it at least.
+    return classInSpecs(item.specs, classID)
+end
+
 -- Whether `name` may take part in `item` at all, ignoring its state.
 function Rules.Eligible(S, item, name, classID)
     if item.restrict then
         return item.restrict[name] == true
     end
-    if not Rules.HasClass(item.classMask, classID) then
-        return false
-    end
-    if item.mode == "open" then
-        return true -- open to everyone who can use it: specs no longer matter
-    end
-    if item.specs then
-        local spec = S.specs[name]
-        if spec then
-            if not item.specs[spec] then
-                return false
-            end
-        elseif not classInSpecs(item.specs, classID) then
-            -- No spec on record (no addon): the class must suit it at least.
-            return false
-        end
-    end
-    return not S.locks[name]
+    return Rules.Suits(S, item, name, classID) and (item.mode == "open" or not S.locks[name])
 end
 
 function Rules.CanWant(S, item, name, classID)
@@ -451,7 +473,7 @@ function Rules.Apply(S, op)
         return nil, "no session"
     end
     if kind == "PHASE" then
-        local p, t = op[2], tonumber(op[3]) or 0
+        local p, t = op[2], Rules.Int(op[3], 0, Rules.MAX_ID * 2) or 0
         if p == "live" then
             S.started = S.started or t
             S.ended = nil
@@ -486,9 +508,11 @@ function Rules.Apply(S, op)
         local name = Rules.ValidName(op[5]) and op[5] or nil
         local key = Rules.Int(op[6], 1, Rules.MAX_ID) and op[6] or nil
         S.log = S.log or {}
-        if #S.log < Rules.MAX_LOG then
-            S.log[#S.log + 1] = { t = t, by = op[3], what = op[4], name = name, key = key }
+        -- Full: the oldest entry goes, so the latest officer actions always show.
+        if #S.log >= Rules.MAX_LOG then
+            table.remove(S.log, 1)
         end
+        S.log[#S.log + 1] = { t = t, by = op[3], what = op[4], name = name, key = key }
         return S
     end
     if kind == "OFF" or kind == "LOCK" or kind == "RES" then
@@ -521,7 +545,7 @@ function Rules.Apply(S, op)
         then
             return nil, "bad ADD"
         end
-        local src = type(op[4]) == "string" and #op[4] <= 80 and op[4]:match("^[%w:%-]+$") and op[4] or nil
+        local src = cleanSrc(op[4])
         S.items[key] = {
             key = key,
             itemString = op[3],
@@ -602,7 +626,8 @@ function Rules.Apply(S, op)
         if not Rules.ValidName(op[3]) or not HOWS[op[4]] then
             return nil, "bad AWARD"
         end
-        item.state, item.winner, item.how, item.awardedAt = "done", op[3], op[4], tonumber(op[5]) or 0
+        item.state, item.winner, item.how, item.awardedAt =
+            "done", op[3], op[4], Rules.Int(op[5], 0, Rules.MAX_ID * 2) or 0
         -- Worn gear only helps officers judge a live roll. Dropping it here
         -- keeps it out of saved history and out of every snapshot.
         item.worn = nil
@@ -727,11 +752,16 @@ local function normallyEligible(S, item, name, classID)
     return Rules.Eligible(S, view, name, classID)
 end
 
--- Whether any item has been put up: reserves close at the first one, so
--- nobody reserves a drop after seeing it.
-local function anyStarted(S)
+-- Whether any item is on the list: reserves close at the first one, so
+-- nobody reserves a drop after seeing it (an added item is seen at once).
+local function anyAdded(S)
+    return next(S.items) ~= nil
+end
+
+-- Whether `name` has asked for or rolled on any item this raid.
+local function hasActed(S, name)
     for _, it in pairs(S.items) do
-        if it.state ~= "pending" then
+        if it.wants[name] or it.rolls[name] or it.winner == name then
             return true
         end
     end
@@ -769,12 +799,24 @@ function Rules.Intent(S, who, req, ctx)
         end
         return { { "WANT", item.key, who, on and 1 or 0, worn } }
     elseif kind == "RES" then
-        if S.phase ~= "reserve" or anyStarted(S) then
+        if S.phase ~= "reserve" or anyAdded(S) then
             return nil, "Reserves are closed once the raid starts or the first item is up."
         end
         local id = Rules.Int(req[2], 0, Rules.MAX_ID)
         if not id then
             return nil, "Not an item."
+        end
+        if (S.reserves[who] or 0) == id then
+            return {} -- nothing changed: send nothing
+        end
+        if id > 0 and ctx.describe then
+            -- Only gear your class and loot spec can use (when the host
+            -- knows the item; an unknown one reads as fitting everyone).
+            local mask, specs = ctx.describe("item:" .. id)
+            local view = { classMask = mask or 0, mode = "normal", specs = Rules.CSVToSpecs(specs) }
+            if not Rules.Suits(S, view, who, classOf(who)) then
+                return nil, "That item doesn't suit your class or loot spec."
+            end
         end
         return { { "RES", who, id } }
     elseif kind == "SPEC" then
@@ -784,7 +826,9 @@ function Rules.Intent(S, who, req, ctx)
         if not Rules.SpecFits(spec, classOf(who)) then
             return nil, "Not a spec."
         end
-        if S.phase ~= "reserve" and S.specs[who] and S.specs[who] ~= spec then
+        if S.phase ~= "reserve" and (S.specs[who] or hasActed(S, who)) and S.specs[who] ~= spec then
+            -- A late first report counts only before asking for anything:
+            -- no spec on record lets you ask for every spec's gear.
             return nil, "Specs are locked once the raid starts. Ask an officer to change yours."
         end
         if S.specs[who] == spec then
@@ -835,7 +879,7 @@ function Rules.Intent(S, who, req, ctx)
         end
         -- req[3]: where it came from (corpse + loot slot). The same slot
         -- added twice, after a reload or by a second officer, is refused.
-        local src = type(req[3]) == "string" and #req[3] <= 80 and req[3]:match("^[%w:%-]+$") and req[3] or nil
+        local src = cleanSrc(req[3])
         if src then
             for _, it in pairs(S.items) do
                 if it.src == src then
@@ -896,10 +940,10 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "Finish the current item first."
         end
         -- Only reservers who are here: a reserve does not pay out to
-        -- someone who left the group.
+        -- someone who left the group, or whose loot spec changed since.
         local reservers, n = {}, 0
         for name in pairs((Rules.Reservers(S, item.itemID))) do
-            if classOf(name) then
+            if classOf(name) and Rules.Suits(S, item, name, classOf(name)) then
                 reservers[name], n = true, n + 1
             end
         end
@@ -971,10 +1015,25 @@ function Rules.Intent(S, who, req, ctx)
             if how == "open" and normallyEligible(S, item, winner, classOf(winner)) then
                 how = "roll" -- could have asked normally: it counts as their item
             end
-            return { { "AWARD", item.key, winner, how, now } }
+            local ops = { { "AWARD", item.key, winner, how, now } }
+            if winner == who then
+                -- An officer closing a roll they won themselves shows in History.
+                ops[2] = logOp(now, who, "award", winner, item.key)
+            end
+            return ops
         elseif tied then
             return { { "REROLL", item.key, Rules.SetToCSV(tied) } },
                 "Tie on " .. best .. ". The tied players roll again."
+        end
+        -- Only players who won nothing last raid may roll and none has: one
+        -- of them could otherwise hold the item up by asking and never rolling.
+        local dryOnly = item.mode == "normal" and item.restrict and next(item.restrict) ~= nil
+        for name in pairs(item.restrict or {}) do
+            dryOnly = dryOnly and S.dry and S.dry[name]
+        end
+        if dryOnly then
+            return addItemOps({}, item, "rolling", "normal", item.classMask),
+                "Nobody who rolls first has rolled. Everyone who wants it can roll now."
         end
         return nil, "Nobody has rolled yet."
     elseif kind == "OPEN" then
@@ -1018,6 +1077,8 @@ function Rules.Intent(S, who, req, ctx)
     elseif kind == "UNDO" then
         if st ~= "done" then
             return nil, "Only a won item can be taken back."
+        elseif item.delivered and who ~= S.host then
+            return nil, "That item was delivered. Only the raid host can take it back."
         end
         return { { "UNDO", item.key }, logOp(now, who, "undo", item.winner, item.key) },
             "Win taken back. This item is up again."
@@ -1134,20 +1195,41 @@ Rules.ValidVersion = function(v)
     return type(v) == "string" and #v <= 16 and versionParts(v) ~= nil
 end
 
--- Players who won nothing (free rolls aside) in the most recent started
--- raid in `history` (saved sessions by id), other than currentID. They roll first tonight. Being "in"
--- a raid means the addon saw them: a spec, reserve, want or roll.
+-- Players who won nothing (free rolls aside) in the most recent started,
+-- trusted raid in `history` (saved sessions by id), other than currentID. They roll first tonight. Being "in"
+-- a raid means the addon saw them reserve, want or roll.
 function Rules.DryFrom(history, currentID)
     local last
     for id, rec in pairs(history or {}) do
-        if id ~= currentID and rec.started and (not last or (rec.created or 0) > (last.created or 0)) then
+        -- An untrusted raid (hosted by someone who was not the group leader,
+        -- seen from another client) could be made up to roll first.
+        if
+            id ~= currentID
+            and rec.started
+            and not rec.untrusted
+            and (not last or (rec.created or 0) > (last.created or 0))
+        then
             last = rec
         end
     end
     if not last then
         return {}
     end
-    local seen, won = Rules.SeenIn(last), {}
+    -- Seen = took part in the loot (a reserve, want, roll or win). A spec
+    -- alone does not count: the addon reports it on joining, so joining
+    -- and leaving would put you first next week.
+    local seen, won = {}, {}
+    for name in pairs(last.reserves or {}) do
+        seen[name] = true
+    end
+    for _, it in pairs(last.items or {}) do
+        for name in pairs(it.wants or {}) do
+            seen[name] = true
+        end
+        for name in pairs(it.rolls or {}) do
+            seen[name] = true
+        end
+    end
     for _, it in pairs(last.items or {}) do
         if it.state == "done" and it.winner and it.how ~= "open" then
             won[it.winner] = true

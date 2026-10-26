@@ -32,6 +32,6 @@ read_globals = {
     "UnitIsGroupLeader", "UnitName", "canaccessvalue", "date", "strtrim", "tinsert", "wipe",
     "GetBuildInfo", "geterrorhandler", "InCombatLockdown", "C_InstanceEncounter", "TradeFrame",
     "ERR_LOOT_MASTER_INV_FULL", "ERR_LOOT_MASTER_UNIQUE_ITEM", "ERR_LOOT_MASTER_OTHER", "BIND_TRADE_TIME_REMAINING",
-    "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
+    "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "UnitGUID", "IsMouseButtonDown", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip",
 }
 files["tests/*.lua"] = { std = "lua51", globals = { "GetServerTime", "CopyTable" } } -- client stubs

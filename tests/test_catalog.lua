@@ -20,6 +20,10 @@ local function check(cond, label)
 end
 
 local MC, LUC, RAG = 409, 663, 672
+local NOW = 100000
+local function apply(cat, op)
+    return C.ApplyOp(cat, op, NOW)
+end
 
 -- ---- recording and kill dedupe ---------------------------------------------
 do
@@ -61,7 +65,8 @@ do
     C.MAX_RECORDS = 5
     local cat = {}
     for i = 1, 8 do
-        C.ApplyOp(cat, { "CE", tostring(i), "1", "item:" .. i, "1", "1" })
+        apply(cat, { "CB", tostring(i), "1", "B", "1", "1" })
+        apply(cat, { "CE", tostring(i), "1", "item:" .. i, "1", "1" })
     end
     local n = 0
     for _, inst in pairs(cat) do
@@ -72,6 +77,12 @@ do
         end
     end
     check(n == 5, "item records capped across all instances")
+    check(C.Record(cat, 9, "Own", 1, "B", "item:9", "k", 1), "our own drop bypasses the full cap")
+    local savedInst = C.MAX_INSTANCES
+    C.MAX_INSTANCES = 1
+    check(C.CountKill(cat, 10, "Own2", 2, "B2", "k", 1), "and so does our own kill in a new instance")
+    check(not apply(cat, { "CI", "11", "Wire" }), "while a wire instance is refused")
+    C.MAX_INSTANCES = savedInst
     C.MAX_RECORDS = saved
 end
 
@@ -110,16 +121,15 @@ do
     check(C.Covers(da[MC], nil), "a peer with nothing is covered")
     check(not C.Covers(da[MC], da[MC]), "an equal peer is not covered")
 
-    -- Ship it over the real wire codec into an empty catalogue, in reverse
-    -- order so CE/CB arrive before the CI header.
+    -- Ship it over the real wire codec into an empty catalogue.
     local enc = {}
     for _, op in ipairs(C.InstanceOps(a, MC)) do
-        table.insert(enc, 1, R.EncodeOp(op))
+        enc[#enc + 1] = R.EncodeOp(op)
     end
     local b = {}
     for _, msg in ipairs(R.Pack(enc, 250)) do
         for _, op in ipairs(R.Decode(msg)) do
-            C.ApplyOp(b, op)
+            apply(b, op)
         end
     end
     local ok, where = sameData(a, b)
@@ -129,42 +139,189 @@ do
     -- Merging again changes nothing; a smaller count never lowers ours.
     local changed = false
     for _, op in ipairs(C.InstanceOps(a, MC)) do
-        changed = C.ApplyOp(b, op) or changed
+        changed = apply(b, op) or changed
     end
     check(not changed, "re-merging the same data is a no-op")
-    C.ApplyOp(b, { "CE", tostring(MC), tostring(LUC), "item:16800", "1", "50" })
+    apply(b, { "CE", tostring(MC), tostring(LUC), "item:16800", "1", "50" })
     check(b[MC].b[LUC].i[16800].n == 1 and b[MC].b[LUC].i[16800].t == 100, "merge keeps the larger count and time")
-    C.ApplyOp(b, { "CE", tostring(MC), tostring(LUC), "item:16800", "7", "900" })
-    check(b[MC].b[LUC].i[16800].n == 7 and b[MC].b[LUC].kills == 7, "a higher count raises item and kills")
+    apply(b, { "CE", tostring(MC), tostring(LUC), "item:16800", "7", "900" })
+    check(b[MC].b[LUC].i[16800].n == 1, "a count above the boss's kills is refused")
+    apply(b, { "CB", tostring(MC), tostring(LUC), "Lucifron", "7", "1" })
+    apply(b, { "CE", tostring(MC), tostring(LUC), "item:16800", "7", "900" })
+    check(b[MC].b[LUC].i[16800].n == 7 and b[MC].b[LUC].kills == 7, "a higher count after its kills raises both")
+
+    -- Heard is not seen: what the wire raised is never re-served.
+    check(b[MC].b[LUC].ok == 0 and b[MC].b[LUC].i[16800].on == 0, "heard counts are not our own")
+    check(C.Digest(b, true)[MC] == nil, "the own digest leaves out everything heard")
+    check(C.Digest(b)[MC].k == 8, "the full digest (what we ask with) still counts it")
+    check(#C.InstanceOps(b, MC) == 1, "an answer carries only the instance header")
+    check(C.Digest(a, true)[MC].k == 2, "own observations are served")
+end
+
+-- ---- poisoned times and huge ids --------------------------------------------
+do
+    local cat = {}
+    apply(cat, { "CB", "1", "2", "B", "3", tostring(4e9) })
+    apply(cat, { "CE", "1", "2", "item:5", "1", tostring(4e9) })
+    check(cat[1].b[2].i[5].t == NOW + 3600, "a future time is clamped to now plus an hour")
+    check(not apply(cat, { "CE", "1", "2", "item:99999999999", "1", "1" }), "rejects an item id above MAX_ID")
+    check(
+        not apply(cat, { "CD", "1", "I", "2", "B", "item:99999999999", "k", "1" }),
+        "a CD with an item id above MAX_ID too"
+    )
+    check(cat[1].b[2].i[5].on == 0, "wire-created records are not our own")
+    -- Our own boss and item, then a guildmate claims 9999 for both.
+    for k = 1, 3 do
+        C.CountKill(cat, 2, "I", 3, "B", "k" .. k, 1)
+    end
+    C.Record(cat, 2, "I", 3, "B", "item:6", "k1", 1)
+    apply(cat, { "CB", "2", "3", "B", "9999", "1" })
+    apply(cat, { "CE", "2", "3", "item:6", "9999", "1" })
+    apply(cat, { "CE", "2", "3", "item:7", "5", "1" })
+    local d = C.Digest(cat, true)[2]
+    check(d.k == 3 and d.e == 1 and d.n == 1, "wire claims leave our own counts and records served")
+    local ops = C.InstanceOps(cat, 2)
+    check(ops[2][5] == 3 and ops[3][5] == 1, "and our answer sends our own counts")
+    C.CountKill(cat, 2, "I", 3, "B", "k4", 1)
+    check(cat[2].b[3].ok == 4 and cat[2].b[3].kills == 9999, "own kills keep counting under a heard total")
+    -- Saved data from before own counts: all of it is ours.
+    local old = {
+        [7] = {
+            name = "Old",
+            b = {
+                [1] = {
+                    name = "B",
+                    kills = 3,
+                    f = 1,
+                    i = {
+                        [8] = { s = "item:8", n = 2, t = 1 },
+                    },
+                },
+            },
+        },
+    }
+    check(C.Digest(old, true)[7].k == 3 and C.Digest(old, true)[7].n == 2, "old saved data counts as own")
+    apply(old, { "CB", "7", "1", "B", "50", "1" })
+    check(C.Digest(old, true)[7].k == 3, "a wire raise of old data keeps its own kills")
+end
+
+-- ---- we store past the caps but serve within them --------------------------
+do
+    local saved = { C.MAX_ITEMS, C.MAX_BOSSES, C.MAX_INSTANCES }
+    C.MAX_ITEMS, C.MAX_BOSSES, C.MAX_INSTANCES = 3, 2, 1
+    local a = {}
+    for i = 1, 5 do
+        for k = 1, i do
+            C.Record(a, 1, "I", 0, "Trash", "item:" .. i, "c" .. i .. ":" .. k, 1)
+        end
+    end
+    C.CountKill(a, 1, "I", 5, "B5", "k", 1)
+    C.CountKill(a, 1, "I", 6, "B6", "k", 1)
+    C.CountKill(a, 2, "J", 1, "B", "k", 1)
+    check(#a[1].b[0].i == 5 and a[1].b[0].i[1], "own trash is stored past MAX_ITEMS")
+    local served = C.Served(a[1])
+    check(#served == 2 and served[1].key == 0 and served[2].key == 5, "bosses served up to MAX_BOSSES")
+    check(
+        #served[1].recs == 3 and served[1].recs[1].s == "item:5" and served[1].recs[3].s == "item:3",
+        "most-seen items up to MAX_ITEMS"
+    )
+    local own = C.Digest(a, true)
+    check(own[1] and not own[2], "instances served up to MAX_INSTANCES")
+    local b = {}
+    for _, op in ipairs(C.InstanceOps(a, 1)) do
+        apply(b, op)
+    end
+    check(not C.Covers(own[1], C.Digest(b)[1]), "a capped receiver catches up and stops asking")
+    C.MAX_ITEMS, C.MAX_BOSSES, C.MAX_INSTANCES = saved[1], saved[2], saved[3]
+end
+
+-- ---- answer election: only a full answer silences us ------------------------
+do
+    local cat = {}
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "k1", 1)
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "k2", 2)
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "k1", 1)
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "k2", 2)
+    local inst, heard = cat[MC], {}
+    check(not C.Covered(inst, heard), "nothing heard: answer")
+    C.NoteHeard(inst, heard, { "CI", tostring(MC), "Molten Core" })
+    check(not C.Covered(inst, heard), "a bare CI does not silence us")
+    C.NoteHeard(inst, heard, { "CB", tostring(MC), tostring(LUC), "Lucifron", "1", "1" })
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), tostring(LUC), "item:16800", "1", "1" })
+    local short = { [inst.b[LUC].i[16800]] = 2, [inst.b[LUC]] = 1 }
+    check(not C.Covered(inst, short), "fewer kills than ours: still answer")
+    C.NoteHeard(inst, heard, { "CB", tostring(MC), tostring(LUC), "Lucifron", "2", "1" })
+    check(not C.Covered(inst, heard), "an item count below ours: still answer")
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), tostring(LUC), "item:16800", "2", "1" })
+    check(C.Covered(inst, heard), "all we know was sent: stay quiet")
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), "1", "item:1", "9", "1" })
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), tostring(LUC), "item:2", "9", "1" })
+    local n = 0
+    for _ in pairs(heard) do
+        n = n + 1
+    end
+    check(n == 2, "heard notes only bosses and items we hold")
+end
+
+-- ---- live drop kill ids per raider ------------------------------------------
+do
+    local seen = {}
+    local function cd(boss, id)
+        return { "CD", "1", "I", boss, "B", "item:1", id, "1" }
+    end
+    check(C.KillAllowed(seen, "A", cd("663", "E663:1"), 0), "first kill id allowed")
+    check(C.KillAllowed(seen, "A", cd("663", "E663:1"), 5), "the same kill id again (more items)")
+    check(not C.KillAllowed(seen, "A", cd("663", "E663:2"), 10), "a fresh kill id within 10 minutes is refused")
+    check(not C.KillAllowed(seen, "A", cd("0663", "E663:3"), 10), "a respelled boss key is the same boss")
+    check(not C.KillAllowed(seen, "A", cd("663.0", "E663:4"), 10), "and so is 663.0")
+    check(C.KillAllowed(seen, "B", cd("663", "E663:2"), 10), "another raider is separate")
+    check(C.KillAllowed(seen, "A", cd("663", "E663:3"), 10 + C.KILL_GAP), "allowed again after the gap")
+    local ok = 0
+    for i = 1, 500 do
+        ok = ok + (C.KillAllowed(seen, "A", cd("0", "Creature-" .. i), 20) and 1 or 0)
+    end
+    check(ok == C.TRASH_IDS, "trash kill ids are throttled too")
+    check(C.KillAllowed(seen, "A", cd("0", "Creature-x"), 20 + C.TRASH_GAP), "trash opens again after its gap")
 end
 
 -- ---- live drop broadcast ---------------------------------------------------
 do
     local cat = {}
     local op = { "CD", tostring(MC), "Molten Core", tostring(LUC), "Lucifron", "item:16800", "E663:9", "100" }
-    check(C.ApplyOp(cat, op), "CD records a drop")
-    check(not C.ApplyOp(cat, op), "the same CD from a second raider counts once")
+    check(apply(cat, op), "CD records a drop")
+    check(not apply(cat, op), "the same CD from a second raider counts once")
+    check(cat[MC].b[LUC].i[16800].on == 0 and cat[MC].b[LUC].ok == 0, "a heard live drop is not our own")
+    check(C.HasDrop(cat, op), "a recorded drop silences our broadcast")
+    check(
+        not C.HasDrop(cat, { "CD", tostring(MC), "M", tostring(LUC), "L", "item:16800", "E663:8", "1" }),
+        "a kill id we do not hold does not"
+    )
+    check(
+        not C.HasDrop(cat, { "CD", tostring(MC), "M", tostring(LUC), "L", "item:16801", "E663:9", "1" }),
+        "nor an item we do not hold"
+    )
 end
 
 -- ---- untrusted input -------------------------------------------------------
 do
     local cat = {}
-    check(not C.ApplyOp(cat, { "CE", "x", "1", "item:1", "1", "1" }), "rejects a bad instance id")
-    check(not C.ApplyOp(cat, { "CE", "1", "1", "item:1", "0", "1" }), "rejects a zero count")
-    check(not C.ApplyOp(cat, { "CE", "1", "1", "item:1", "99999", "1" }), "rejects an absurd count")
-    check(not C.ApplyOp(cat, { "CB", "1", "-1", "X", "1", "1" }), "rejects a negative boss key")
-    C.ApplyOp(cat, { "CI", "5", "A\tB^C|D" })
+    check(not apply(cat, { "CE", "x", "1", "item:1", "1", "1" }), "rejects a bad instance id")
+    check(not apply(cat, { "CE", "1", "1", "item:1", "0", "1" }), "rejects a zero count")
+    check(not apply(cat, { "CE", "1", "1", "item:1", "99999", "1" }), "rejects an absurd count")
+    check(not apply(cat, { "CB", "1", "-1", "X", "1", "1" }), "rejects a negative boss key")
+    apply(cat, { "CI", "5", "A\tB^C|D" })
     check(cat[5].name == "ABCD", "strips separators and escapes from names")
+    apply(cat, { "CB", "5", "1", "B", "1", "1" })
     for i = 1, C.MAX_ITEMS + 10 do
-        C.ApplyOp(cat, { "CE", "5", "1", "item:" .. i, "1", "1" })
+        apply(cat, { "CE", "5", "1", "item:" .. i, "1", "1" })
     end
     local n = 0
     for _ in pairs(cat[5].b[1].i) do
         n = n + 1
     end
     check(n == C.MAX_ITEMS, "items per boss are capped")
-    C.ApplyOp(cat, { "CI", "77", "Instance 77" })
-    C.ApplyOp(cat, { "CI", "77", "Blackwing Lair" })
+    apply(cat, { "CI", "77", "Instance 77" })
+    apply(cat, { "CI", "77", "Blackwing Lair" })
     check(cat[77].name == "Blackwing Lair", "a real name replaces a placeholder")
 end
 
@@ -180,9 +337,12 @@ do
     C.Record(cat, 409, "Molten Core", 664, "Magmadar", "item:16800", "k3", 300)
     local hits = C.Find(cat, 16800)
     check(hits[1].rec.n + hits[2].rec.n == 3, "counts stay live without a rebuild")
+    local idx = C.Find(cat, 16800)
+    C.Record(cat, 409, "Molten Core", 665, "Gehennas", "item:16800", "k4", 400)
+    check(C.Find(cat, 16800) == idx and #idx == 3, "a new record is appended, not rebuilt")
     cat[409].b[663] = nil
     C.Forget(cat)
-    check(#C.Find(cat, 16800) == 1, "a forgotten boss drops out of the lookup")
+    check(#C.Find(cat, 16800) == 2, "a forgotten boss drops out of the lookup")
 end
 
 -- ---- old kill ids are dropped -----------------------------------------------

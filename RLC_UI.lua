@@ -375,9 +375,14 @@ local function restoreWindow()
         f:SetPoint(s.point, UIParent, s.rel, s.x, s.y)
     end
 end
+
+local pages, tabs = {}, {}
+local current = "loot"
+-- Only the Commands page sizes its rows when it draws; the lists re-lay
+-- themselves and Help has its own OnSizeChanged.
 f:SetScript("OnSizeChanged", function()
-    if NS.Refresh then -- not yet while this file loads
-        NS.Refresh() -- the Commands page sizes its rows when it draws
+    if current == "commands" and NS.Refresh then -- not yet while this file loads
+        NS.Refresh()
     end
 end)
 f:SetScript("OnDragStart", f.StartMoving)
@@ -406,9 +411,6 @@ end)
 function NS.ShowCopy(title, text, w, h)
     NS.Kit.ShowCopy("RaidLootControllerCopy", title, text, w, h)
 end
-
-local pages, tabs = {}, {}
-local current = "loot"
 
 local function page(key)
     local p = CreateFrame("Frame", nil, f)
@@ -788,56 +790,196 @@ local function refreshLoot(S)
 end
 
 -- ---- spec menus ------------------------------------------------------------------------
+-- A home-made pop-up list. On Forever a Menu (MenuUtil) opened from addon
+-- code crashes the client, and UIDropDownMenu taints; this is the
+-- WoWClearance selector look. entries: { text = "...", onClick = fn,
+-- checked = fn, col = true starts a new column }; an entry without onClick
+-- is a heading. radio: one choice, closes after the pick. Otherwise ticks
+-- stay open, and buttons without `checked` close it.
+
+local FLY_W, FLY_H = 140, 18
+local flyout = CreateFrame("Frame", "RaidLootControllerFlyout", UIParent, "BackdropTemplate")
+flyout:SetFrameStrata("DIALOG") -- above the window (HIGH)
+flyout:SetToplevel(true)
+flyout:SetClampedToScreen(true)
+flyout:EnableMouse(true)
+flyout:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true,
+    tileSize = 16,
+    edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+})
+flyout:SetBackdropColor(0, 0, 0, 0.92)
+flyout.rows = {}
+flyout:Hide()
+-- A click anywhere outside the list and its button closes it. Not in
+-- UISpecialFrames: Escape would close the main window with it.
+flyout:SetScript("OnUpdate", function(self)
+    if IsMouseButtonDown() and not self:IsMouseOver() and not (self.owner and self.owner:IsMouseOver()) then
+        self:Hide()
+    end
+end)
+flyout:SetScript("OnHide", function(self)
+    self.owner = nil
+end)
+f:HookScript("OnHide", function()
+    flyout:Hide()
+end)
+
+-- Redraw the ticks (after a click, and on NS.Refresh: the host's answer).
+local function flyoutSync()
+    if not flyout:IsShown() then
+        return
+    end
+    for _, r in ipairs(flyout.rows) do
+        if r:IsShown() and r.entry.checked then
+            local on = r.entry.checked() == true
+            if flyout.radio then
+                r.box:SetTexCoord(on and 0.25 or 0, on and 0.5 or 0.25, 0, 1)
+            else
+                r.check:SetShown(on)
+            end
+        end
+    end
+end
+
+local function showFlyout(owner, entries, radio)
+    if flyout:IsShown() and flyout.owner == owner then
+        flyout:Hide()
+        return
+    end
+    flyout.owner, flyout.radio = owner, radio
+    local col, y, tall = 0, 0, 0
+    for i, e in ipairs(entries) do
+        local r = flyout.rows[i]
+        if not r then
+            r = CreateFrame("Button", nil, flyout)
+            r:SetSize(FLY_W, FLY_H)
+            r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            r.box = r:CreateTexture(nil, "ARTWORK")
+            r.box:SetSize(16, 16)
+            r.box:SetPoint("LEFT", 2, 0)
+            r.check = r:CreateTexture(nil, "OVERLAY")
+            r.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+            r.check:SetAllPoints(r.box)
+            r.text = Text(r)
+            r.text:SetPoint("RIGHT", -2, 0)
+            r:SetScript("OnClick", function(self)
+                PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+                if flyout.radio or not self.entry.checked then
+                    flyout:Hide()
+                end
+                self.entry.onClick()
+                flyoutSync()
+            end)
+            flyout.rows[i] = r
+        end
+        if e.col and y > 0 then
+            col, y = col + 1, 0
+        end
+        r:SetPoint("TOPLEFT", 8 + col * FLY_W, -8 - y * FLY_H)
+        y = y + 1
+        tall = math.max(tall, y)
+        r.entry = e
+        r:EnableMouse(e.onClick ~= nil)
+        r.text:SetFontObject(e.onClick and "GameFontHighlightSmall" or "GameFontNormalSmall")
+        r.text:SetPoint("LEFT", e.checked and 20 or 4, 0)
+        r.text:SetText(e.text)
+        r.box:SetShown(e.checked ~= nil)
+        r.check:Hide()
+        if e.checked then
+            r.box:SetTexture(radio and "Interface\\Buttons\\UI-RadioButton" or "Interface\\Buttons\\UI-CheckBox-Up")
+            r.box:SetTexCoord(0, radio and 0.25 or 1, 0, 1)
+        end
+        r:Show()
+    end
+    for i = #entries + 1, #flyout.rows do
+        flyout.rows[i]:Hide()
+    end
+    flyout:SetSize((col + 1) * FLY_W + 16, tall * FLY_H + 16)
+    flyout:ClearAllPoints()
+    -- Upward when it does not fit below (clamping would cover the button).
+    local below = (owner:GetBottom() or 0) * owner:GetEffectiveScale()
+    if below < flyout:GetHeight() * flyout:GetEffectiveScale() + 2 then
+        flyout:SetPoint("BOTTOMLEFT", owner, "TOPLEFT", 0, 2)
+    else
+        flyout:SetPoint("TOPLEFT", owner, "BOTTOMLEFT", 0, -2)
+    end
+    flyout:Show()
+    flyout:Raise()
+    flyoutSync()
+end
 
 -- Officers: which specs may roll for the selected item. Each tick takes
 -- effect at once. "Suggested" re-runs the item rules; "Any spec" lifts the
--- limit.
+-- limit. Ticks go to a local set while the list is open: a non-host
+-- officer's item.specs changes only when the host's answer comes back, so
+-- quick ticks built from it would drop each other.
 function NS.ShowSpecMenu(owner)
     local S = NS.S()
     local item = S and selKey and S.items[selKey]
     if not item then
         return
     end
+    local key, chosen = item.key, {}
+    for k in pairs(item.specs or {}) do
+        chosen[k] = true
+    end
+    -- A snapshot rebuilds S, so look the item up each time; gone closes the list.
+    local function live()
+        local now = NS.S()
+        item = now and now.items[key]
+        if not item then
+            flyout:Hide()
+        end
+        return item
+    end
     local function send(set)
-        NS.Act("SPECS", item.key, Rules.SetToCSV(set))
+        NS.Act("SPECS", key, Rules.SetToCSV(set))
     end
-    local function currentSpecs()
-        local now = {}
-        for k in pairs(item.specs or {}) do
-            now[k] = true
+    local entries = {
+        { text = "Who can roll" },
+        {
+            text = "Suggested for this item",
+            onClick = function()
+                if live() then
+                    local _, csv = NS.Specs.DescribeItem(item.itemString)
+                    send(Rules.CSVToSpecs(csv) or {})
+                end
+            end,
+        },
+        {
+            text = "Any spec",
+            onClick = function()
+                if live() then
+                    send({})
+                end
+            end,
+        },
+    }
+    -- Specs.LIST keeps each class together; three classes to a column.
+    local class, n = nil, 0
+    for _, spec in ipairs(NS.Specs.LIST) do
+        if spec.class ~= class then
+            class, n = spec.class, n + 1
+            entries[#entries + 1] = { text = classLabel(class), col = n > 1 and n % 3 == 1 }
         end
-        return now
+        entries[#entries + 1] = {
+            text = spec.name,
+            checked = function()
+                return live() ~= nil and chosen[spec.key] == true
+            end,
+            onClick = function()
+                if live() then
+                    chosen[spec.key] = not chosen[spec.key] or nil
+                    send(chosen)
+                end
+            end,
+        }
     end
-    MenuUtil.CreateContextMenu(owner, function(_, root)
-        root:CreateTitle("Who can roll")
-        root:CreateButton("Suggested for this item", function()
-            local _, csv = NS.Specs.DescribeItem(item.itemString)
-            send(Rules.CSVToSpecs(csv) or {})
-        end)
-        root:CreateButton("Any spec", function()
-            send({})
-        end)
-        local byClass, order = {}, {}
-        for _, spec in ipairs(NS.Specs.LIST) do
-            if not byClass[spec.class] then
-                byClass[spec.class] = {}
-                order[#order + 1] = spec.class
-            end
-            table.insert(byClass[spec.class], spec)
-        end
-        for _, token in ipairs(order) do
-            local sub = root:CreateButton(classLabel(token))
-            for _, spec in ipairs(byClass[token]) do
-                sub:CreateCheckbox(spec.name, function()
-                    return item.specs ~= nil and item.specs[spec.key] == true
-                end, function()
-                    local now = currentSpecs()
-                    now[spec.key] = not now[spec.key] or nil
-                    send(now)
-                end)
-            end
-        end
-    end)
+    showFlyout(owner, entries)
 end
 
 -- Pick a spec for one player: yourself (stored on this character and sent
@@ -849,33 +991,40 @@ local function showPlayerSpecMenu(owner, name)
         NS.Print("Can't tell that player's class.")
         return
     end
-    MenuUtil.CreateContextMenu(owner, function(_, root)
-        root:CreateTitle(NS.Short(name) .. " - spec")
-        if name == me then
-            root:CreateRadio("From my talents", function()
+    local entries = { { text = NS.Short(name) .. " - spec" } }
+    if name == me then
+        entries[2] = {
+            text = "From my talents",
+            checked = function()
                 return NS.DB.mySpec[me] == nil
-            end, function()
+            end,
+            onClick = function()
                 NS.Specs.Choose(nil)
-            end)
-        end
-        for _, spec in ipairs(NS.Specs.LIST) do
-            if spec.class == token then
-                root:CreateRadio(spec.name, function()
+            end,
+        }
+    end
+    for _, spec in ipairs(NS.Specs.LIST) do
+        if spec.class == token then
+            entries[#entries + 1] = {
+                text = spec.name,
+                checked = function()
                     local S = NS.S()
                     if name == me then
                         return NS.DB.mySpec[me] == spec.key
                     end
                     return S ~= nil and S.specs[name] == spec.key
-                end, function()
+                end,
+                onClick = function()
                     if name == me then
                         NS.Specs.Choose(spec.key)
                     else
                         NS.Act("SETSPEC", name, spec.key)
                     end
-                end)
-            end
+                end,
+            }
         end
-    end)
+    end
+    showFlyout(owner, entries, true)
 end
 
 -- ---- Raid page ----------------------------------------------------------------------
@@ -1374,15 +1523,25 @@ catMore:Hide()
 
 -- itemString -> lower-case name, kept once the game knows it: a search
 -- reads every record, so it should not ask the item API for each again.
+-- A miss is kept as false until the game loads an item (NS.ForgetItemMisses).
 local lowerNames = {}
 local function lowerName(s)
     local name = lowerNames[s]
-    if not name then
+    if name == nil then
         name = C_Item.GetItemInfo(s)
-        name = name and name:lower()
+        name = name and name:lower() or false
         lowerNames[s] = name
     end
     return name
+end
+
+-- Called on GET_ITEM_INFO_RECEIVED: misses are asked again on the next search.
+function NS.ForgetItemMisses()
+    for s, name in pairs(lowerNames) do
+        if name == false then
+            lowerNames[s] = nil
+        end
+    end
 end
 
 local tree = List(cp, 260, 330, { 220 }, false, function(row)
@@ -1399,7 +1558,11 @@ tree.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 4, 4)
 
 local catItems = List(cp, 420, 330, { 165, 135, 58 }, true, function(rec)
     if IsModifiedClick() then
-        HandleModifiedItemClick(NS.LinkOf(rec.s))
+        -- Only a real link: an uncached item is a "[item 123]" placeholder.
+        local link = NS.LinkOf(rec.s) -- also asks the game for it
+        if NS.ItemStringOf(link) then
+            HandleModifiedItemClick(link)
+        end
         return
     end
     catItem = rec.s
@@ -1581,20 +1744,29 @@ local statsList = List(sp, 696, 360, { 150, 60, 60, 70, 70, 110 }, false, nil, {
 })
 statsList.frame:SetPoint("TOPLEFT", 4, -20)
 statsList.frame:SetPoint("BOTTOMRIGHT", -26, 30)
+-- name -> wins, newest first; built once per history change, not per hover.
+local winsBy, winsGen = {}, nil
 statsList.onEnter = function(row, name)
     GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
     GameTooltip:AddLine(NS.ColorName(name))
-    local wins = {}
-    for _, rec in pairs(NS.DB.history) do
-        for _, it in pairs(rec.items or {}) do
-            if it.state == "done" and it.winner == name then
-                wins[#wins + 1] = { t = rec.created or 0, s = it.itemString, how = it.how }
+    if winsGen ~= NS.historyGen then
+        winsBy, winsGen = {}, NS.historyGen
+        for _, rec in pairs(NS.DB.history) do
+            for _, it in pairs(rec.items or {}) do
+                if it.state == "done" and it.winner then
+                    local list = winsBy[it.winner] or {}
+                    winsBy[it.winner] = list
+                    list[#list + 1] = { t = rec.created or 0, s = it.itemString, how = it.how }
+                end
             end
         end
+        for _, list in pairs(winsBy) do
+            table.sort(list, function(a, b)
+                return a.t > b.t
+            end)
+        end
     end
-    table.sort(wins, function(a, b)
-        return a.t > b.t
-    end)
+    local wins = winsBy[name] or {}
     for i = 1, math.min(#wins, 20) do
         local w = wins[i]
         GameTooltip:AddDoubleLine(
@@ -1821,6 +1993,7 @@ local function refreshNow()
     else
         refreshHistory()
     end
+    flyoutSync()
 end
 
 -- Coalesced to once per frame: a snapshot applies dozens of ops at once.

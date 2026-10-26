@@ -706,7 +706,10 @@ do
     check(not R.AcceptNew(nil, new(B, 100000), B, nctx), "a plain raider may not")
     check(not R.AcceptNew(nil, new(ASSIST, 100000), LEAD, nctx), "only in your own name")
     check(not R.AcceptNew(nil, new(LEAD, 4000000000), LEAD, nctx), "a start time from the future is refused")
-    check(not R.AcceptNew(nil, new(LEAD, 100000 - 90000), LEAD, nctx), "a start time days old is refused")
+    nctx.now = 1000000
+    check(R.AcceptNew(nil, new(LEAD, nctx.now - R.NEW_PAST + 60), LEAD, nctx), "a reserve session days old still syncs")
+    check(not R.AcceptNew(nil, new(LEAD, nctx.now - R.NEW_PAST - 60), LEAD, nctx), "older than that is refused")
+    nctx.now = 100000
     check(not R.AcceptNew(nil, new(LEAD, "1e9"), LEAD, nctx), "a non-integer time is refused")
     local running = R.Apply(nil, new(ASSIST, 99000))
     check(running.created == 99000, "NEW keeps its start time")
@@ -725,6 +728,123 @@ do
     burst.now = burst.now + R.NEW_WINDOW + 1
     check(R.AcceptNew(nil, new(LEAD, burst.now), LEAD, burst), "and allowed again later")
     check(R.Apply(nil, { "NEW", "X-R-9", "X-R", "", "1e999" }).created == 0, "NEW never stores an absurd time")
+end
+
+-- ---- audit fixes (2026-10-26) ----------------------------------------------
+do -- reserves close once a drop is on the list, unchanged reserves send nothing
+    fresh()
+    check(#act(A, { "RES", 19019 }) == 1 and #act(A, { "RES", 19019 }) == 0, "an unchanged reserve sends nothing")
+    act(HOST, { "ADD", "item:18814" })
+    check(act(B, { "RES", 18814 }) == nil, "no reserve after a drop is added")
+end
+
+do -- a reserve must suit the class and loot spec when the host knows the item
+    fresh()
+    ctx.describe = function(s)
+        return s == "item:5" and R.ClassBit(8) or 0, s == "item:6" and "WARRIOR.PROTECTION" or ""
+    end
+    check(act(A, { "RES", 5 }) == nil, "warrior cannot reserve mage-only gear")
+    check(act(C, { "RES", 5 }), "mage can")
+    act(A, { "SPEC", "WARRIOR.FURY" })
+    check(act(A, { "RES", 6 }) == nil, "fury warrior cannot reserve a tank-only item")
+    check(act(B, { "RES", 7 }), "an unknown item fits anyone")
+    ctx.describe = nil
+end
+
+do -- a late first spec counts only before asking for anything
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    check(act(A, { "SPEC", "WARRIOR.ARMS" }) == nil, "no first spec after a want")
+    check(act(B, { "SPEC", "PALADIN.HOLY" }), "first spec without a want counts")
+end
+
+do -- roll-first players who never roll do not hold the item up; ties still wait
+    fresh()
+    host.dry, client.dry = { [A] = true }, { [A] = true }
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(B, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    check(client.items["1"].restrict[A] and not client.items["1"].restrict[B], "roll-first only")
+    check(act(HOST, { "CLOSE", "1" }) and client.items["1"].restrict == nil, "silent roll-first opens to all")
+    act(HOST, { "ROLLSEEN", B, 50, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].winner == B, "then the others' rolls count")
+end
+
+do -- officers: closing a roll you won is logged; delivered wins need the host to undo
+    fresh()
+    act(HOST, { "OFF", A, 1 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(A, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(A, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 3, 1, 100 })
+    local n = #client.log
+    act(A, { "CLOSE", "1" })
+    check(#client.log == n + 1 and client.log[#client.log].name == A, "self-won close is logged")
+    act(HOST, { "DELIV", "1" })
+    check(act(A, { "UNDO", "1" }) == nil, "officer cannot undo a delivered win")
+    check(act(HOST, { "UNDO", "1" }), "the host can")
+end
+
+do -- the log keeps the newest entries; absurd times are refused
+    fresh()
+    for i = 1, R.MAX_LOG + 5 do
+        R.Apply(host, { "LOG", i, HOST, "lock", A, "" })
+    end
+    check(#host.log == R.MAX_LOG and host.log[#host.log].t == R.MAX_LOG + 5, "log drops the oldest")
+    R.Apply(host, { "PHASE", "live", "1e999" })
+    check(host.started == 0, "PHASE never stores an absurd time")
+end
+
+do -- an age-ended session is still taken from its host; stale needs idle time
+    local S = R.NewSession("H-R-1", "H-R", "", 1)
+    S.phase, S.autoEnded = "ended", true
+    local nctx = {
+        now = 100,
+        recent = {},
+        isLead = function()
+            return false
+        end,
+        isLeadOrAssist = function()
+            return false
+        end,
+    }
+    check(R.AcceptNew(S, { "NEW", "H-R-1", "H-R", "", "1" }, "H-R", nctx), "auto-ended: host snapshot taken")
+    S.autoEnded = nil
+    check(not R.AcceptNew(S, { "NEW", "H-R-1", "H-R", "", "1" }, "H-R", nctx), "really ended: refused")
+    local live = R.NewSession("H-R-2", "H-R", "", 0)
+    check(not R.IsStale(live, 24 * 3600), "a day-old reserve session is not stale")
+    live.phase, live.started = "live", 0
+    live.log = { { t = R.STALE_LIVE } }
+    check(not R.IsStale(live, R.STALE_LIVE + 10), "recent officer action keeps it open")
+    check(R.IsStale(live, 2 * R.STALE_LIVE + 10), "idle long enough: stale")
+end
+
+do -- untrusted raids never decide who rolls first
+    local H = {
+        real = { started = 1, created = 1, items = {}, reserves = { [A] = 5 }, specs = { [C] = "x" } },
+        fake = { started = 1, created = 9, untrusted = true, items = {}, reserves = { [B] = 5 } },
+    }
+    local dry = R.DryFrom(H)
+    check(#dry == 1 and dry[1] == A, "dry list skips an untrusted newer raid and spec-only attendees")
+end
+
+do -- a reserve pays out only if the item still suits the reserver's loot spec
+    fresh()
+    act(A, { "RES", 9 })
+    act(A, { "SPEC", "WARRIOR.FURY" })
+    act(HOST, { "ADD", "item:9" })
+    act(HOST, { "SPECS", "1", "WARRIOR.PROTECTION" })
+    act(HOST, { "START", "1" })
+    check(client.items["1"].mode == "normal", "respecced reserver does not win outright")
 end
 
 -- Help search highlight.

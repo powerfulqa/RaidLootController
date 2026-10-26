@@ -457,9 +457,18 @@ function Specs.Report(force)
     NS.Act("SPEC", mine)
 end
 
+-- Fires once per point spent: report once the respec has settled.
+local respecPending = false
 NS.On("TRAIT_CONFIG_UPDATED", function()
     detected = nil
-    Specs.Report(true)
+    if not respecPending then
+        respecPending = true
+        C_Timer.After(3, function()
+            respecPending = false
+            detected = nil
+            Specs.Report(true)
+        end)
+    end
 end)
 NS.On("PLAYER_ENTERING_WORLD", function()
     C_Timer.After(5, Specs.Report)
