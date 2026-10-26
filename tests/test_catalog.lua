@@ -310,8 +310,9 @@ do
     check(not apply(cat, { "CE", "1", "1", "item:1", "99999", "1" }), "rejects an absurd count")
     check(not apply(cat, { "CB", "1", "-1", "X", "1", "1" }), "rejects a negative boss key")
     apply(cat, { "CI", "5", "A\tB^C|D" })
-    check(cat[5].name == "ABCD", "strips separators and escapes from names")
+    check(cat[5] == nil, "a bare CI makes no instance")
     apply(cat, { "CB", "5", "1", "B", "1", "1" })
+    check(cat[5].name == "ABCD", "strips separators and escapes from names")
     for i = 1, C.MAX_ITEMS + 10 do
         apply(cat, { "CE", "5", "1", "item:" .. i, "1", "1" })
     end
@@ -320,7 +321,7 @@ do
         n = n + 1
     end
     check(n == C.MAX_ITEMS, "items per boss are capped")
-    apply(cat, { "CI", "77", "Instance 77" })
+    apply(cat, { "CB", "77", "1", "B", "1", "1" })
     apply(cat, { "CI", "77", "Blackwing Lair" })
     check(cat[77].name == "Blackwing Lair", "a real name replaces a placeholder")
 end
@@ -365,7 +366,7 @@ do
     local cat = {}
     C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "E663:1", 100)
     check(not C.IsNew(cat, { "CI", tostring(MC), "Molten Core" }), "a known instance is not new")
-    check(C.IsNew(cat, { "CI", "1", "Elsewhere" }), "an unknown instance is new")
+    check(not C.IsNew(cat, { "CI", "1", "Elsewhere" }), "a bare CI adds nothing")
     check(not C.IsNew(cat, { "CB", tostring(MC), tostring(LUC), "Lucifron", "1", "1" }), "a known boss is not new")
     check(C.IsNew(cat, { "CB", tostring(MC), "1", "Other", "1", "1" }), "an unknown boss is new")
     check(not C.IsNew(cat, { "CE", tostring(MC), tostring(LUC), "item:16800", "2", "1" }), "a known item is not new")
@@ -375,6 +376,76 @@ do
         "a CD of a new item is new"
     )
     check(C.IsNew(cat, { "CE", tostring(MC), tostring(LUC), {}, "1", "1" }), "junk fields do not throw")
+end
+
+-- ---- poisoning by a guildmate ----------------------------------------------
+do
+    local cat = {}
+    for k = 1, 3 do
+        C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "E663:" .. k, k)
+    end
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "E663:1", 1)
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "E663:2", 2)
+    -- Inflated claims never silence our answer; matching ones do.
+    local inst, heard = cat[MC], {}
+    C.NoteHeard(inst, heard, { "CB", tostring(MC), tostring(LUC), "x", "9999" })
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), tostring(LUC), "item:16800", "9999" })
+    check(not C.Covered(inst, heard), "claims above our own count do not silence us")
+    C.NoteHeard(inst, heard, { "CB", tostring(MC), tostring(LUC), "x", "3" })
+    C.NoteHeard(inst, heard, { "CE", tostring(MC), tostring(LUC), "item:16800", "2" })
+    check(C.Covered(inst, heard), "claims equal to ours still do")
+    -- A fake boss and inflated counts, then ForgetHeard.
+    apply(cat, { "CB", tostring(MC), "999", "Ragnaros", "40", "1" })
+    apply(cat, { "CE", tostring(MC), "999", "item:17076", "38", "1" })
+    apply(cat, { "CB", tostring(MC), tostring(LUC), "x", "200", "1" })
+    apply(cat, { "CE", tostring(MC), tostring(LUC), "item:16801", "5", "1" })
+    apply(cat, { "CB", "531", "1", "Fake", "9", "1" })
+    check(cat[MC].b[999] and cat[MC].b[LUC].kills == 200, "poison merged")
+    check(C.Find(cat, 17076), "fake item indexed")
+    check(C.ForgetHeard(cat) == 2, "ForgetHeard drops the two heard items")
+    local b = cat[MC].b[LUC]
+    check(b.kills == 3 and b.ok == 3 and b.i[16800].n == 2, "shown counts back to our own")
+    check(cat[MC].b[999] == nil and cat[531] == nil, "heard-only bosses and instances go")
+    check(C.Find(cat, 17076) == nil and C.Find(cat, 16800), "the index is rebuilt")
+end
+
+-- ---- caps: bare CI fills nothing, heard-only entries give way --------------
+do
+    local saved = C.MAX_INSTANCES
+    C.MAX_INSTANCES = 2
+    local cat = {}
+    for id = 1, 50 do
+        apply(cat, { "CI", tostring(1000 + id), "Junk" })
+    end
+    check(next(cat) == nil, "bare CI ops make no instances")
+    apply(cat, { "CI", tostring(MC), "Molten Core" })
+    C.CountKill(cat, 1, "Own", 1, "B", "k", 1)
+    apply(cat, { "CB", "2", "1", "B", "1", "1" })
+    check(apply(cat, { "CB", tostring(MC), tostring(LUC), "Lucifron", "1", "1" }), "a full cap evicts heard-only data")
+    check(cat[2] == nil and cat[1] and cat[MC].name == "Molten Core", "our own instance stays; CI named the new one")
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "k", 1)
+    check(not apply(cat, { "CB", "3", "1", "B", "1", "1" }), "a cap of own data still refuses")
+    C.MAX_INSTANCES = saved
+    cat[7] = { name = "Empty", b = {} }
+    C.Prune(cat)
+    check(cat[7] == nil and cat[1], "Prune drops instances with no bosses")
+end
+
+-- ---- killSeen stays small ---------------------------------------------------
+do
+    local seen = {}
+    for k = 1, 1000 do
+        C.KillAllowed(seen, "Evil", { "CD", "1", "I", tostring(k), "B", "item:1", "id" .. k, "1" }, 0)
+    end
+    local n = 0
+    for _ in pairs(seen.Evil) do
+        n = n + 1
+    end
+    check(n == C.KILL_KEYS, "boss keys per raider are capped")
+    check(
+        C.KillAllowed(seen, "Evil", { "CD", "1", "I", "5000", "B", "item:1", "x", "1" }, C.KILL_GAP),
+        "stale keys make room again"
+    )
 end
 
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))

@@ -16,7 +16,7 @@ local Rules = NS.Rules
 
 NS.VERSION = C_AddOns.GetAddOnMetadata(ADDON, "Version") or "dev"
 
-local HISTORY_MAX = 200
+local HISTORY_MAX = 100
 
 -- ---- chat output -----------------------------------------------------------
 
@@ -40,7 +40,8 @@ local toldNewer = false
 local DOWNLOAD_URL = "https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip"
 local UPDATE_LINK = "|cff33ff33|Hrlcupdate:latest|h[Click here]|h|r"
 if LinkUtil and LinkUtil.RegisterLinkHandler then
-    -- Registering twice asserts, and a /reload keeps the old registration.
+    -- Registering twice asserts. A /reload resets Lua state, so this only
+    -- guards against another copy of this file registering it first.
     if not (LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered("rlcupdate")) then
         LinkUtil.RegisterLinkHandler("rlcupdate", function()
             NS.ShowCopy("Download the latest version", DOWNLOAD_URL, 600, 130)
@@ -205,6 +206,9 @@ NS.UnitIdentity = unitIdentity
 -- lower-case spelling -> canonical name, for everyone in the group. A bare
 -- first name maps only when no one else in the group shares it.
 local aliases = {}
+-- The same for full spellings only ("First Surname" and the canonical
+-- name, never a bare first name): what NS.Canon(name, true) reads.
+local fullAliases = {}
 -- name -> { unit, classID, classFile, lead, assist }: see "roster" below.
 local roster = {}
 NS.roster = roster
@@ -212,28 +216,37 @@ NS.roster = roster
 local function addAliases(canon, first)
     local display = canon:match("^(.+)%-[^%-]+$") or canon
     local r = canon:match("%-([^%-]+)$") or ""
-    for _, a in ipairs({ canon, display, first, first .. "-" .. r }) do
+    for i, a in ipairs({ canon, display, first, first .. "-" .. r }) do
         local k = a:lower()
-        if aliases[k] == nil or aliases[k] == canon then
-            aliases[k] = canon
-        else
-            aliases[k] = false -- two players share this spelling
+        for _, t in ipairs(i <= 2 and { aliases, fullAliases } or { aliases }) do
+            if t[k] == nil or t[k] == canon then
+                t[k] = canon
+            else
+                t[k] = false -- two players share this spelling
+            end
         end
     end
 end
 
--- Any spelling of a player's name -> the canonical name.
-function NS.Canon(name)
+-- Any spelling of a player's name -> the canonical name. `strict` (roll
+-- lines): never a bare first name, only "First Surname" or the full name.
+function NS.Canon(name, strict)
     if type(name) ~= "string" or name == "" then
         return nil
     end
     if roster[name] then
         return name -- already canonical, even if a shorter spelling is shared
     end
-    local hit = aliases[name:lower()]
-    if hit == nil then
-        -- "First Surname-Realm" where the realm part differs in spacing.
-        hit = aliases[(name:match("^(.-)%-") or name):lower()]
+    local t = strict and fullAliases or aliases
+    local hit = t[name:lower()]
+    local base, r = name:match("^(.-)%-(.+)$")
+    if hit == nil and base then
+        -- "First Surname-Realm" where the realm part differs in spacing:
+        -- only when it is the realm of the player it matches.
+        hit = t[base:lower()]
+        if hit and (hit:match("%-([^%-]+)$") or ""):lower() ~= r:gsub("[%s%-]", ""):lower() then
+            hit = nil
+        end
     end
     if hit == false then
         -- Two group members share this spelling. Guessing would credit
@@ -267,10 +280,34 @@ end
 -- GROUP_ROSTER_UPDATE. Class files are also remembered in saved data so
 -- history can colour names of players who have left.
 
+-- Raiders present while the raid is live, kept on the session (never
+-- sent): Rules.DryFrom reads it.
+local function markAttendance()
+    local S = NS.S()
+    if S and S.phase == "live" then
+        S.att = S.att or {}
+        for name in pairs(roster) do
+            S.att[name] = true
+        end
+    end
+end
+
+local toldDup = {} -- canonical name -> true once told it is shared
+
 function NS.RefreshRoster()
+    -- A unit whose name cannot be read now (secret during an encounter)
+    -- keeps its last entry instead of dropping out of the group.
+    local prevByUnit = {}
+    for name, r in pairs(roster) do
+        if r.unit then
+            prevByUnit[r.unit] = { name = name, r = r }
+        end
+    end
     wipe(roster)
     wipe(aliases)
+    wipe(fullAliases)
     myName = nil
+    local dup = {}
     local units = {}
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do
@@ -282,13 +319,17 @@ function NS.RefreshRoster()
             units[#units + 1] = "party" .. i
         end
     end
+    local unread = {}
     for _, unit in ipairs(units) do
         local full, first = unitIdentity(unit)
-        if full then
-            addAliases(full, first)
+        local entry
+        if not full then
+            unread[#unread + 1] = unit
+        else
             local _, classFile, classID = UnitClass(unit)
-            roster[full] = {
+            entry = {
                 unit = unit,
+                first = first,
                 classID = classID,
                 classFile = classFile,
                 lead = UnitIsGroupLeader(unit),
@@ -298,10 +339,42 @@ function NS.RefreshRoster()
                 NS.DB.classes[full] = classFile
             end
         end
+        if full and (dup[full] or roster[full]) then
+            -- Two units read as one name: either could be credited with the
+            -- other's rolls and messages, so neither counts.
+            if roster[full] and not toldDup[full] then
+                toldDup[full] = true
+                NS.Print(
+                    "Two group members both read as %s (%s and %s). Their rolls and messages are ignored; hand their loot out by hand.",
+                    full,
+                    roster[full].unit,
+                    unit
+                )
+            end
+            dup[full], roster[full] = true, nil
+        elseif full then
+            addAliases(full, first)
+            roster[full] = entry
+        end
+    end
+    for full in pairs(dup) do
+        aliases[full:lower()], fullAliases[full:lower()] = false, false
+    end
+    -- Unreadable units keep their last name, after the readable ones: unit
+    -- tokens shift when someone leaves, so a kept name already read live
+    -- belongs to that unit and is skipped, never counted as a duplicate.
+    for _, unit in ipairs(unread) do
+        local prev = prevByUnit[unit]
+        if prev and not roster[prev.name] and not dup[prev.name] then
+            prev.r.unit = unit
+            addAliases(prev.name, prev.r.first or prev.name)
+            roster[prev.name] = prev.r
+        end
     end
     if NS.Demo and NS.Demo.active then
         NS.Demo.AddRoster(roster) -- fake raiders stay listed in demo mode
     end
+    markAttendance()
 end
 
 function NS.ClassOf(name)
@@ -410,7 +483,12 @@ function NS.ApplyOps(ops, broadcast)
         -- An UNDO takes the win back, so the old winner is no longer owed it.
         local undone = op[1] == "UNDO" and S and S.items[op[2]]
         undone = undone and undone.winner and { who = undone.winner, s = undone.itemString }
+        -- A resent NEW of our own session keeps who attended (local only).
+        local prevAtt = op[1] == "NEW" and S and S.id == op[2] and S.att
         local newS, why = Rules.Apply(S, op)
+        if newS and prevAtt then
+            newS.att = newS.att or prevAtt
+        end
         local owedList = undone and newS and NS.DB.owed[undone.who]
         if owedList then
             for i, s in ipairs(owedList) do
@@ -436,6 +514,9 @@ function NS.ApplyOps(ops, broadcast)
             S.untrusted = S.untrusted or (k == "NEW" and op.untrusted) or nil
             if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" or k == "UNDO" then
                 changedHistory = true
+            end
+            if k == "PHASE" then
+                markAttendance()
             end
             local winKey = S.id .. "\t" .. tostring(op[2])
             if k == "UNDO" then
@@ -494,41 +575,54 @@ end
 -- Ask the host for the whole session. Throttled, and retried a few times
 -- while we still have nothing, since the first ask can land in a loading
 -- screen or before the host's roster knows us.
-local lastSyncAsk = 0
+-- `tries` > 0 only for the retries below; every first ask (a missed op,
+-- joining, /rlc sync) is throttled. Returns true when it asked.
+local lastSyncAsk = -600
 function NS.RequestSync(tries)
     if not IsInGroup() or NS.IsHost() then
         return
     end
     local now = GetTime()
-    if not tries and now - lastSyncAsk < 30 then
+    if (tries or 0) == 0 and now - lastSyncAsk < 30 then
         return
     end
     lastSyncAsk = now
-    NS.Net.Queue({ "?SYNC" })
+    -- "1": we have nothing, so the host answers sooner (Net.SendSnapshot).
+    local S = NS.S()
+    NS.Net.Queue({ "?SYNC", (not S or S.phase == "ended") and 1 or nil })
     tries = (tries or 0) + 1
     if tries < 3 then
         C_Timer.After(15, function()
             -- No session yet, or only an ended one: the ask may have been lost.
-            local S = NS.S()
-            if not S or S.phase == "ended" then
+            local now2 = NS.S()
+            if not now2 or now2.phase == "ended" then
                 NS.RequestSync(tries)
             end
         end)
     end
+    return true
 end
 
--- Show a line to the whole raid: in raid chat when the host has announcing
--- on (so players without the addon see it too), otherwise as a NOTE op that
--- only addon users print. Never both, or addon users read it twice.
+-- Whether we asked for a snapshot recently enough that one arriving now
+-- answers us. Longer than the host's 120 s snapshot gap (RLC_Net.lua), or
+-- the answer we waited for would be ignored as unasked.
+function NS.SyncAskedRecently()
+    return GetTime() - lastSyncAsk < 150
+end
+
+-- Show a line to the whole raid: always as a NOTE op that addon users
+-- print, and also in raid chat when the host has announcing on (so players
+-- without the addon see it too). The chat send can be blocked from an event
+-- handler on this client and says nothing when it is, so the NOTE always
+-- goes too, even if addon users then read the line twice.
 function NS.Announce(text, itemString)
     local line = itemString and (NS.LinkOf(itemString) .. " - " .. text) or text
     local demo = NS.Demo and NS.Demo.active
     if NS.DB.announce and not demo and IsInGroup() and not C_ChatInfo.InChatMessagingLockdown() then
         C_ChatInfo.SendChatMessage(line, IsInRaid() and "RAID" or "PARTY")
-    else
-        NS.Print(line)
-        NS.Net.Queue({ "NOTE", line })
     end
+    NS.Print(line)
+    NS.Net.Queue({ "NOTE", line })
 end
 
 -- Players to roll first tonight (see Rules.DryFrom), from saved history.
@@ -555,7 +649,7 @@ function NS.HandleRequest(who, req, quiet)
             return
         end
         lastSyncFrom[who] = now
-        NS.Net.SendSnapshot()
+        NS.Net.SendSnapshot(req[2] == "1") -- "1": the asker has no session
         return
     end
     local ops, note = Rules.Intent(S, who, req, {
@@ -726,6 +820,9 @@ local function onRoster()
     end
 end
 NS.On("PLAYER_ENTERING_WORLD", onRoster)
+-- Names hidden during a fight read again after it.
+NS.On("ENCOUNTER_END", onRoster)
+NS.On("PLAYER_REGEN_ENABLED", onRoster)
 -- The roster event fires in bursts while a raid forms or zones in:
 -- rebuild once per frame, not once per event.
 local rosterPending = false
@@ -747,13 +844,15 @@ end)
 -- once): redraw once per burst, not once per item.
 local itemInfoPending = false
 NS.On("GET_ITEM_INFO_RECEIVED", function(itemID, success)
-    if success == false and itemID then
-        requested[itemID] = nil -- let the next redraw ask once more
-    elseif NS.ForgetItemMisses then
-        NS.ForgetItemMisses() -- the catalogue search may now find its name
+    if success == false then
+        if itemID then
+            requested[itemID] = nil -- let the next redraw ask once more
+        end
+        return -- a failed load brings no new name: redrawing would only ask again
     end
-    -- A failed load brings no new name: redrawing would only ask again.
-    if success ~= false and not itemInfoPending then
+    -- Every item load in the game lands here: redraw only for ones we show.
+    local cared = NS.ItemInfoArrived and itemID and NS.ItemInfoArrived(itemID)
+    if (cared or (itemID and requested[itemID])) and not itemInfoPending then
         itemInfoPending = true
         C_Timer.After(0.25, function()
             itemInfoPending = false
@@ -776,7 +875,7 @@ NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid
     -- The GUID, not the name: first names are not unique here, and a
     -- stranger sharing one would otherwise reserve as that raider.
     local r = who and NS.roster[who]
-    local unitGUID = r and UnitGUID(r.unit)
+    local unitGUID = r and r.unit and UnitGUID(r.unit)
     if not guid or not NS.CanRead(unitGUID) or unitGUID ~= guid or GetTime() - (lastWhisperTo[who] or -60) < 5 then
         return -- not a command, or not from someone in the group
     end
@@ -791,6 +890,9 @@ NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid
     if not C_ChatInfo.InChatMessagingLockdown() then
         C_ChatInfo.SendChatMessage(reply, "WHISPER", nil, sender)
     end
+    -- The whisper can be blocked without a word; the host sees the answer
+    -- here either way and can pass it on.
+    NS.Print("Answer to %s: %s", NS.ColorName(who), reply)
 end)
 
 -- ---- slash -------------------------------------------------------------------
@@ -839,8 +941,11 @@ NS.Commands = {
             return IsInGroup() and not NS.IsHost()
         end,
         fn = function()
-            NS.RequestSync(0)
-            NS.Print("Asked the raid host for the current session.")
+            if NS.RequestSync() then
+                NS.Print("Asked the raid host for the current session.")
+            else
+                NS.Print("Already asked the raid host in the last 30 seconds.")
+            end
         end,
     },
     {

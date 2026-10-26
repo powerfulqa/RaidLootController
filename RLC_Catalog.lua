@@ -117,9 +117,56 @@ local function validItem(s)
     return Rules.ValidItemString(s) and (Rules.ItemIDOf(s) or 0) <= Rules.MAX_ID
 end
 
+-- Kills and drop count we saw ourselves (old saved data: all of it).
+local function ownKills(boss)
+    return boss.ok or (boss.w and 0 or boss.kills)
+end
+local function ownN(rec)
+    return rec.on or (rec.w and 0 or rec.n)
+end
+
+-- Whether an instance, boss or item record holds only heard data.
+local function heardOnly(e)
+    if e.b then
+        for _, boss in pairs(e.b) do
+            if not heardOnly(boss) then
+                return false
+            end
+        end
+        return true
+    elseif e.i then
+        if ownKills(e) > 0 then
+            return false
+        end
+        for _, rec in pairs(e.i) do
+            if ownN(rec) > 0 then
+                return false
+            end
+        end
+        return true
+    end
+    return ownN(e) == 0
+end
+
+-- Make room under a cap: drop one entry of t that holds only heard data,
+-- so junk from the wire cannot fill a cap for good. False if none.
+local function evict(cat, t)
+    for k, e in pairs(t) do
+        if heardOnly(e) then
+            t[k] = nil
+            Catalog.Forget(cat)
+            return true
+        end
+    end
+    return false
+end
+
 -- A new item record, or nil when a cap says no (wire data only).
 local function newRecord(cat, boss, itemString, wire)
-    if wire and (count(boss.i) >= Catalog.MAX_ITEMS or total(cat) >= Catalog.MAX_RECORDS) then
+    if
+        wire
+        and ((count(boss.i) >= Catalog.MAX_ITEMS and not evict(cat, boss.i)) or total(cat) >= Catalog.MAX_RECORDS)
+    then
         return nil
     end
     totals[cat] = total(cat) + 1
@@ -150,14 +197,18 @@ local function remember(holder, field, killId)
     return true
 end
 
+-- Names from bare CI ops: a CI alone never makes an instance (300 of them
+-- would fill the cap), it only names one a later CB or CE makes.
+local heardNames, heardNameCount = {}, 0
+
 -- Find or create an instance, respecting the cap for wire data.
 function Catalog.Instance(cat, instID, instName, wire)
     local inst = cat[instID]
     if not inst then
-        if wire and count(cat) >= Catalog.MAX_INSTANCES then
+        if wire and count(cat) >= Catalog.MAX_INSTANCES and not evict(cat, cat) then
             return nil
         end
-        inst = { name = instName or ("Instance " .. instID), b = {} }
+        inst = { name = instName or heardNames[instID] or ("Instance " .. instID), b = {} }
         cat[instID] = inst
     end
     return inst
@@ -172,7 +223,7 @@ function Catalog.Boss(cat, instID, instName, bossKey, bossName, t, wire)
     end
     local boss = inst.b[bossKey]
     if not boss then
-        if wire and count(inst.b) >= Catalog.MAX_BOSSES then
+        if wire and count(inst.b) >= Catalog.MAX_BOSSES and not evict(cat, inst.b) then
             return nil
         end
         boss = {
@@ -192,12 +243,42 @@ function Catalog.Boss(cat, instID, instName, bossKey, bossName, t, wire)
     return boss
 end
 
--- Kills and drop count we saw ourselves (old saved data: all of it).
-local function ownKills(boss)
-    return boss.ok or (boss.w and 0 or boss.kills)
+-- Drop everything we only heard: shown counts fall back to our own, and
+-- items, bosses and instances with nothing of our own go. Undoes a
+-- poisoned merge. Returns how many item records were dropped.
+function Catalog.ForgetHeard(cat)
+    local dropped = 0
+    for instID, inst in pairs(cat) do
+        for key, boss in pairs(inst.b) do
+            boss.ok = ownKills(boss)
+            boss.kills = boss.ok
+            for id, rec in pairs(boss.i) do
+                rec.on = ownN(rec)
+                rec.n = rec.on
+                if rec.n == 0 then
+                    boss.i[id], dropped = nil, dropped + 1
+                end
+            end
+            if boss.kills == 0 and next(boss.i) == nil then
+                inst.b[key] = nil
+            end
+        end
+        if next(inst.b) == nil then
+            cat[instID] = nil
+        end
+    end
+    Catalog.Forget(cat)
+    return dropped
 end
-local function ownN(rec)
-    return rec.on or (rec.w and 0 or rec.n)
+
+-- Drop instances with no bosses (left by older versions' bare CI ops).
+function Catalog.Prune(cat)
+    for instID, inst in pairs(cat) do
+        if next(inst.b) == nil then
+            cat[instID] = nil
+        end
+    end
+    Catalog.Forget(cat)
 end
 
 -- One kill of a boss, counted once per kill id.
@@ -336,12 +417,12 @@ Catalog.SENDER_NEW = 5000
 
 -- Whether merging op would add an entry the catalogue does not have yet.
 function Catalog.IsNew(cat, op)
+    if op[1] == "CI" then
+        return false -- a bare CI adds nothing
+    end
     local inst = cat[tonumber(op[2])]
     if not inst then
         return true
-    end
-    if op[1] == "CI" then
-        return false
     end
     local boss = inst.b[tonumber(op[op[1] == "CD" and 4 or 3])]
     if not boss then
@@ -365,16 +446,21 @@ function Catalog.InstanceOps(cat, instID)
 end
 
 -- Note one heard answer op against our own instance: heard[boss or rec] =
--- the highest kills or count anyone sent for it.
+-- the highest kills or count anyone sent for it, up to our own. A claim
+-- above our own count is one we cannot check, so it never silences us:
+-- a guildmate sending 9999 would otherwise stop every honest answer.
+-- An honest peer who knows more costs one extra answer, nothing else.
 function Catalog.NoteHeard(inst, heard, op)
     local key = inst and inst.b[int(op[3], 0, 1e9) or false]
+    local own = key and ownKills(key)
     if key and op[1] == "CE" then
         key = validItem(op[4]) and key.i[Rules.ItemIDOf(op[4])]
+        own = key and ownN(key)
     elseif op[1] ~= "CB" then
         key = nil
     end
     local v = int(op[5], 0, Catalog.MAX_COUNT)
-    if key and v then
+    if key and v and v <= own then
         heard[key] = math.max(heard[key] or 0, v)
     end
 end
@@ -396,23 +482,36 @@ end
 
 -- A raider may send one new boss kill id per boss per KILL_GAP seconds,
 -- and TRASH_IDS new trash kill ids (corpse GUIDs) per TRASH_GAP, so fresh
--- ids cannot pump our counts. seen: "sender bossKey" -> { at, ids, n }.
+-- ids cannot pump our counts. seen: sender -> bossKey -> { at, ids, n },
+-- at most KILL_KEYS boss keys per raider, so junk keys cannot grow it.
 Catalog.KILL_GAP = 600
 Catalog.TRASH_IDS, Catalog.TRASH_GAP = 10, 60
+Catalog.KILL_KEYS = 20
 function Catalog.KillAllowed(seen, sender, op, now)
     local bossKey = int(op[4], 0, 1e9)
     if not bossKey then
         return false
     end
-    local key, killId = sender .. " " .. bossKey, tostring(op[7])
+    local mine, killId = seen[sender] or {}, tostring(op[7])
+    seen[sender] = mine
     local max, gap = 1, Catalog.KILL_GAP
     if bossKey == 0 then
         max, gap = Catalog.TRASH_IDS, Catalog.TRASH_GAP
     end
-    local s = seen[key]
+    local s = mine[bossKey]
+    if not s and count(mine) >= Catalog.KILL_KEYS then
+        for k, old in pairs(mine) do
+            if now - old.at >= Catalog.KILL_GAP then
+                mine[k] = nil
+            end
+        end
+        if count(mine) >= Catalog.KILL_KEYS then
+            return false
+        end
+    end
     if not s or now - s.at >= gap then
         s = { at = now, ids = {}, n = 0 }
-        seen[key] = s
+        mine[bossKey] = s
     end
     if not s.ids[killId] then
         if s.n >= max then
@@ -458,14 +557,22 @@ function Catalog.ApplyOp(cat, op, now)
         if not name then
             return false
         end
-        local existed = cat[instID] ~= nil
-        local inst = Catalog.Instance(cat, instID, name, true)
+        local inst = cat[instID]
+        if not inst then
+            -- Only remembered: the instance is made by a CB or CE for it.
+            if heardNameCount >= Catalog.MAX_INSTANCES then
+                heardNames, heardNameCount = {}, 0
+            end
+            heardNameCount = heardNameCount + (heardNames[instID] and 0 or 1)
+            heardNames[instID] = name
+            return false
+        end
         -- A placeholder name (made by a CB/CE that arrived first) gives way.
-        if inst and existed and inst.name ~= name and inst.name:find("^Instance %d") then
+        if inst.name ~= name and inst.name:find("^Instance %d") then
             inst.name = name
             return true
         end
-        return inst ~= nil and not existed
+        return false
     elseif kind == "CD" then
         -- A live drop broadcast by a raider who opened the corpse:
         -- CD instID instName bossKey bossName itemString killId time
@@ -534,9 +641,14 @@ end
 
 local lastKill -- { instID, encID, name, key, at }
 
--- Drops heard from other raiders, "itemString killId" -> true, so only one
--- looter broadcasts each drop. Wiped at each kill.
+-- Drops heard from other raiders, "instID bossKey itemString killId" ->
+-- true, so only one looter broadcasts each drop. Wiped at each kill. The
+-- instance and boss are in the key: a CD filed under another boss must not
+-- silence the real looter's broadcast.
 local heardDrop = {}
+local function dropKey(op)
+    return (int(op[2], 1, 1e9) or "?") .. " " .. (int(op[4], 0, 1e9) or "?") .. " " .. op[6] .. " " .. op[7]
+end
 -- Boss kill ids heard per raider and boss, for Catalog.KillAllowed.
 local killSeen = {}
 
@@ -555,9 +667,14 @@ NS.On("ENCOUNTER_END", function(encID, encName, _, _, success)
     end
     lastKill = { instID = instID, encID = encID, name = encName, key = killKey(encID), at = GetTime() }
     wipe(heardDrop)
-    for key, seen in pairs(killSeen) do
-        if GetTime() - seen.at >= Catalog.KILL_GAP then
-            killSeen[key] = nil
+    for sender, mine in pairs(killSeen) do
+        for key, seen in pairs(mine) do
+            if GetTime() - seen.at >= Catalog.KILL_GAP then
+                mine[key] = nil
+            end
+        end
+        if next(mine) == nil then
+            killSeen[sender] = nil
         end
     end
     Catalog.CountKill(cat(), instID, instName, encID, encName, lastKill.key, GetServerTime())
@@ -590,7 +707,7 @@ NS.On("LOOT_OPENED", function()
     if #news > 0 then
         C_Timer.After(math.random() * 3, function()
             for _, op in ipairs(news) do
-                if not heardDrop[op[6] .. " " .. op[7]] then
+                if not heardDrop[dropKey(op)] then
                     NS.Net.QueueCatalog(op, "GROUP")
                 end
             end
@@ -655,6 +772,8 @@ local function answer(who, req)
     then
         return
     end
+    -- Before the plan: an empty plan still costs a Digest, so it is rate-limited too.
+    servedSender[who] = now
     -- Instances the asker listed first; the rest only fill what the cap leaves.
     local plan = {}
     for instID, d in pairs(Catalog.Digest(cat(), true)) do
@@ -666,7 +785,7 @@ local function answer(who, req)
     if #plan == 0 then
         return
     end
-    servedSender[who], servedDest[req.dest] = now, now
+    servedDest[req.dest] = now
     C_Timer.After(2 + math.random() * 6, function()
         local busy = NS.Net.CatalogBacklog and NS.Net.CatalogBacklog(req.dest) > 0
         local sent = 0
@@ -714,10 +833,12 @@ function Catalog.OnMessage(ops, dest, sender)
             end
             if kind == "CD" then
                 -- A live drop only counts from someone in our group: from
-                -- the guild channel it would be a kill nobody here saw.
+                -- the guild channel it would be a kill nobody here saw. And
+                -- only for the instance we are in: we were at that kill.
                 if
                     dest ~= "GROUP"
                     or not NS.roster[sender]
+                    or int(op[2], 1, 1e9) ~= where()
                     or not Catalog.KillAllowed(killSeen, sender, op, GetTime())
                 then
                     op = nil
@@ -737,7 +858,7 @@ function Catalog.OnMessage(ops, dest, sender)
             changed = op ~= nil and Catalog.ApplyOp(cat(), op, GetServerTime()) or changed
             -- Only a valid, recorded drop silences our own broadcast of it.
             if op and kind == "CD" and Catalog.HasDrop(cat(), op) then
-                heardDrop[op[6] .. " " .. op[7]] = true
+                heardDrop[dropKey(op)] = true
             end
         end
     end
@@ -748,6 +869,9 @@ end
 
 NS.On("PLAYER_ENTERING_WORLD", function(isInitialLogin, isReload)
     if isInitialLogin or isReload then
+        if NS.DB then
+            Catalog.Prune(cat())
+        end
         C_Timer.After(30, function()
             Catalog.Ask("GUILD")
             if IsInGroup() then

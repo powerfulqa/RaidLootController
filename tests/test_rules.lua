@@ -270,7 +270,7 @@ do
         now = { started = 3, created = 3, specs = {}, items = {} },
     }
     local dry = table.concat(R.DryFrom(history, "now"), ",")
-    check(dry == table.concat({ B, C }, ","), "dry: seen last raid, no non-free win (got " .. dry .. ")")
+    check(dry == B, "dry: seen last raid, no non-free win, a reserve alone is not seen (got " .. dry .. ")")
     check(#R.DryFrom({}, nil) == 0, "no history: nobody is dry")
 
     fresh()
@@ -830,8 +830,18 @@ end
 
 do -- untrusted raids never decide who rolls first
     local H = {
-        real = { started = 1, created = 1, items = {}, reserves = { [A] = 5 }, specs = { [C] = "x" } },
-        fake = { started = 1, created = 9, untrusted = true, items = {}, reserves = { [B] = 5 } },
+        real = {
+            started = 1,
+            created = 1,
+            items = { ["1"] = { wants = { [A] = true }, rolls = {} } },
+            specs = { [C] = "x" },
+        },
+        fake = {
+            started = 1,
+            created = 9,
+            untrusted = true,
+            items = { ["1"] = { wants = { [B] = true }, rolls = {} } },
+        },
     }
     local dry = R.DryFrom(H)
     check(#dry == 1 and dry[1] == A, "dry list skips an untrusted newer raid and spec-only attendees")
@@ -845,6 +855,133 @@ do -- a reserve pays out only if the item still suits the reserver's loot spec
     act(HOST, { "SPECS", "1", "WARRIOR.PROTECTION" })
     act(HOST, { "START", "1" })
     check(client.items["1"].mode == "normal", "respecced reserver does not win outright")
+end
+
+do -- roll-first from attendance (rec.att, local only); small parties never count
+    local att = {}
+    for i = 1, R.MIN_ATTEND - 1 do
+        att["P" .. i .. "-Realm"] = true
+    end
+    att[A] = true
+    local H = {
+        real = {
+            started = 1,
+            created = 1,
+            att = att,
+            reserves = { [C] = 5 }, -- reserved, then left before the raid: not in att
+            items = { ["1"] = { state = "done", winner = A, how = "roll", wants = { [B] = true }, rolls = {} } },
+        },
+    }
+    local dry = R.DryFrom(H)
+    check(#dry == R.MIN_ATTEND - 1 and dry[1] == "P1-Realm", "att: everyone seen in the group, winners aside")
+    local inAtt = {}
+    for _, n in ipairs(dry) do
+        inAtt[n] = true
+    end
+    check(not inAtt[B] and not inAtt[C], "att: a want or reserve from someone not in the group counts for nothing")
+    H.party = { started = 1, created = 9, att = { [B] = true, [C] = true }, items = {} }
+    check(#R.DryFrom(H) == R.MIN_ATTEND - 1, "att: a newer raid under MIN_ATTEND players is skipped")
+    local S = R.Apply(nil, { "NEW", "Host-Realm-5", HOST, "x", 5 })
+    S.att = att
+    local found = false
+    for _, op in ipairs(R.Snapshot(S)) do
+        for _, v in ipairs(op) do
+            found = found or v == A
+        end
+    end
+    check(not found, "att is never sent in a snapshot")
+end
+
+do -- out of a raid group, a NEW from someone else never replaces a running raid we host
+    local LEAD = "Lead-Realm"
+    local mine = R.Apply(nil, { "NEW", HOST .. "-1", HOST, "x", 1 })
+    local nctx = {
+        now = 100,
+        me = HOST,
+        isLead = function(n)
+            return n == LEAD
+        end,
+        isLeadOrAssist = function(n)
+            return n == LEAD
+        end,
+        recent = {},
+    }
+    local op = { "NEW", LEAD .. "-100", LEAD, "x", "100" }
+    check(not R.AcceptNew(mine, op, LEAD, nctx), "our running raid is not taken over from a party")
+    nctx.inRaid = true
+    check(R.AcceptNew(mine, op, LEAD, nctx), "in a raid group the leader takes over, as everyone else accepts it")
+    nctx.inRaid = nil
+    nctx.me = "Other-Realm"
+    check(R.AcceptNew(mine, op, LEAD, nctx), "a leader may take over someone else's raid")
+    nctx.me = HOST
+    mine.phase = "ended"
+    check(R.AcceptNew(mine, op, LEAD, nctx), "once ours ended, a new raid may start")
+end
+
+do -- no loot spec on record: no asking for spec gear
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "SPECS", "1", "WARRIOR.FURY" })
+    act(HOST, { "START", "1" })
+    local ok, why = act(A, { "WANT", "1", 1 })
+    check(not ok and why == "Pick your loot spec first.", "want refused without a spec")
+    act(A, { "SPEC", "WARRIOR.FURY" })
+    check(act(A, { "WANT", "1", 1 }), "want allowed once the spec is set")
+    local last = client.log and client.log[#client.log]
+    check(last and last.what == "specs", "SPECS is logged")
+    check(act(HOST, { "OFF", B, 1 }) and client.log[#client.log].what == "officer", "host OFF is logged")
+end
+
+do -- the log keeps awards and take-backs when trimmed, and stays bounded
+    fresh()
+    R.Apply(host, { "LOG", 1, HOST, "award", A, "1" })
+    for i = 2, R.MAX_LOG + 5 do
+        R.Apply(host, { "LOG", i, HOST, "lock", A, "" })
+    end
+    check(#host.log == R.MAX_LOG and host.log[1].what == "award", "log trim keeps the oldest award")
+    for i = 1, R.MAX_LOG + 5 do
+        R.Apply(host, { "LOG", 1000 + i, HOST, "undo", A, "1" })
+    end
+    check(#host.log == R.MAX_LOG and host.log[#host.log].t == 1000 + R.MAX_LOG + 5, "all awards: oldest goes")
+end
+
+do -- stats skip untrusted raids
+    local st = R.PlayerStats({
+        x = { started = 1, untrusted = true, items = { a = { state = "done", winner = A, how = "roll" } } },
+    })
+    check(st[A] == nil, "an untrusted raid counts for no stats")
+end
+
+do -- wire edge cases
+    fresh()
+    check(R.Apply(host, { "ADD", "01", "item:1" }) == nil, "ADD key must be canonical")
+    local cap = R.MAX_ITEMS
+    R.MAX_ITEMS = 1
+    check(R.Apply(host, { "ADD", "1", "item:1" }), "ADD under the cap")
+    check(R.Apply(host, { "ADD", "2", "item:2" }) == nil, "ADD over MAX_ITEMS refused")
+    R.MAX_ITEMS = cap
+    check(R.Apply(host, { "ITEM", "1", "done", "normal", 0, "", "" }) == nil, "ITEM cannot set done")
+    check(R.Apply(host, { "ITEMADD", "1", "r", A }) == nil, "ITEMADD on a list not marked + refused")
+    R.Apply(host, { "ITEM", "1", "interest", "normal", 0, "+", "" })
+    check(R.Apply(host, { "ITEMADD", "1", "r", A }) and host.items["1"].restrict[A], "ITEMADD on a + list")
+    R.Apply(host, { "AWARD", "1", A, "manual", 5 })
+    check(R.Apply(host, { "CANCEL", "1" }) == nil, "CANCEL of a won item refused in Apply")
+    local ok, why = R.Intent(host, HOST, { "CANCEL", "1" }, ctx)
+    check(not ok and why == "That item is finished.", "CANCEL of a won item refused in Intent")
+end
+
+do -- reserve item, every reserver gone: CALL falls back to normal interest
+    fresh()
+    act(A, { "RES", 7 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:7" })
+    act(HOST, { "START", "1" })
+    check(host.items["1"].mode == "reserve", "a reserved item starts in reserve mode")
+    CLASS[A] = nil
+    act(HOST, { "CALL", "1" })
+    CLASS[A] = 1
+    check(client.items["1"].mode == "normal" and client.items["1"].state == "interest", "no reserver here: normal")
 end
 
 -- Help search highlight.

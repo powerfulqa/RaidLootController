@@ -92,14 +92,42 @@ local function ItemTooltip(owner, itemString)
     -- tooltip does it itself, and calling it from here would only taint it.
 end
 
--- Lowest item level among a worn value ("item:1,item:2"), or nil.
+-- Bumped whenever the game loads an item: lists that skip a rebuild must
+-- still redraw once names and links arrive.
+local itemInfoGen = 0
+
+-- The dark list-box and flyout backdrop.
+local BACKDROP = {
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true,
+    tileSize = 16,
+    edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+}
+
+-- Lowest item level among a worn value ("item:1,item:2"), or nil. Kept per
+-- worn value once every item in it is known: the people list redraws on
+-- every roll.
+local wornLevels = {}
 local function wornLevel(worn)
-    local low
-    for s in (worn or ""):gmatch("[^,]+") do
+    if not worn then
+        return nil
+    end
+    if wornLevels[worn] then
+        return wornLevels[worn]
+    end
+    local low, known = nil, true
+    for s in worn:gmatch("[^,]+") do
         local lvl = C_Item.GetDetailedItemLevelInfo(s)
-        if lvl and (not low or lvl < low) then
+        if not lvl then
+            known = false
+        elseif not low or lvl < low then
             low = lvl
         end
+    end
+    if known then
+        wornLevels[worn] = low
     end
     return low
 end
@@ -163,14 +191,7 @@ local function List(parent, w, h, cols, withIcon, onClick, headers)
     box:SetPoint("TOPLEFT", sf, "TOPLEFT", -6, headers and 18 or 6)
     box:SetPoint("BOTTOMRIGHT", sf, "BOTTOMRIGHT", 26, -6)
     box:SetFrameLevel(math.max(0, sf:GetFrameLevel() - 1))
-    box:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 12,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
+    box:SetBackdrop(BACKDROP)
     box:SetBackdropColor(0, 0, 0, 0.6)
     box:SetBackdropBorderColor(0.4, 0.35, 0.25, 1)
 
@@ -622,29 +643,41 @@ local function specName(key)
     return spec and spec.name or "?"
 end
 
+local queueSig -- what the queue list was last built from
 local function refreshLoot(S)
     local order = S and S.order or {}
     if S and (not selKey or not S.items[selKey]) then
         selKey = S.active or order[#order]
     end
-    order = { unpack(order) } -- a copy: sorting must never touch S.order
-    queue:Sort(order, {
-        function(key)
-            return itemKey(S.items[key].itemString)
-        end,
-        function(key)
-            local item = S.items[key]
-            return item.state == "done" and ("won " .. NS.Short(item.winner)) or item.state
-        end,
-    })
-    queue:Set(#order, function(r, i)
-        local item = S.items[order[i]]
-        r.data = item
-        r.icon:SetTexture(NS.IconOf(item.itemString))
-        r.cols[1]:SetText(NS.LinkOf(item.itemString))
-        r.cols[2]:SetText(item.state == "done" and NS.ColorName(item.winner) or STATE_TEXT[item.state])
-        return item.key == selKey
-    end)
+    -- The queue only changes with items, states, winners, the selection, the
+    -- sort or item data arriving; a want or a roll alone leaves it as it is.
+    local sig = { tostring(selKey), tostring(queue.sortCol), tostring(queue.desc), itemInfoGen }
+    for _, key in ipairs(order) do
+        local item = S.items[key]
+        sig[#sig + 1] = tostring(item) .. "=" .. item.state .. "=" .. tostring(item.winner)
+    end
+    sig = table.concat(sig, ";")
+    if sig ~= queueSig then
+        queueSig = sig
+        order = { unpack(order) } -- a copy: sorting must never touch S.order
+        queue:Sort(order, {
+            function(key)
+                return itemKey(S.items[key].itemString)
+            end,
+            function(key)
+                local item = S.items[key]
+                return item.state == "done" and ("won " .. NS.Short(item.winner)) or item.state
+            end,
+        })
+        queue:Set(#order, function(r, i)
+            local item = S.items[order[i]]
+            r.data = item
+            r.icon:SetTexture(NS.IconOf(item.itemString))
+            r.cols[1]:SetText(NS.LinkOf(item.itemString))
+            r.cols[2]:SetText(item.state == "done" and NS.ColorName(item.winner) or STATE_TEXT[item.state])
+            return item.key == selKey
+        end)
+    end
 
     local officer = NS.IsOfficer()
     local pending = (Loot.lootOpen and officer) and Loot.PendingFromWindow() or 0
@@ -803,14 +836,7 @@ flyout:SetFrameStrata("DIALOG") -- above the window (HIGH)
 flyout:SetToplevel(true)
 flyout:SetClampedToScreen(true)
 flyout:EnableMouse(true)
-flyout:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true,
-    tileSize = 16,
-    edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 },
-})
+flyout:SetBackdrop(BACKDROP)
 flyout:SetBackdropColor(0, 0, 0, 0.92)
 flyout.rows = {}
 flyout:Hide()
@@ -1107,6 +1133,7 @@ end
 local mySpecLabel = Text(rpg, "GameFontNormal")
 mySpecLabel:SetPoint("TOPLEFT", 420, -62)
 mySpecLabel:SetWidth(270)
+mySpecLabel:SetWordWrap(true)
 local mySpecBtn = Button(rpg, "Change loot spec", 120, function(self)
     showPlayerSpecMenu(self, NS.Me())
 end)
@@ -1296,7 +1323,6 @@ local function refreshRaid(S)
         line = line .. "\n|cffff8800Raid has you as " .. specName(onRecord) .. " (locked).|r"
     end
     mySpecLabel:SetText(line)
-    mySpecLabel:SetWordWrap(true)
 
     local parts, owedNames = {}, {}
     for name in pairs(NS.DB.owed) do
@@ -1344,13 +1370,16 @@ local LOG_TEXT = {
     spec = "set %s's spec",
     open = "opened an item to everyone",
     cancel = "cancelled an item",
+    specs = "changed an item's specs",
+    officer = "made %s an officer",
+    unofficer = "removed %s as officer",
 }
 local function logLine(e)
     return date("%H:%M", e.t)
         .. "  "
         .. NS.ColorName(e.by)
         .. " "
-        .. LOG_TEXT[e.what]:format(e.name and NS.Short(e.name) or "")
+        .. (LOG_TEXT[e.what] or "%s"):format(e.name and NS.Short(e.name) or "")
 end
 
 local raidsList = List(hp, 230, 380, { 70, 130 }, false, function(id)
@@ -1459,7 +1488,8 @@ local function refreshHistory()
         local rec = hist[ids[i]]
         r.data = ids[i]
         r.cols[1]:SetText(date("%d %b %y", rec.created or 0))
-        r.cols[2]:SetText(rec.title or "?")
+        -- Hosted by someone who was not the group leader: not proof of who won.
+        r.cols[2]:SetText((rec.title or "?") .. (rec.untrusted and " |cff808080(unverified)|r" or ""))
         return ids[i] == histSel
     end)
     local rec = histSel and hist[histSel]
@@ -1521,27 +1551,47 @@ catMore:SetPoint("LEFT", search, "RIGHT", 10, 0)
 catMore:SetText("Showing the first " .. CAT_SHOWN_MAX .. " matches. Type more to narrow it.")
 catMore:Hide()
 
--- itemString -> lower-case name, kept once the game knows it: a search
--- reads every record, so it should not ask the item API for each again.
--- A miss is kept as false until the game loads an item (NS.ForgetItemMisses).
+-- itemID -> lower-case name, kept once the game knows it: a search reads
+-- every record, so it should not ask the item API for each again. A miss is
+-- kept as false until the game loads that item (NS.ItemInfoArrived).
 local lowerNames = {}
 local function lowerName(s)
-    local name = lowerNames[s]
+    local id = Rules.ItemIDOf(s)
+    if not id then
+        return false
+    end
+    local name = lowerNames[id]
     if name == nil then
         name = C_Item.GetItemInfo(s)
         name = name and name:lower() or false
-        lowerNames[s] = name
+        lowerNames[id] = name
     end
     return name
 end
 
--- Called on GET_ITEM_INFO_RECEIVED: misses are asked again on the next search.
-function NS.ForgetItemMisses()
-    for s, name in pairs(lowerNames) do
-        if name == false then
-            lowerNames[s] = nil
+-- The last search: its matches stay until the query, the selected boss,
+-- the catalogue or a missing name changes. catRev counts catalogue writes.
+local catRev, catSearchKey, catSearchHits, catSearchMore = 0, nil, nil, false
+for _, fn in ipairs({ "Record", "ApplyOp", "Forget", "ForgetHeard" }) do
+    local orig = Catalog[fn]
+    if orig then
+        Catalog[fn] = function(...)
+            catRev = catRev + 1
+            return orig(...)
         end
     end
+end
+
+-- Called on GET_ITEM_INFO_RECEIVED. True when the UI was waiting for that
+-- item's name (a search may now find it).
+function NS.ItemInfoArrived(itemID)
+    itemInfoGen = itemInfoGen + 1
+    if lowerNames[itemID] == false then
+        lowerNames[itemID] = nil
+        catRev = catRev + 1
+        return true
+    end
+    return false
 end
 
 local tree = List(cp, 260, 330, { 220 }, false, function(row)
@@ -1603,6 +1653,19 @@ local catForget = Button(cp, "Forget boss", 100, function()
     end
 end)
 catForget:SetPoint("LEFT", catAsk, "RIGHT", 6, 0)
+-- Heard counts come from other players' addons; this keeps only what you saw.
+local catForgetHeard = Button(cp, "Forget heard", 100, function()
+    if Catalog.ForgetHeard then
+        local dropped = Catalog.ForgetHeard(NS.DB.catalog) or 0
+        catBoss, catItem = nil, nil
+        NS.Print("Kept only loot you saw yourself. Dropped " .. dropped .. " heard items.")
+        NS.Refresh()
+    end
+end)
+catForgetHeard:SetPoint("TOPRIGHT", -26, -2)
+catForgetHeard:SetShown(Catalog.ForgetHeard ~= nil)
+catMore:SetPoint("RIGHT", catForgetHeard, "LEFT", -6, 0)
+catMore:SetWordWrap(false)
 local catHelp = Text(cp, "GameFontDisableSmall")
 catHelp:SetPoint("BOTTOMLEFT", 270, 4)
 catHelp:SetPoint("BOTTOMRIGHT", 0, 4)
@@ -1659,31 +1722,51 @@ local function refreshCatalog()
     local shown = {}
     catMore:Hide()
     if query ~= "" then
-        for _, inst in pairs(cat) do
-            for _, boss in pairs(inst.b) do
-                for _, rec in pairs(boss.i) do
-                    local name = lowerName(rec.s)
-                    if name and name:find(query, 1, true) then
-                        if #shown >= CAT_SHOWN_MAX then
-                            catMore:Show() -- one row frame per match: keep it bounded
-                        else
-                            shown[#shown + 1] = { rec = rec, label = boss.name }
+        local key = query .. "\0" .. tostring(cat) .. "\0" .. catRev
+        if key ~= catSearchKey then
+            catSearchKey, catSearchHits, catSearchMore = key, {}, false
+            for _, inst in pairs(cat) do
+                for _, boss in pairs(inst.b) do
+                    for _, rec in pairs(boss.i) do
+                        local name = lowerName(rec.s)
+                        if name and name:find(query, 1, true) then
+                            if #catSearchHits >= CAT_SHOWN_MAX then
+                                catSearchMore = true -- one row frame per match: keep it bounded
+                            else
+                                catSearchHits[#catSearchHits + 1] = { rec = rec, label = boss.name }
+                            end
                         end
                     end
                 end
             end
         end
+        catMore:SetShown(catSearchMore)
+        for i, e in ipairs(catSearchHits) do
+            shown[i] = e
+        end
     elseif catBoss then
         local boss = cat[catBoss.instID] and cat[catBoss.instID].b[catBoss.bossKey]
         if boss then
+            -- Our own counts when we have them; numbers only heard from
+            -- others are shown dimmed and marked.
+            local ok = boss.ok or (boss.w and 0 or boss.kills)
             for _, rec in pairs(boss.i) do
-                local label = catBoss.bossKey == 0 and ("seen " .. rec.n .. "x")
-                    or string.format(
+                local on = rec.on or (rec.w and 0 or rec.n)
+                local label
+                if on == 0 then
+                    label = catBoss.bossKey == 0 and ("seen " .. rec.n .. "x")
+                        or string.format("in %d of %d kills", rec.n, boss.kills)
+                    label = "|cff808080" .. label .. " (heard)|r"
+                elseif catBoss.bossKey == 0 then
+                    label = "seen " .. on .. "x"
+                else
+                    label = string.format(
                         "in %d of %d kills (%d%%)",
-                        rec.n,
-                        boss.kills,
-                        math.floor(rec.n / math.max(boss.kills, 1) * 100 + 0.5)
+                        on,
+                        math.max(ok, on),
+                        math.floor(on / math.max(ok, on, 1) * 100 + 0.5)
                     )
+                end
                 shown[#shown + 1] = { rec = rec, label = label }
             end
         end
@@ -1886,7 +1969,8 @@ local function refreshCommands()
     cmdChild:SetWidth(width)
     cmdHeader:SetWidth(width)
     cmdHeader:SetText(
-        "You are: |cffffd870"
+        "You are: "
+            .. NS.Kit.COLOR.section
             .. NS.RoleName()
             .. "|r. These are the commands you can use right now. "
             .. "Run does it; How tells you what to type for commands that need an item."
@@ -1899,9 +1983,9 @@ local function refreshCommands()
                 rule = cmdChild:CreateTexture(nil, "ARTWORK"),
                 text = Text(cmdChild, "GameFontNormal"),
             }
-            head.rule:SetColorTexture(0.4, 0.35, 0.25, 0.8)
+            head.rule:SetColorTexture(unpack(NS.Kit.DIVIDER))
             head.rule:SetHeight(1)
-            head.text:SetText("|cffffd870" .. section .. "|r")
+            head.text:SetText(NS.Kit.COLOR.section .. section .. "|r")
             cmdHeads[section] = head
         end
         local any = false

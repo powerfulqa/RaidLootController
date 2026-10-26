@@ -4,7 +4,7 @@ Raid Loot Controller: a no-DKP raid loot addon for **WoW: Forever**
 (interface 16001). Forever is the Mainline 12.1.x client wearing a Classic
 version number: use the `C_*` API surface, never Classic globals.
 
-**Status: v0.1.0, written but not yet run in game.** Everything below the
+**Status: v0.6.1, still mostly unmeasured in game.** Most of what sits below the
 rules layer is unmeasured on the live client. Treat the in-game checklist at
 the end as open until someone ticks it off in a real group.
 
@@ -77,6 +77,11 @@ only from the session host (and `NEW` only from a leader or assistant).
    `ClickTradeButton` after `PickupContainerItem` places the item.
 5. `ChatFrameUtil.InsertLink` fires on shift-click while the reserve box has
    focus.
+   *Read from source 2026-10-26:* a bag shift-click runs
+   `ContainerFrameItemButtonMixin:OnModifiedClick` -> `HandleModifiedItemClick`
+   -> `ChatFrameUtil.InsertLink`, looked up at call time, so the hook sees it.
+   `ChatEdit_InsertLink` is a separate copy, so hooking both is right. In game
+   still open.
 6. `C_TooltipInfo.GetHyperlink` lines carry the "Classes:" line as
    `leftText`.
    *Measured 2026-10-09:* tooltip lines come back as `leftText`, and
@@ -89,6 +94,9 @@ only from the session host (and `NEW` only from a leader or assistant).
 8. `ENCOUNTER_END` name and `GetInstanceInfo()` instanceID (8th return) are
    readable after a kill, and boss loot is attributed within the 5-minute
    window. `ENCOUNTER_LOOT_RECEIVED` fires (or not) under master loot.
+   *Read from source 2026-10-26:* `ENCOUNTER_END` success is a number (not a
+   bool), `ENCOUNTER_LOOT_RECEIVED` carries itemLink 3rd, and instanceID is
+   `GetInstanceInfo()`'s 8th return. Readability after a kill is still open.
 9. `GUILD` addon messages reach guildmates who were not in the raid, and the
    catalogue answer election keeps it to one responder per instance.
 10. Spec detection: `C_SpecializationInfo.GetCombatConfigIDForSpecGroup` ->
@@ -100,11 +108,10 @@ only from the session host (and `NEW` only from a leader or assistant).
     not ready at addon load; read it later. Other classes still open.
 11. `C_Item.GetItemStats` key names (`ITEM_MOD_*_SHORT`) and the English
     "Equip:" phrases cover spell damage, healing and defense on Forever's
-    Classic-era items. `MenuUtil` menus open from the Who can roll and spec
-    buttons.
+    Classic-era items.
     *Measured 2026-10-09:* keys are `ITEM_MOD_STRENGTH/AGILITY/STAMINA/SPIRIT_SHORT`,
     `ITEM_MOD_DAMAGE_PER_SECOND_SHORT`, armor as `RESISTANCE0_NAME`. Spell
-    damage, healing, defense and the menus are still open.
+    damage, healing and defense are still open.
 12. ~~Master loot API present~~ **Measured 2026-10-09:** `/dump GetMasterLootCandidate,
     GiveMasterLoot, C_PartyInfo.GetLootMethod` returned three functions. Item 3
     (the server actually offering master loot in a raid) is still open.
@@ -116,6 +123,7 @@ only from the session host (and `NEW` only from a leader or assistant).
     wand, relic assume slot 18), `C_Item.GetItemStatDelta` returns readable
     deltas for Classic-era items, and Shift on a Loot tab item shows the
     game's compare tooltip.
+    *Read from source 2026-10-26:* `INVSLOT_RANGED` is 18. The rest is open.
 16. Commands tab: Run buttons fire, How prints what to type (opening chat
     from addon code would taint it), and the list changes as you become an
     officer or host. Announce toggle and owed Clear work on the Raid tab.
@@ -123,6 +131,9 @@ only from the session host (and `NEW` only from a leader or assistant).
     via `TooltipDataProcessor` (GameTooltip and ItemRefTooltip); bag marks via
     each container frame's `UpdateItems` and `GetSlotAndBagID`; the key binding
     shows under Keybindings > AddOns; versions arrive on `CQE`.
+    *Read from source 2026-10-26:* `GetSlotAndBagID` returns the slot first,
+    and Camelot's `ContainerFrame` overrides only the portrait and the jump
+    hint, so the Mainline item buttons apply. In game still open.
 18. Delivery without the host as master looter: with loot on Master
     Looter and an officer as master looter, `Loot.IAmGiver` picks them (from
     `C_PartyInfo.GetLootMethod`'s party/raid ID) and their addon gives the
@@ -150,6 +161,7 @@ only from the session host (and `NEW` only from a leader or assistant).
       one is not in the Forever file index) and the shared kit's frames.
     - `GET_ITEM_INFO_RECEIVED` passes `success` (Forever doc: `itemID, success`);
       a failed load no longer redraws.
+      *Read from source 2026-10-26:* payload is `itemID` and a `success` bool.
     - `BAG_UPDATE_DELAYED` clears the trade-time cache.
     - Name collisions: whether two group members can share a spelling (if
       so, `NS.Canon` now refuses it).
@@ -172,6 +184,23 @@ only from the session host (and `NEW` only from a leader or assistant).
       refused), and `Net.CatalogBacklog` returns to 0 so answers resume.
     - Name collisions on the addon sender ("First-Realm" shared by two
       group members) silence both; measure how Forever spells the sender.
+      *Read 2026-10-26 (wow-forever-api skill, measured 2026-10-05):*
+      `CHAT_MSG_ADDON` sender is "First Surname" with no realm. Full names
+      are unique, so the "First-Realm" collision does not arise.
+
+22. After the 2026-10-26 second audit, all unmeasured. Probes to paste:
+    [docs/probes.md](docs/probes.md).
+    - (a) Cross-realm identity: Forever groups span hidden underlying realms.
+      The canonical name is "First Surname-Realm", with the local realm when
+      `UnitFullName` gives none, so host and raider may spell one player
+      differently. Measure `UnitFullName("raidN")` for a groupmate from
+      another realm; if realms differ, consider dropping the realm when
+      `RegionalUniqueNamesEnabled()`.
+    - (b) `SendChatMessage` on `RAID` / `PARTY` / `WHISPER` from an event
+      handler (not a click) is or is not blocked (`ADDON_ACTION_BLOCKED`).
+    - (c) `GiveMasterLoot` from a `C_Timer` callback is or is not protected.
+    - (d) `RAID` addon messages reach groupmates on another underlying realm.
+    - (e) The roster is kept through encounters where unit names are secret.
 
 ## Dev tooling
 

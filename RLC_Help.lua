@@ -8,7 +8,7 @@
 -- words, no em dashes.
 local _, NS = ...
 
-local GREEN = "|cffb6ffb6"
+local GREEN = NS.Kit.COLOR.good
 local R = "|r"
 
 local ENTRIES = {
@@ -93,7 +93,9 @@ local ENTRIES = {
             .. "Tonight, when you want an item that suits you, only players with no loot last raid "
             .. "roll on it first. If none of them want it, everyone rolls as usual. "
             .. "If none of them roll, the officer's Close opens the roll to everyone who wants it. "
-            .. "It keeps loot moving when raid nights are few.",
+            .. "It keeps loot moving when raid nights are few.\n\n"
+            .. "Only raids of 10 or more count, and only if the raid host's addon saw you in the group "
+            .. "while the raid was on. A reserve alone does not count as being there.",
         tab = "loot",
     },
     {
@@ -146,7 +148,9 @@ local ENTRIES = {
             .. "Change loot spec"
             .. R
             .. ". It is saved for this character. You can change it until the raid starts. "
-            .. "After that only an officer can. Joined late with no spec? Set it before asking for any item.",
+            .. "After that only an officer can.\n\n"
+            .. "You must pick a loot spec before you can click I want this on an item "
+            .. "limited to some specs.",
         tab = "raid",
     },
     {
@@ -178,7 +182,8 @@ local ENTRIES = {
     {
         q = "How does the winner get the item?",
         a = "Set loot to Master Looter, with the host or an officer as master looter. The master "
-            .. "looter's addon gives the item straight from the loot window. If the window is closed, "
+            .. "looter's addon gives the item straight from the loot window, but only when the raid "
+            .. "host leads the group or is the master looter. If the window is closed, "
             .. "it's put in the trade window the next time they trade the winner. "
             .. "If the give fails (full bags, a unique item, out of range), it goes on that list too.\n\n"
             .. "The Raid tab lists what is still to trade, with the trade time left on bound items, "
@@ -207,7 +212,9 @@ local ENTRIES = {
         q = "What is the Catalogue?",
         a = "A loot list built from real drops: every rare or better item the addon has seen, filed under "
             .. "the boss that dropped it, with how many kills it dropped in. Search it, shift-click to link, "
-            .. "or reserve from it.",
+            .. "or reserve from it.\n\n"
+            .. "Items you heard about from others show (heard). Drop chances use only your own kills. "
+            .. "Click Forget heard to clear what others sent. A drop only counts for the instance you are in.",
         tab = "catalog",
     },
     {
@@ -221,7 +228,8 @@ local ENTRIES = {
         a = "Every raid: who won what, how (roll, open roll, reserve or given), and everyone's rolls. "
             .. "Hover an item to see the rolls.\n\n"
             .. "Officer log: every item given by hand, win taken back, lock, unlock and spec change, "
-            .. "with the officer who did it. Hover Officer log, or an item, to see it.",
+            .. "with the officer who did it. Hover Officer log, or an item, to see it.\n\n"
+            .. "A raid not hosted by the group leader shows (unverified).",
         tab = "history",
     },
     {
@@ -282,15 +290,26 @@ local ENTRIES = {
     },
     {
         q = "My window shows an old raid or no items.",
-        a = "Click Resync on the Raid tab, or type /rlc sync. The raid leader's addon sends you the raid. "
-            .. "It also happens by itself when you join the group or reload.",
+        a = "Click Resync on the Raid tab, or type /rlc sync. The raid host's addon sends you the raid. "
+            .. "It also happens by itself when you join the group or reload. "
+            .. "The host sends a full refresh at most once every 2 minutes, so wait a little between tries.",
         tab = "raid",
     },
     {
         q = "How do the addons talk to each other?",
-        a = "Through hidden addon messages in raid chat. The raid leader's addon is in charge: your clicks go "
+        a = "Through hidden addon messages in raid chat. The raid host's addon is in charge: your clicks go "
             .. "to it, it checks the rules, and it tells everyone what changed, within about a second. "
             .. "During a boss fight the game holds addon messages back, so they go out right after the fight.",
+    },
+    {
+        q = "Can the party leader take over my raid?",
+        a = "Not from a small party. While you host a raid and are not in a raid group, "
+            .. "a new raid can't replace yours. In a raid group, the group leader can still take over.",
+    },
+    {
+        q = "I didn't see the raid chat announcement.",
+        a = "The game can block chat messages sent by addons, so the addon also shows "
+            .. "its announcements in its own lines in your chat window.",
     },
     {
         q = "What is demo mode?",

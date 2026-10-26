@@ -28,7 +28,7 @@ Everyone in the raid should install it. Players without it can still roll with `
 - **Officer controls.** The raid leader (or an assistant) hosts the session and can make other players officers. Officers put items up, call and close rolls, open an item to everyone, restrict an item to some classes, give an item by hand, and lock or unlock players.
 - **Fair over few raid nights.** Players who won nothing in their last raid roll first.
 - **Upgrade info.** Officers see what each player wears in that slot and the stat change the item would give them.
-- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action.
+- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action. A raid not hosted by the group leader is marked (unverified).
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
 - **Delivery tracking.** Items still to trade are listed on the Raid tab, with the trade time left on bound items, and glow green in the giver's bags. A master loot give that fails (full bags, unique item, out of range) goes on that list too. Trading the winner takes the item off the list, and History marks it delivered.
 - **Stats.** Every player from your saved raids: raids, items won, free rolls and their last win, to check that loot is spread fairly.
@@ -49,13 +49,13 @@ Everyone in the raid should install it. Players without it can still roll with `
    - If anyone who won nothing last raid wants it, only they roll first.
 7. Raiders click **Roll (1-100)**. Rolls show up live. The button you need to click next glows, as does the minimap button.
 8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
-9. The master looter's addon gives the winner the item straight from the loot window. If the window is closed (or loot is not on Master Looter, where the host hands items over), it goes on that player's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time they trade the winner. Once it is given or traded, History marks it delivered.
+9. The master looter's addon gives the winner the item straight from the loot window (only when the raid host leads the group or is the master looter). If the window is closed (or loot is not on Master Looter, where the host hands items over), it goes on that player's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time they trade the winner. Once it is given or traded, History marks it delivered.
 
 An officer can **Unlock** a player on the Raid tab so they can roll normally again.
 
 - **Free rolls don't count.** Winning an item that was opened to everyone does not lock you and does not touch your reserve, if you already had an item or it was off-spec for you. If you could have asked for it normally, it counts: staying quiet on **I want this** does not buy a free first item.
 - **Your reserve is safe.** Winning another item first does not cost you your reserve: it still pays out when it drops, as your second item.
-- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls.
+- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls. Only raids of 10 or more count, and only for players the addon saw in the group while the raid was on (a reserve alone is not enough).
 - **Reserves close** at the raid start or when the first item is put up, whichever comes first. A reserve only pays out to someone still in the group.
 - **Officers are held to the rules.** They can't open an item while someone without an item wants it, or give items to players outside the group. Every item given by hand, win taken back, lock, unlock and spec change is in the **Officer log** on the History tab.
 - **Upgrade size.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the raw stat change. No scores, officers judge.
@@ -68,6 +68,7 @@ The **Catalogue** tab works like a loot browser built from real drops:
 - Whoever opens a corpse shares its drops with the group, so the whole raid records them.
 - On login the addon asks your guild (and your group) for anything it is missing. One player who knows more answers; everyone listening merges it.
 - Only items at or above rare quality are recorded.
+- Items heard from others are marked (heard), and drop chances use only your own kills. **Forget heard** clears what others sent. A drop report only counts for the instance you are in.
 
 ## Specs: who an item is for
 
@@ -79,7 +80,7 @@ When an item is added, the addon works out which specs it suits:
 
 The Loot tab shows the result as "Best for". Only those specs can click I want this and roll. If none of them wants the item, it opens to everyone, as with the one-item rule.
 
-Your **loot spec** is the spec you want gear for, not the one you play tonight (dual spec: an off-tank in dps spec still loots as a tank). The addon guesses it from your talents (the tree with the most points) and asks you to **Confirm** it once on the Raid tab, or pick another with **Change loot spec**. It is saved per character. Feral druids pick cat or bear. You can change it until the raid starts; after that it is locked, and only an officer can change it. Players without the addon are checked by class only.
+Your **loot spec** is the spec you want gear for, not the one you play tonight (dual spec: an off-tank in dps spec still loots as a tank). The addon guesses it from your talents (the tree with the most points) and asks you to **Confirm** it once on the Raid tab, or pick another with **Change loot spec**. It is saved per character. Feral druids pick cat or bear. You must have a loot spec before you can say I want this on an item limited to some specs. You can change it until the raid starts; after that it is locked, and only an officer can change it. Players without the addon are checked by class only.
 
 Officers can:
 
@@ -107,7 +108,7 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc add <item>` | Put an item up for rolls (officers) |
 | `/rlc reserve <item or ID>` | Reserve an item before the raid starts |
 | `!rlc reserve <item or ID>` | The same, whispered to the raid host, for players without the addon |
-| `/rlc sync` | Fetch the session from the raid host |
+| `/rlc sync` | Fetch the session from the raid host (a full refresh at most every 2 minutes) |
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |
 | `/rlc tooltip` | Show or hide the RaidLoot lines on item tooltips (on by default) |

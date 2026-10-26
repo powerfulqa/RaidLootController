@@ -34,7 +34,18 @@ local STATES = { pending = true, interest = true, rolling = true, done = true, c
 local MODES = { normal = true, open = true, reserve = true }
 local HOWS = { roll = true, open = true, reserve = true, manual = true }
 -- Officer actions recorded in the session log (History shows them).
-local LOGS = { award = true, undo = true, lock = true, unlock = true, spec = true, open = true, cancel = true }
+local LOGS = {
+    award = true,
+    undo = true,
+    lock = true,
+    unlock = true,
+    spec = true,
+    open = true,
+    cancel = true,
+    specs = true, -- an item's loot specs changed
+    officer = true,
+    unofficer = true,
+}
 Rules.MAX_LOG = 200
 Rules.MAX_ITEMS = 500 -- per raid session; far above any real raid
 Rules.MAX_ID = 2147483647 -- item ids and session keys: rejects "1e999" (inf) and NaN
@@ -296,6 +307,12 @@ function Rules.AcceptNew(S, op, sender, ctx)
         -- this client only ended for age at login is still the host's.
         return S.phase ~= "ended" or S.autoEnded == true
     end
+    if S and S.phase ~= "ended" and ctx.me and S.host == ctx.me and sender ~= ctx.me and not ctx.inRaid then
+        -- Our own running raid, while we are out of a raid group: a 2-man
+        -- party is enough to lead. In a raid the leader may still take over,
+        -- as every other client there accepts it too.
+        return false
+    end
     if t > ctx.now + Rules.NEW_FUTURE or t < ctx.now - Rules.NEW_PAST then
         return false -- a forged time would sort first in history and dry lists
     end
@@ -508,9 +525,18 @@ function Rules.Apply(S, op)
         local name = Rules.ValidName(op[5]) and op[5] or nil
         local key = Rules.Int(op[6], 1, Rules.MAX_ID) and op[6] or nil
         S.log = S.log or {}
-        -- Full: the oldest entry goes, so the latest officer actions always show.
+        -- Full: the oldest entry goes, so the latest officer actions always
+        -- show. Awards and take-backs stay longest: a flood of locks or spec
+        -- changes must not hide who gave what.
         if #S.log >= Rules.MAX_LOG then
-            table.remove(S.log, 1)
+            local drop = 1
+            for i, e in ipairs(S.log) do
+                if e.what ~= "award" and e.what ~= "undo" then
+                    drop = i
+                    break
+                end
+            end
+            table.remove(S.log, drop)
         end
         S.log[#S.log + 1] = { t = t, by = op[3], what = op[4], name = name, key = key }
         return S
@@ -790,6 +816,10 @@ function Rules.Intent(S, who, req, ctx)
         if on and not Rules.CanWant(S, item, who, classOf(who)) then
             return nil, "You can't ask for this item."
         end
+        if on and item.specs and not item.restrict and item.mode ~= "open" and not S.specs[who] then
+            -- No spec on record would let you ask for every spec's gear.
+            return nil, "Pick your loot spec first."
+        end
         local worn = on and Rules.ValidWorn(req[4]) and req[4] or nil
         if (item.wants[who] == true) == on then
             -- Nothing changed, or only the worn item: send nothing. A worn
@@ -846,7 +876,8 @@ function Rules.Intent(S, who, req, ctx)
             if not Rules.ValidName(req[2]) then
                 return nil, "No such player."
             end
-            return { { "OFF", req[2], bool(req[3]) and 1 or 0 } }
+            local on = bool(req[3])
+            return { { "OFF", req[2], on and 1 or 0 }, logOp(now, who, on and "officer" or "unofficer", req[2]) }
         end
         -- A roll seen in chat. Only 1-100 rolls count, only on the active
         -- item, and only the first roll from each player.
@@ -1073,7 +1104,9 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "That item is finished."
         end
         local specs = Rules.CSVToSpecs(req[3]) -- nil = any spec
-        return addItemOps({}, item, st, item.mode, item.classMask, item.restrict, specs or {})
+        local ops = addItemOps({}, item, st, item.mode, item.classMask, item.restrict, specs or {})
+        ops[#ops + 1] = logOp(now, who, "specs", nil, item.key)
+        return ops
     elseif kind == "UNDO" then
         if st ~= "done" then
             return nil, "Only a won item can be taken back."
@@ -1127,7 +1160,7 @@ function Rules.PlayerStats(history)
         return out[name]
     end
     for _, rec in pairs(history or {}) do
-        if rec.started then
+        if rec.started and not rec.untrusted then
             for name in pairs(Rules.SeenIn(rec)) do
                 entry(name).raids = entry(name).raids + 1
             end
@@ -1196,17 +1229,31 @@ Rules.ValidVersion = function(v)
 end
 
 -- Players who won nothing (free rolls aside) in the most recent started,
--- trusted raid in `history` (saved sessions by id), other than currentID. They roll first tonight. Being "in"
--- a raid means the addon saw them reserve, want or roll.
+-- trusted raid in `history` (saved sessions by id), other than currentID.
+-- They roll first tonight. Being "in" a raid means this client saw them in
+-- the group while it was live (rec.att, kept locally, never sent). Older
+-- raids without att fall back to who wanted or rolled.
+Rules.MIN_ATTEND = 10
+
+local function count(set)
+    local n = 0
+    for _ in pairs(set) do
+        n = n + 1
+    end
+    return n
+end
+
 function Rules.DryFrom(history, currentID)
     local last
     for id, rec in pairs(history or {}) do
         -- An untrusted raid (hosted by someone who was not the group leader,
-        -- seen from another client) could be made up to roll first.
+        -- seen from another client) could be made up to roll first. So could
+        -- a small party: a raid needs MIN_ATTEND players seen.
         if
             id ~= currentID
             and rec.started
             and not rec.untrusted
+            and (not rec.att or count(rec.att) >= Rules.MIN_ATTEND)
             and (not last or (rec.created or 0) > (last.created or 0))
         then
             last = rec
@@ -1215,14 +1262,14 @@ function Rules.DryFrom(history, currentID)
     if not last then
         return {}
     end
-    -- Seen = took part in the loot (a reserve, want, roll or win). A spec
-    -- alone does not count: the addon reports it on joining, so joining
-    -- and leaving would put you first next week.
+    -- Without att, seen = took part in the loot (a want or roll). A spec or
+    -- a reserve alone does not count: both can be made before the raid,
+    -- so joining and leaving would put you first next week.
     local seen, won = {}, {}
-    for name in pairs(last.reserves or {}) do
+    for name in pairs(last.att or {}) do
         seen[name] = true
     end
-    for _, it in pairs(last.items or {}) do
+    for _, it in pairs(last.att and {} or last.items or {}) do
         for name in pairs(it.wants or {}) do
             seen[name] = true
         end

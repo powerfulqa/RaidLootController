@@ -391,15 +391,20 @@ end
 
 -- Spec key from talents, or nil. pcall: an unmeasured call chain must never
 -- break the addon; failing just means the player picks by hand. Kept until
--- talents change; a nil (data not ready at login) is read again next time.
-local detected
+-- talents change; a nil (data not ready at login) is read again, at most
+-- every 5 seconds.
+local detected, failedAt
 function Specs.Detect()
     if detected then
         return detected
     end
+    if failedAt and GetTime() - failedAt < 5 then
+        return nil
+    end
     local ok, tab = pcall(topTalentTab)
     local class = myClassToken()
     if not ok or not tab or not class then
+        failedAt = GetTime()
         return nil
     end
     for _, spec in ipairs(Specs.LIST) do
@@ -408,6 +413,7 @@ function Specs.Detect()
             return detected
         end
     end
+    failedAt = GetTime()
 end
 
 -- The player's spec and whether they picked it by hand.
@@ -460,12 +466,12 @@ end
 -- Fires once per point spent: report once the respec has settled.
 local respecPending = false
 NS.On("TRAIT_CONFIG_UPDATED", function()
-    detected = nil
+    detected, failedAt = nil, nil
     if not respecPending then
         respecPending = true
         C_Timer.After(3, function()
             respecPending = false
-            detected = nil
+            detected, failedAt = nil, nil
             Specs.Report(true)
         end)
     end

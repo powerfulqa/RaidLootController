@@ -24,10 +24,20 @@ Safer:
 - Players who roll first can no longer hold an item up by never rolling.
 - An officer who closes a roll they won themselves shows in the officer log, and only the raid host can take back a delivered win. The log keeps the newest entries.
 - Guild catalogue sharing ignores made-up drops and counts, and can no longer be silenced or flooded by one player.
+- Rolling first next raid counts only players the raid host saw in the group while the raid was on, in raids of 10 or more. A reserve alone no longer counts.
+- A party leader can no longer replace a raid you host while you are out of a raid group.
+- Pick a loot spec before saying "I want this" on spec-limited items.
+- /rlc sync can no longer be spammed to stall the raid, and a refresh sent for someone else no longer blanks your Loot tab.
+- Item gifts and the officer log: gifts stay in the log, and spec changes and officer changes are logged too.
+- Rolls must match a raider's full name.
+- Catalogue data heard from others is marked "(heard)", percentages use your own kills, and Forget heard clears it. Raids not started by the raid leader show as "(unverified)" in History and are left out of Stats.
+- Raiders no longer drop out of the addon's group list during boss fights.
+- Raid announcements also show in the addon, in case the game blocks the chat line.
 
 Lighter:
 
 - Resizing the window, searching the catalogue and hovering Stats do far less work.
+- Item data loading, catalogue searches and rolls redraw much less. History keeps the last 100 raids.
 
 ### v0.6.1
 

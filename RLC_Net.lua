@@ -52,6 +52,14 @@ local lanes = {
     { prefix = CAT_PREFIX, channel = guildChannel, queue = {} },
 }
 local LIVE, CAT_GROUP, CAT_GUILD = lanes[1], lanes[2], lanes[3]
+-- Each lane's queue is read from `head`: sent ops stay in place (no shift,
+-- and no holes that would break #queue) until the queue empties.
+for _, lane in ipairs(lanes) do
+    lane.head = 1
+end
+local function pending(lane)
+    return #lane.queue - lane.head + 1
+end
 
 -- Demo mode sends nothing: its session, history and catalogue are fake.
 local function demo()
@@ -74,7 +82,7 @@ function Net.QueueCatalog(op, dest)
     -- A full catalogue (records plus its instance and boss lines) fits;
     -- the cap only stops a runaway. Dropping part of an answer would leave
     -- the asker with a hole nobody fills, since others saw it answered.
-    if #lane.queue < 25000 then
+    if pending(lane) < 25000 then
         lane.queue[#lane.queue + 1] = Rules.EncodeOp(op)
     end
 end
@@ -97,12 +105,15 @@ local PERMANENT = {
 -- Send one message from a lane if it can go now. Returns nothing.
 local function serve(lane)
     local queue = lane.queue
-    if #queue == 0 then
+    if pending(lane) <= 0 then
+        wipe(queue)
+        lane.head = 1
         return
     end
     local ch = lane.channel()
     if not ch then
         wipe(queue) -- not in a group / guild: nobody to send to
+        lane.head = 1
         return
     end
     if tokens[lane.prefix] < 1 or C_ChatInfo.InChatMessagingLockdown() then
@@ -112,9 +123,10 @@ local function serve(lane)
     if lane.prefix == CAT_PREFIX and (InCombatLockdown() or C_InstanceEncounter.IsEncounterInProgress()) then
         return
     end
-    local msg = Rules.Pack(queue, LIMIT, 1)[1]
+    local last = math.min(#queue, lane.head + 300) -- more than one message holds
+    local msg = Rules.Pack({ unpack(queue, lane.head, last) }, LIMIT, 1)[1]
     if not msg then
-        wipe(queue) -- nothing packable: every op was oversize
+        lane.head = last + 1 -- nothing packable here: every op was oversize
         return
     end
     local result = C_ChatInfo.SendAddonMessage(lane.prefix, msg, ch)
@@ -126,18 +138,15 @@ local function serve(lane)
     -- Drop the ops that went out: as many as the message holds, plus any
     -- oversize op Pack skipped on the way.
     local sent = select(2, msg:gsub("%^", "")) + 1
-    local done = 0
-    while sent > 0 and queue[done + 1] do
-        done = done + 1
-        if #queue[done] <= LIMIT then
+    while sent > 0 and queue[lane.head] do
+        if #queue[lane.head] <= LIMIT then
             sent = sent - 1
         end
+        lane.head = lane.head + 1
     end
-    -- One shift for the whole message, not one per op: a catalogue queue
-    -- holds thousands.
-    local n = #queue
-    for i = 1, n do
-        queue[i] = queue[i + done]
+    if lane.head > #queue then
+        wipe(queue) -- empty: start over at 1
+        lane.head = 1
     end
 end
 
@@ -145,24 +154,27 @@ end
 -- the whole group, so every request made before it goes out (a raid logging
 -- in at once, or one player spamming ?SYNC) shares one broadcast. It waits
 -- for the live queue to empty, so snapshots never pile up behind each other.
-local snapshotWanted, snapshotSending, lastSnapshot = false, false, 0
-function Net.SendSnapshot()
+-- At most one per 120 s for the whole raid; 30 s when an asker has no
+-- session at all (`urgent`: joined late, or reloaded with nothing saved).
+local snapshotWanted, snapshotUrgent, snapshotSending, lastSnapshot = false, false, false, -600
+function Net.SendSnapshot(urgent)
     snapshotWanted = true
+    snapshotUrgent = snapshotUrgent or urgent == true
 end
 
 -- Catalogue ops still waiting to go to "GROUP" or "GUILD": an answer is
 -- skipped while the last one is still on its way.
 function Net.CatalogBacklog(dest)
-    return #(dest == "GUILD" and CAT_GUILD or CAT_GROUP).queue
+    return pending(dest == "GUILD" and CAT_GUILD or CAT_GROUP)
 end
 
 -- For the bug report: ops waiting per lane, and the send budget left.
 function Net.Status()
     return string.format(
         "queued live %d, catalogue group %d, guild %d; budget live %.1f, catalogue %.1f; channel %s",
-        #LIVE.queue,
-        #CAT_GROUP.queue,
-        #CAT_GUILD.queue,
+        pending(LIVE),
+        pending(CAT_GROUP),
+        pending(CAT_GUILD),
         tokens[PREFIX],
         tokens[CAT_PREFIX],
         groupChannel() or "none"
@@ -176,14 +188,28 @@ C_Timer.NewTicker(0.25, function()
     -- One snapshot for the whole group, at least 30 s after the last one
     -- FINISHED sending: it covers everyone who asked, and players taking
     -- turns asking cannot keep the live lane busy with snapshots.
-    if snapshotSending and #LIVE.queue == 0 then
+    local idle = pending(LIVE) <= 0
+    if snapshotSending and idle then
         snapshotSending, lastSnapshot = false, GetTime()
     end
-    if snapshotWanted and not snapshotSending and #LIVE.queue == 0 and GetTime() - lastSnapshot >= 30 then
-        snapshotWanted, snapshotSending = false, true
+    local gap = snapshotUrgent and 30 or 120
+    if snapshotWanted and not snapshotSending and idle and GetTime() - lastSnapshot >= gap then
+        snapshotWanted, snapshotUrgent, snapshotSending = false, false, true
         local S = NS.S()
         if S then
-            for _, op in ipairs(Rules.Snapshot(S)) do
+            -- The NEW carries how many ops of the snapshot will arrive (the
+            -- ones that fit a message), so a client that did not ask can
+            -- skip exactly those. The queue was empty, so they go out first
+            -- and in one run.
+            local ops = Rules.Snapshot(S)
+            local n = 0
+            for _, op in ipairs(ops) do
+                if #Rules.EncodeOp(op) <= LIMIT then
+                    n = n + 1
+                end
+            end
+            ops[1][6] = n
+            for _, op in ipairs(ops) do
                 Net.Queue(op)
             end
         end
@@ -228,16 +254,25 @@ local newCtx = {
     recent = {},
 }
 local refusedNew = {} -- sender -> true: we refused their last NEW
+-- A snapshot of the session we already hold that we did not ask for (sent
+-- for someone else): { host, left = ops still to skip, untilT }.
+local skipSnap
 local function acceptNew(S, op, sender)
-    newCtx.now = GetServerTime()
+    newCtx.now, newCtx.me, newCtx.inRaid = GetServerTime(), NS.Me(), IsInRaid()
     return Rules.AcceptNew(S, op, sender, newCtx)
 end
+-- A loading screen can drop part of a snapshot: stop skipping, or the
+-- host's next live ops would be counted off as snapshot ops.
+NS.On("PLAYER_ENTERING_WORLD", function()
+    skipSnap = nil
+end)
 
 NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
-    if (prefix ~= PREFIX and prefix ~= CAT_PREFIX) or demo() then
+    -- Before any comparison: comparing a secret value throws.
+    if not NS.CanRead(prefix, msg, channel, sender) then
         return
     end
-    if not NS.CanRead(msg, sender) then
+    if (prefix ~= PREFIX and prefix ~= CAT_PREFIX) or demo() then
         return
     end
     NS.FlushRoster()
@@ -261,7 +296,26 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
     local stateOps, wantSync = {}, false
     for _, op in ipairs(Rules.Decode(msg)) do
         local kind = op[1] or ""
-        if kind:sub(1, 1) == "?" then
+        local snapN = kind == "NEW" and Rules.Int(op[6], 1, 100000)
+        if skipSnap and (skipSnap.left <= 0 or GetTime() > skipSnap.untilT) then
+            skipSnap = nil
+        end
+        if skipSnap and sender == skipSnap.host and kind:sub(1, 1) ~= "?" then
+            skipSnap.left = skipSnap.left - 1 -- part of a snapshot we already hold
+            skipSnap.untilT = GetTime() + 30 -- a snapshot can take minutes to arrive
+        elseif
+            snapN
+            and S
+            and S.id == op[2]
+            and S.host == sender
+            and S.phase ~= "ended"
+            and not NS.SyncAskedRecently()
+        then
+            -- Our own session resent for someone else: replaying it would
+            -- wipe local-only state (attendance) and rejected replays would
+            -- make us ask for yet another snapshot.
+            skipSnap = { host = sender, left = snapN - 1, untilT = GetTime() + 30 }
+        elseif kind:sub(1, 1) == "?" then
             if allowRequest(sender) then
                 op[1] = kind:sub(2)
                 NS.HandleRequest(sender, op)
@@ -282,6 +336,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
                 -- Not started by the group leader: never trusted for the
                 -- roll-first list (Rules.DryFrom). ApplyOps makes its own
                 -- table from the op, so the mark goes on the op.
+                -- Small groups are handled by Rules.MIN_ATTEND on attendance.
                 op.untrusted = not newCtx.isLead(sender) or nil
                 stateOps[#stateOps + 1] = op
             end

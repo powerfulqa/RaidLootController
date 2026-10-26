@@ -58,7 +58,7 @@ function Loot.WornFor(itemString)
         parts[#parts + 1] = NS.ItemStringOf(GetInventoryItemLink("player", slot))
     end
     local worn = table.concat(parts, ",")
-    if #worn > NS.Rules.MAX_WORN then
+    if #worn > Rules.MAX_WORN then
         worn = parts[1] or "" -- two long itemStrings: the first slot is enough
     end
     return worn ~= "" and worn or nil
@@ -90,7 +90,7 @@ NS.On("CHAT_MSG_SYSTEM", function(text)
         NS.Print("debug: %q -> %s", text, name and (name .. " rolled " .. roll) or ("no match for " .. rollPattern))
     end
     if name and NS.IsHost() then
-        NS.HandleRequest(NS.Me(), { "ROLLSEEN", NS.Canon(name), roll, low, high })
+        NS.HandleRequest(NS.Me(), { "ROLLSEEN", NS.Canon(name, true), roll, low, high })
     end
 end)
 
@@ -177,7 +177,11 @@ function Loot.IAmGiver()
     local method, partyID, raidID = C_PartyInfo.GetLootMethod()
     if method == Enum.LootMethod.Masterlooter then
         local unit = raidID and ("raid" .. raidID) or partyID == 0 and "player" or partyID and ("party" .. partyID)
-        return unit ~= nil and UnitIsUnit(unit, "player")
+        if not unit then
+            return false
+        end
+        local same = UnitIsUnit(unit, "player") -- can be secret
+        return NS.CanRead(same) and same == true
     end
     return NS.IsHost()
 end
@@ -211,13 +215,23 @@ function Loot.Deliver(item)
         and GiveMasterLoot
         and C_PartyInfo.GetLootMethod() == Enum.LootMethod.Masterlooter
     then
-        local slot = bestMatch(GetNumLootItems(), function(i)
-            return NS.ItemStringOf(GetLootSlotLink(i))
-        end, item.itemString)
+        -- The slot this drop was added from, if the window still shows it
+        -- (two copies of one item on a boss: give the right one), else any match.
+        local slot
+        for i = 1, GetNumLootItems() do
+            if item.src and tostring(GetLootSourceInfo(i)) .. ":" .. i == item.src then
+                slot = sameItem(NS.ItemStringOf(GetLootSlotLink(i)), item.itemString) and i or nil
+                break
+            end
+        end
+        slot = slot
+            or bestMatch(GetNumLootItems(), function(i)
+                return NS.ItemStringOf(GetLootSlotLink(i))
+            end, item.itemString)
         if slot then
             for i = 1, 40 do
                 local name = GetMasterLootCandidate(slot, i)
-                if name and NS.CanRead(name) and NS.Canon(name) == winner then
+                if NS.CanRead(name) and name and NS.Canon(name) == winner then
                     giving[slot], lastGive = { winner = winner, itemString = item.itemString }, slot
                     GiveMasterLoot(slot, i)
                     return
@@ -244,10 +258,11 @@ NS.On("LOOT_SLOT_CLEARED", function(slot)
     end
 end)
 
--- The master loot refusals. They do not name the slot: the last give failed.
+-- The master loot refusals. They do not name the slot, so act only when
+-- exactly one give is in flight; with more, LOOT_CLOSED owes what is left.
 NS.On("UI_ERROR_MESSAGE", function(_, message)
     local g = lastGive and giving[lastGive]
-    if not g or not NS.CanRead(message) then
+    if not g or next(giving, next(giving)) ~= nil or not NS.CanRead(message) then
         return
     end
     if
@@ -318,7 +333,7 @@ NS.On("TRADE_SHOW", function()
     -- use, however the realm part reads for "npc".
     local who
     for name, r in pairs(NS.roster) do
-        if UnitIsUnit(r.unit, "npc") then
+        if r.unit and UnitIsUnit(r.unit, "npc") then
             who = name
         end
     end
@@ -540,7 +555,7 @@ local function annotate(tooltip)
     end
     local lines = {}
     local S = NS.S()
-    if S then
+    if S and next(S.reserves) then
         local set, n = Rules.Reservers(S, id)
         if n > 0 then
             local names = {}
@@ -557,19 +572,39 @@ local function annotate(tooltip)
     end
     local hits = NS.Catalog.Find(NS.DB.catalog, id)
     if hits then
+        -- Own counts (ok, on) when we saw kills ourselves, else what we heard,
+        -- dimmed. Saved data without ok/on is all our own (RLC_Catalog.lua).
+        local function own(h)
+            local kills = h.boss.ok or (h.boss.w and 0 or h.boss.kills)
+            return h.rec.on or (h.rec.w and 0 or h.rec.n), kills
+        end
         local h = hits[1]
         for i = 2, #hits do
-            if hits[i].rec.n > h.rec.n then
+            local a, b = own(hits[i]), own(h)
+            if a > b or (a == b and hits[i].rec.n > h.rec.n) then
                 h = hits[i]
             end
         end
-        lines[#lines + 1] = string.format(
-            "Drops from %s (%d of %d kills)%s",
-            h.boss.name,
-            h.rec.n,
-            math.max(h.boss.kills, h.rec.n),
-            #hits > 1 and string.format(" and %d more", #hits - 1) or ""
-        )
+        local more = #hits > 1 and string.format(" and %d more", #hits - 1) or ""
+        local n, kills = own(h)
+        if kills > 0 then
+            lines[#lines + 1] = string.format(
+                "Drops from %s (%d%%, %d of %d kills)%s",
+                h.boss.name,
+                math.floor(100 * n / math.max(kills, n) + 0.5),
+                n,
+                math.max(kills, n),
+                more
+            )
+        else
+            lines[#lines + 1] = string.format(
+                "|cff999999Drops from %s (%d of %d kills, heard)%s|r",
+                h.boss.name,
+                h.rec.n,
+                math.max(h.boss.kills, h.rec.n),
+                more
+            )
+        end
     end
     local last = lastWon(id)
     if last then
