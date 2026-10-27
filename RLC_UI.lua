@@ -433,6 +433,22 @@ function NS.ShowCopy(title, text, w, h)
     NS.Kit.ShowCopy("RaidLootControllerCopy", title, text, w, h)
 end
 
+-- Yes/No before anything that cannot be taken back. fn runs on Yes.
+StaticPopupDialogs.RAIDLOOTCONTROLLER_CONFIRM = {
+    text = "%s",
+    button1 = YES,
+    button2 = NO,
+    OnAccept = function(_, fn)
+        fn()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+}
+function NS.Confirm(text, fn)
+    StaticPopup_Show("RAIDLOOTCONTROLLER_CONFIRM", text, nil, fn)
+end
+
 local function page(key)
     local p = CreateFrame("Frame", nil, f)
     p:SetPoint("TOPLEFT", 12, -66) -- input boxes draw a few px above their frame
@@ -544,6 +560,7 @@ specInfo:SetPoint("TOPRIGHT", itemInfo, "BOTTOMRIGHT", 0, -3)
 local myInfo = Text(rp, "GameFontNormalSmall")
 myInfo:SetPoint("TOPLEFT", bigIcon, "BOTTOMLEFT", 0, -14)
 myInfo:SetWidth(380)
+myInfo:SetWordWrap(true)
 
 local wantBtn = Button(rp, "I want this", 110, function()
     local S = NS.S()
@@ -1062,8 +1079,16 @@ local titleBox = NS.InputBox(rpg, 180, "Raid name (optional)")
 titleBox:SetPoint("TOPLEFT", 8, -2)
 titleBox:SetMaxLetters(40)
 local newBtn = Button(rpg, "New raid", 90, function()
-    NS.NewSession(titleBox:GetText() or "")
-    titleBox:ClearFocus()
+    local function start()
+        NS.NewSession(titleBox:GetText() or "")
+        titleBox:ClearFocus()
+    end
+    local S = NS.S()
+    if S and S.phase ~= "ended" then
+        NS.Confirm("Start a new raid? The raid running now ends for everyone.", start)
+    else
+        start()
+    end
 end)
 newBtn:SetPoint("LEFT", titleBox, "RIGHT", 6, 0)
 local beginBtn = Button(rpg, "Start raid", 90, function()
@@ -1194,11 +1219,14 @@ setSpecBtn:SetPoint("LEFT", offBtn, "RIGHT", 6, 0)
 local owedText = Text(rpg)
 owedText:SetPoint("BOTTOMLEFT", 0, 4)
 owedText:SetWidth(600)
-local owedClearBtn = Button(rpg, "Clear", 60, function()
-    SlashCmdList.RAIDLOOTCONTROLLER("owed")
+local owedClearBtn = Button(rpg, "Clear list", 80, function()
+    NS.Confirm("Clear the whole still-to-trade list?", function()
+        SlashCmdList.RAIDLOOTCONTROLLER("owed")
+    end)
 end)
 owedClearBtn:SetPoint("BOTTOMRIGHT", 0, 0)
 owedText:SetWordWrap(true)
+owedText:SetMaxLines(2)
 rpg:SetScript("OnSizeChanged", function(_, width)
     owedText:SetWidth(width - 70)
 end)
@@ -1347,7 +1375,7 @@ local function refreshRaid(S)
     -- The list runs down to whatever is shown under it, so a raider with no
     -- officer buttons and nothing owed gets the whole height.
     local owed = #parts > 0
-    local btnY = owed and 28 or 0
+    local btnY = owed and 40 or 0
     lockBtn:SetPoint("BOTTOMLEFT", 0, btnY)
     local top = officer and (btnY + 22) or owed and 22 or nil
     local listY = top and (top + 12) or 6
@@ -1373,6 +1401,10 @@ local LOG_TEXT = {
     specs = "changed an item's specs",
     officer = "made %s an officer",
     unofficer = "removed %s as officer",
+    close = "closed a roll, won by %s",
+    deliv = "marked %s's item delivered",
+    live = "started the raid",
+    ended = "ended the raid",
 }
 local function logLine(e)
     return date("%H:%M", e.t)
@@ -1427,7 +1459,14 @@ histItems.onEnter = function(row, item)
     GameTooltip:Show()
 end
 
-local logBtn = Button(hp, "Officer log", 100, nil)
+local logBtn = Button(hp, "Officer log", 100, function()
+    local rec = histSel and NS.DB.history[histSel]
+    local lines = {}
+    for _, e in ipairs(rec and rec.log or {}) do
+        lines[#lines + 1] = logLine(e)
+    end
+    NS.ShowCopy("Officer log", #lines > 0 and table.concat(lines, "\n") or "None in this raid.")
+end)
 logBtn:SetScript("OnEnter", function(self)
     local rec = histSel and NS.DB.history[histSel]
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -1444,11 +1483,14 @@ end)
 logBtn:SetScript("OnLeave", GameTooltip_Hide)
 
 local delBtn = Button(hp, "Delete raid", 100, function()
-    if histSel then
-        NS.DB.history[histSel] = nil
-        histSel = nil
-        NS.historyGen = NS.historyGen + 1
-        NS.Refresh()
+    local id = histSel
+    if id then
+        NS.Confirm("Delete this raid from history? Stats change too.", function()
+            NS.DB.history[id] = nil
+            histSel = nil
+            NS.historyGen = NS.historyGen + 1
+            NS.Refresh()
+        end)
     end
 end)
 delBtn:SetPoint("BOTTOMLEFT", 246, 0)
@@ -1641,25 +1683,30 @@ local catAsk = Button(cp, "Ask guild for updates", 150, function()
 end)
 catAsk:SetPoint("LEFT", catReserve, "RIGHT", 6, 0)
 local catForget = Button(cp, "Forget boss", 100, function()
-    local inst = catBoss and NS.DB.catalog[catBoss.instID]
+    local boss = catBoss
+    local inst = boss and NS.DB.catalog[boss.instID]
     if inst then
-        inst.b[catBoss.bossKey] = nil
-        if not next(inst.b) then
-            NS.DB.catalog[catBoss.instID] = nil
-        end
-        Catalog.Forget(NS.DB.catalog)
-        catBoss, catItem = nil, nil
-        NS.Refresh()
+        NS.Confirm("Forget every drop seen for this boss?", function()
+            inst.b[boss.bossKey] = nil
+            if not next(inst.b) then
+                NS.DB.catalog[boss.instID] = nil
+            end
+            Catalog.Forget(NS.DB.catalog)
+            catBoss, catItem = nil, nil
+            NS.Refresh()
+        end)
     end
 end)
 catForget:SetPoint("LEFT", catAsk, "RIGHT", 6, 0)
 -- Heard counts come from other players' addons; this keeps only what you saw.
 local catForgetHeard = Button(cp, "Forget heard", 100, function()
     if Catalog.ForgetHeard then
-        local dropped = Catalog.ForgetHeard(NS.DB.catalog) or 0
-        catBoss, catItem = nil, nil
-        NS.Print("Kept only loot you saw yourself. Dropped " .. dropped .. " heard items.")
-        NS.Refresh()
+        NS.Confirm("Forget all loot heard from other players?", function()
+            local dropped = Catalog.ForgetHeard(NS.DB.catalog) or 0
+            catBoss, catItem = nil, nil
+            NS.Print("Kept only loot you saw yourself. Dropped " .. dropped .. " heard items.")
+            NS.Refresh()
+        end)
     end
 end)
 catForgetHeard:SetPoint("TOPRIGHT", -26, -2)

@@ -13,6 +13,11 @@ Fixed:
 - Clicking Who can roll, Change loot spec or Set spec could crash the game. Those lists are now the addon's own.
 - A raid opened the day before for reserves no longer shuts players out the next evening.
 - When rolls can't be read (usually during a boss fight), the raid host is now told so.
+- The addon no longer breaks when the game hides a raider's class or leader status during a fight, and the trade window still fills.
+- New raid, Delete raid, Clear list, Forget boss and Forget heard now ask before they act.
+- A long "still to trade" list no longer covers the officer buttons.
+- Clicking Officer log shows the whole log, ready to copy.
+- The "not for your spec" line no longer gets cut off.
 
 Safer:
 
@@ -33,6 +38,29 @@ Safer:
 - Catalogue data heard from others is marked "(heard)", percentages use your own kills, and Forget heard clears it. Raids not started by the raid leader show as "(unverified)" in History and are left out of Stats.
 - Raiders no longer drop out of the addon's group list during boss fights.
 - Raid announcements also show in the addon, in case the game blocks the chat line.
+- An old raid can no longer be wiped from history by restarting it under its old name.
+- A raider can no longer make the host resend the whole raid every 30 seconds.
+- Items with impossible item numbers are refused.
+- A master looter's addon no longer hands out items given by hand, or items typed in by ID: it says who should get them, and the master looter decides.
+- The officer log also shows each roll an officer closed, each item marked delivered, and when the raid started and ended.
+- Dropping into the raid for a minute no longer makes you roll first next week: the addon must see you twice, at least 10 minutes apart.
+- Guild catalogue sharing: one kill can no longer report hundreds of items, and junk can no longer fill the catalogue for good.
+- A made-up version number from one player no longer shows "a newer version is out". Two players must have it.
+- A raid host can no longer grow everyone's saved data without end, or freeze their updates with a fake count.
+- Leaving the raid resets your 10 minutes, so popping in at the start and the end no longer counts as being there.
+- An officer can no longer call an item open to everyone the moment it goes up, before anyone could say they want it. Opening it that way is logged too.
+- Loot specs lock as soon as the first drop is added, even before Start raid.
+- If someone leaves during a boss fight, the addon no longer mixes up who is who in the trade window or for whispered reserves.
+- A raider whose name has no surname is no longer silenced when someone with the same first name joins.
+- Raid host messages from a host who no longer leads the group show as plain text.
+- Raid names and guild catalogue names can no longer carry extra lines. Boss and raid names you saw yourself replace names heard from others.
+- A heard drop no longer shows as "0%" in the item tooltip, and one guildmate can no longer keep your catalogue answer quiet by guessing your counts.
+- Demo mode no longer answers real whispers or records real kills into the fake raid.
+- An officer's Open to everyone also waits a few seconds after an item goes up, and an open item handed to someone who never rolled is the master looter's call, like any item given by hand.
+- A flood of locks or spec changes can no longer push opens, closes and deliveries out of the officer log.
+- Items given by hand count as delivered only once the master looter gives them to the right player.
+- An officer can no longer open a reserved item to everyone while its reserver is in the raid.
+- A master looter's addon hands an item out by itself only to the top roller, or to a lone reserver. Anything else, the master looter decides.
 
 Lighter:
 

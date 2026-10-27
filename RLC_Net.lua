@@ -156,10 +156,15 @@ end
 -- for the live queue to empty, so snapshots never pile up behind each other.
 -- At most one per 120 s for the whole raid; 30 s when an asker has no
 -- session at all (`urgent`: joined late, or reloaded with nothing saved).
+-- The asker sets that flag, so it counts once per 5 min per asker.
 local snapshotWanted, snapshotUrgent, snapshotSending, lastSnapshot = false, false, false, -600
-function Net.SendSnapshot(urgent)
+local lastUrgent = {} -- asker -> GetTime() of their last urgent ask
+function Net.SendSnapshot(urgent, who)
     snapshotWanted = true
-    snapshotUrgent = snapshotUrgent or urgent == true
+    local now = GetTime()
+    if urgent == true and now - (lastUrgent[who or ""] or -600) >= 300 then
+        snapshotUrgent, lastUrgent[who or ""] = true, now
+    end
 end
 
 -- Catalogue ops still waiting to go to "GROUP" or "GUILD": an answer is
@@ -251,6 +256,9 @@ local newCtx = {
     isLeadOrAssist = function(name)
         return NS.IsLeadOrAssist(name)
     end,
+    known = function(id)
+        return NS.DB.history[id] ~= nil
+    end,
     recent = {},
 }
 local refusedNew = {} -- sender -> true: we refused their last NEW
@@ -276,7 +284,9 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
         return
     end
     NS.FlushRoster()
-    sender = NS.Canon(sender)
+    -- The full spelling first: a newcomer sharing a first name must not
+    -- silence a raider whose name has no surname.
+    sender = NS.Canon(sender, true) or NS.Canon(sender)
     local me = NS.Me()
     if not sender or sender == me then
         return -- our own broadcast, echoed back
@@ -314,7 +324,10 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
             -- Our own session resent for someone else: replaying it would
             -- wipe local-only state (attendance) and rejected replays would
             -- make us ask for yet another snapshot.
-            skipSnap = { host = sender, left = snapN - 1, untilT = GetTime() + 30 }
+            -- No more than our own copy's snapshot could hold (with room for
+            -- what changed since): a made-up count would freeze our updates.
+            local most = 2 * #Rules.Snapshot(S) + 50
+            skipSnap = { host = sender, left = math.min(snapN, most) - 1, untilT = GetTime() + 30 }
         elseif kind:sub(1, 1) == "?" then
             if allowRequest(sender) then
                 op[1] = kind:sub(2)
@@ -322,9 +335,13 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
             end
         elseif kind == "NOTE" or kind == "ERR" then
             if S and sender == S.host and (kind == "NOTE" or op[2] == me) then
-                local text = kind == "NOTE" and op[2] or op[3] or ""
-                -- A host who does not lead the group gets no links or colours.
-                NS.Print(S.untrusted and text:gsub("|", "") or text)
+                local text = (kind == "NOTE" and op[2] or op[3]) or ""
+                -- A host who does not (or no longer) leads the group gets no
+                -- links, colours or extra lines.
+                if S.untrusted or not NS.TrustedHost(S) then
+                    text = text:gsub("[%c|]", " ")
+                end
+                NS.Print(text)
             end
         elseif kind == "NEW" then
             -- Later ops in this message come from the new host.

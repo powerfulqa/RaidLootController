@@ -95,7 +95,7 @@ local ENTRIES = {
             .. "If none of them roll, the officer's Close opens the roll to everyone who wants it. "
             .. "It keeps loot moving when raid nights are few.\n\n"
             .. "Only raids of 10 or more count, and only if the raid host's addon saw you in the group "
-            .. "while the raid was on. A reserve alone does not count as being there.",
+            .. "while the raid was on, at least 10 minutes apart. A reserve alone does not count as being there.",
         tab = "loot",
     },
     {
@@ -195,7 +195,7 @@ local ENTRIES = {
     },
     {
         q = "How do I make someone an officer, or unlock a player?",
-        a = "On the Raid tab, click the player, then Make officer (raid leader only), Unlock or Set spec.",
+        a = "On the Raid tab, click the player, then Make officer (raid host only), Unlock or Set spec.",
         tab = "raid",
     },
 
@@ -228,7 +228,8 @@ local ENTRIES = {
         a = "Every raid: who won what, how (roll, open roll, reserve or given), and everyone's rolls. "
             .. "Hover an item to see the rolls.\n\n"
             .. "Officer log: every item given by hand, win taken back, lock, unlock and spec change, "
-            .. "with the officer who did it. Hover Officer log, or an item, to see it.\n\n"
+            .. "each roll an officer closed, each item marked delivered, and when the raid started and ended, "
+            .. "with the officer who did it. Click Officer log to see it all, or hover an item.\n\n"
             .. "A raid not hosted by the group leader shows (unverified).",
         tab = "history",
     },

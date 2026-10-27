@@ -55,9 +55,9 @@ An officer can **Unlock** a player on the Raid tab so they can roll normally aga
 
 - **Free rolls don't count.** Winning an item that was opened to everyone does not lock you and does not touch your reserve, if you already had an item or it was off-spec for you. If you could have asked for it normally, it counts: staying quiet on **I want this** does not buy a free first item.
 - **Your reserve is safe.** Winning another item first does not cost you your reserve: it still pays out when it drops, as your second item.
-- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls. Only raids of 10 or more count, and only for players the addon saw in the group while the raid was on (a reserve alone is not enough).
+- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls. Only raids of 10 or more count, and only for players the addon saw in the group while the raid was on, at least 10 minutes apart (a reserve alone is not enough).
 - **Reserves close** at the raid start or when the first item is put up, whichever comes first. A reserve only pays out to someone still in the group.
-- **Officers are held to the rules.** They can't open an item while someone without an item wants it, or give items to players outside the group. Every item given by hand, win taken back, lock, unlock and spec change is in the **Officer log** on the History tab.
+- **Officers are held to the rules.** They can't open an item while someone without an item wants it, or give items to players outside the group. Every item given by hand, win taken back, lock, unlock, spec change, closed roll and delivery, and the raid's start and end, are in the **Officer log** on the History tab.
 - **Upgrade size.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the raw stat change. No scores, officers judge.
 
 ## The loot catalogue
@@ -117,7 +117,7 @@ A reserve ignores class limits: reserves are made before anyone knows how the it
 | `/rlc report` | Make a bug report to copy and paste |
 | `/rlc debug` | Debug output in chat on or off |
 
-The **Commands** tab lists the commands you can use right now, each with a **Run** button (commands that need an item have a **How** button that says what to type). It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear button are also on the Raid tab.
+The **Commands** tab lists the commands you can use right now, each with a **Run** button (commands that need an item have a **How** button that says what to type). It follows your role: raiders, officers and the raid host each see their own set. `/rlc help` prints the same list in chat. The host's announce toggle and the "still to trade" Clear list button are also on the Raid tab.
 
 The **Help** tab answers the common questions, with a search box that shows your search words in yellow. Click any column name to sort a list by it; click again to reverse.
 

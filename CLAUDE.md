@@ -202,6 +202,15 @@ only from the session host (and `NEW` only from a leader or assistant).
     - (d) `RAID` addon messages reach groupmates on another underlying realm.
     - (e) The roster is kept through encounters where unit names are secret.
 
+23. After the 2026-10-27 exploit loop, all unmeasured:
+    - `hooksecurefunc("GiveMasterLoot", ...)` fires when the master looter
+      gives from Blizzard's own loot menu, with (slot, candidate index), so a
+      win given by hand is confirmed only when it reaches its winner.
+    - A v0.6.1 client handed a `LOG2` op says "newer version" once and does
+      not resync (read from v0.6.1 source; not seen in game).
+    - Roster entries carried through an encounter are marked `stale` and
+      skipped for trade, whisper and attendance until names read again.
+
 ## Dev tooling
 
 Declared in `.claude/settings.json` (committed). On a new machine Claude Code

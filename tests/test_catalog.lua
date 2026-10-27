@@ -77,6 +77,7 @@ do
         end
     end
     check(n == 5, "item records capped across all instances")
+    check(cat[8] and cat[8].b[1].i[8], "a full catalogue makes room by dropping heard-only data")
     check(C.Record(cat, 9, "Own", 1, "B", "item:9", "k", 1), "our own drop bypasses the full cap")
     local savedInst = C.MAX_INSTANCES
     C.MAX_INSTANCES = 1
@@ -446,6 +447,38 @@ do
         C.KillAllowed(seen, "Evil", { "CD", "1", "I", "5000", "B", "item:1", "x", "1" }, C.KILL_GAP),
         "stale keys make room again"
     )
+end
+
+do -- one kill id carries a handful of items, not hundreds
+    local seen, ok = {}, 0
+    for i = 1, 50 do
+        ok = ok + (C.KillAllowed(seen, "A", { "CD", "1", "I", "663", "B", "item:" .. i, "E663:1", "1" }, 0) and 1 or 0)
+    end
+    check(ok == C.KILL_ITEMS, "items per kill id are capped")
+    check(
+        C.KillAllowed(seen, "A", { "CD", "1", "I", "663", "B", "item:1", "E663:1", "1" }, 0),
+        "a repeat of one is fine"
+    )
+end
+
+do -- election: sweeping claims 1, 2, 3... cannot hit our count and silence us
+    local cat = {}
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "k1", 1)
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "k2", 2)
+    local inst, heard = cat[MC], {}
+    for v = 1, 5 do
+        C.NoteHeard(inst, heard, { "CB", tostring(MC), tostring(LUC), "Lucifron", tostring(v), "1" }, "Evil")
+    end
+    check(heard[inst.b[LUC]] == 1, "only a sender's first claim counts")
+end
+
+do -- names: no control bytes; what we saw ourselves beats a heard name
+    local cat = {}
+    apply(cat, { "CI", "409", "Molten Core\nWhisper me" })
+    apply(cat, { "CB", "409", "663", "Free\rGold", "5", "1" })
+    check(not cat[409].name:find("%c") and not cat[409].b[663].name:find("%c"), "control bytes stripped")
+    C.CountKill(cat, 409, "Molten Core", 663, "Lucifron", "k1", 1)
+    check(cat[409].name == "Molten Core" and cat[409].b[663].name == "Lucifron", "own kill renames heard names")
 end
 
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))

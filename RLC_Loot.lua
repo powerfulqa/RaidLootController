@@ -204,6 +204,20 @@ end
 -- counts as delivered once the slot empties. A failure, or the window
 -- closing first, puts it on the owed list instead.
 local giving, lastGive = {}, nil
+local byHand = {} -- loot slot -> { winner, itemString }: waiting for the master looter
+
+-- The master looter giving a slot from Blizzard's own menu: if it is a
+-- win given by hand and goes to its winner, confirm it like our own give.
+if GiveMasterLoot then
+    hooksecurefunc("GiveMasterLoot", function(slot, index)
+        local g = byHand[slot]
+        local name = g and GetMasterLootCandidate(slot, index)
+        if g and NS.CanRead(name) and name and NS.Canon(name) == g.winner then
+            byHand[slot] = nil
+            giving[slot], lastGive = g, slot
+        end
+    end)
+end
 
 function Loot.Deliver(item)
     local winner = item.winner
@@ -215,8 +229,10 @@ function Loot.Deliver(item)
         and GiveMasterLoot
         and C_PartyInfo.GetLootMethod() == Enum.LootMethod.Masterlooter
     then
-        -- The slot this drop was added from, if the window still shows it
-        -- (two copies of one item on a boss: give the right one), else any match.
+        -- Only the slot this drop was added from (two copies of one item on
+        -- a boss: give the right one), and only for a win the rules decided.
+        -- An item typed in by ID, or given by hand, is the master looter's
+        -- call: an officer could otherwise add any drop and give it away.
         local slot
         for i = 1, GetNumLootItems() do
             if item.src and tostring(GetLootSourceInfo(i)) .. ":" .. i == item.src then
@@ -224,10 +240,30 @@ function Loot.Deliver(item)
                 break
             end
         end
-        slot = slot
-            or bestMatch(GetNumLootItems(), function(i)
-                return NS.ItemStringOf(GetLootSlotLink(i))
-            end, item.itemString)
+        -- The rules decided only if the winner is the top roller, or the one
+        -- reserver who did not need to roll. Anything else (given by hand,
+        -- or to a lower roller) a person decided: the master looter's call.
+        local rolls, reservers = item.rolls or {}, 0
+        for name in pairs(item.restrict or {}) do
+            reservers = reservers + (NS.ClassOf(name) and 1 or 0)
+        end
+        local byRules = item.how ~= "manual"
+            and (
+                Rules.Top({ rolls = rolls }) == winner
+                or (item.how == "reserve" and next(rolls) == nil and reservers == 1 and item.restrict[winner])
+            )
+        if slot and not byRules and winner ~= NS.Me() then
+            -- The master looter's call. Delivered only once they give this
+            -- slot to the winner (the GiveMasterLoot hook below); an emptied
+            -- slot alone could be anyone's doing. Owed if the window closes.
+            byHand[slot] = { winner = winner, itemString = item.itemString }
+            NS.Print(
+                "%s was given %s by hand. Give it from the loot window if that is right.",
+                NS.ColorName(winner),
+                NS.LinkOf(item.itemString)
+            )
+            return
+        end
         if slot then
             for i = 1, 40 do
                 local name = GetMasterLootCandidate(slot, i)
@@ -288,9 +324,11 @@ NS.On("LOOT_OPENED", function()
 end)
 NS.On("LOOT_CLOSED", function()
     Loot.lootOpen = false
-    for slot, g in pairs(giving) do
-        giving[slot] = nil
-        owe(g.winner, g.itemString)
+    for _, t in ipairs({ giving, byHand }) do
+        for slot, g in pairs(t) do
+            t[slot] = nil
+            owe(g.winner, g.itemString)
+        end
     end
     lastGive = nil
     if NS.Refresh then
@@ -333,7 +371,8 @@ NS.On("TRADE_SHOW", function()
     -- use, however the realm part reads for "npc".
     local who
     for name, r in pairs(NS.roster) do
-        if r.unit and UnitIsUnit(r.unit, "npc") then
+        local same = r.unit and not r.stale and UnitIsUnit(r.unit, "npc")
+        if NS.CanRead(same) and same then
             who = name
         end
     end
@@ -587,7 +626,7 @@ local function annotate(tooltip)
         end
         local more = #hits > 1 and string.format(" and %d more", #hits - 1) or ""
         local n, kills = own(h)
-        if kills > 0 then
+        if kills > 0 and n > 0 then
             lines[#lines + 1] = string.format(
                 "Drops from %s (%d%%, %d of %d kills)%s",
                 h.boss.name,

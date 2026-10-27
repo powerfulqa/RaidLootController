@@ -596,7 +596,7 @@ do
     check(R.Apply(S, { "ITEM", "77", "done", "normal", "0", "", "" }) == nil, "ITEM done without winner refused")
     check(R.Apply(S, { "ITEM", "77", "rolling", "normal", "1e999", "", "" }) == nil, "class mask inf refused")
     -- A /roll from someone outside the group never counts, even on an open item.
-    act(HOST, { "ADD", "item:19019" })
+    act(HOST, { "ADD", "item:19999" })
     local key = host.order[#host.order]
     act(HOST, { "START", key })
     act(HOST, { "OPEN", key })
@@ -728,6 +728,108 @@ do
     burst.now = burst.now + R.NEW_WINDOW + 1
     check(R.AcceptNew(nil, new(LEAD, burst.now), LEAD, burst), "and allowed again later")
     check(R.Apply(nil, { "NEW", "X-R-9", "X-R", "", "1e999" }).created == 0, "NEW never stores an absurd time")
+    nctx.known = function(id)
+        return id == ASSIST .. "-99000"
+    end
+    check(not R.AcceptNew(nil, new(ASSIST, 99000), ASSIST, nctx), "an old raid's id cannot replace its history")
+    running.phase = "live"
+    check(R.AcceptNew(running, new(ASSIST, 99000), ASSIST, nctx), "the running raid's own resend still passes")
+    nctx.known = nil
+end
+
+do -- item ids stay in range
+    check(R.ValidItemString("item:19019"), "a real item id passes")
+    check(not R.ValidItemString("item:99999999999999999999"), "a huge item id is refused")
+    fresh()
+    check(act(HOST, { "ADD", "item:99999999999999999999" }) == nil, "ADD refuses a huge item id")
+end
+
+do -- audit: the log shows phases, closes and deliveries (not to old copies)
+    fresh()
+    act(HOST, { "OFF", A, 1 })
+    act(HOST, { "PHASE", "live" })
+    check(client.log[#client.log].what == "live", "starting the raid is logged")
+    act(HOST, { "ADD", "item:1" })
+    act(A, { "START", "1" })
+    act(B, { "WANT", "1", 1 })
+    act(A, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", B, 50, 1, 100 })
+    act(A, { "CLOSE", "1" })
+    local e = client.log[#client.log]
+    check(e.what == "close" and e.by == A and e.name == B, "an officer closing a roll is logged")
+    act(A, { "DELIV", "1" })
+    check(client.log[#client.log].what == "deliv", "marking a win delivered is logged")
+    act(HOST, { "PHASE", "ended" })
+    check(client.log[#client.log].what == "ended", "ending the raid is logged")
+    -- v0.6.1 refuses these kinds as "bad LOG" and would resync for ever, so
+    -- they travel as LOG2, an op it does not know (no resync).
+    local kinds = {}
+    for _, op in ipairs(R.Snapshot(host)) do
+        if op[1] == "LOG" or op[1] == "LOG2" then
+            kinds[op[4]] = op[1]
+        end
+    end
+    check(kinds.close == "LOG2" and kinds.live == "LOG2" and kinds.officer == "LOG", "new log kinds go as LOG2")
+    check(R.Apply(host, { "LOG", 1000, HOST, "close", "", "" }) == nil, "and only as LOG2")
+    local _, why = R.Apply(host, { "LOG", 1000, HOST, "someday", "", "" })
+    check(why == "unknown op", "an unknown log kind reads as a newer host, not a missed op")
+end
+
+do -- name sets are capped
+    fresh()
+    for i = 1, R.MAX_NAMES do
+        host = assert(R.Apply(host, { "SPEC", "P" .. i .. "-Realm", "WARRIOR.ARMS" }))
+    end
+    check(R.Apply(host, { "SPEC", "Extra-Realm", "WARRIOR.ARMS" }) == nil, "no new name past the cap")
+    check(R.Apply(host, { "SPEC", "P1-Realm", "WARRIOR.FURY" }) ~= nil, "an existing name can still change")
+end
+
+do -- an item called the moment it goes up cannot jump to "open to everyone"
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    local upAt = ctx.now
+    ctx.since = function()
+        return upAt
+    end
+    check(act(HOST, { "CALL", "1" }) == nil, "no open before raiders could ask")
+    ctx.now = ctx.now + R.INTEREST_MIN
+    check(act(HOST, { "CALL", "1" }) and client.items["1"].mode == "open", "after a few seconds it opens")
+    check(client.log[#client.log].what == "open", "and the opening is logged")
+    act(HOST, { "CANCEL", "1" })
+    act(HOST, { "ADD", "item:2" })
+    upAt = ctx.now
+    check(act(HOST, { "START", "2" }) and client.items["2"].state == "interest", "the next item goes up")
+    check(act(HOST, { "OPEN", "2" }) == nil, "an officer's Open waits the same few seconds")
+    ctx.since, ctx.now = nil, 1000
+end
+
+do -- specs lock once items are up
+    local M1 = "Mag-Realm"
+    CLASS[M1] = 8
+    fresh()
+    act(M1, { "SPEC", "MAGE.FROST" })
+    act(HOST, { "ADD", "item:1" })
+    check(act(M1, { "SPEC", "MAGE.FIRE" }) == nil, "no spec swap once drops are up, even before Start raid")
+end
+
+do -- an officer cannot open a reserved item while its reserver is here
+    fresh()
+    act(B, { "RES", 19019 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:19019" })
+    act(HOST, { "START", "1" })
+    check(client.items["1"].mode == "reserve", "reserve fixture: item is reserved")
+    check(act(HOST, { "OPEN", "1" }) == nil, "no Open while the reserver is here")
+    local upAt = ctx.now
+    ctx.since = function()
+        return upAt
+    end
+    local saved = CLASS[B]
+    CLASS[B] = nil -- the reserver left
+    check(act(HOST, { "OPEN", "1" }) == nil, "and none in the first seconds once they left")
+    CLASS[B], ctx.since = saved, nil
 end
 
 -- ---- audit fixes (2026-10-26) ----------------------------------------------
@@ -940,6 +1042,13 @@ do -- the log keeps awards and take-backs when trimmed, and stays bounded
         R.Apply(host, { "LOG", i, HOST, "lock", A, "" })
     end
     check(#host.log == R.MAX_LOG and host.log[1].what == "award", "log trim keeps the oldest award")
+    fresh()
+    R.Apply(host, { "LOG2", 1, HOST, "close", A, "1" })
+    R.Apply(host, { "LOG", 2, HOST, "open", nil, "1" })
+    for i = 3, R.MAX_LOG + 50 do
+        R.Apply(host, { "LOG", i, HOST, i % 2 == 0 and "lock" or "unlock", A, "" })
+    end
+    check(host.log[1].what == "close" and host.log[2].what == "open", "a lock flood cannot push out opens and closes")
     for i = 1, R.MAX_LOG + 5 do
         R.Apply(host, { "LOG", 1000 + i, HOST, "undo", A, "1" })
     end

@@ -18,11 +18,12 @@ globals = {
     "BINDING_HEADER_RAIDLOOTCONTROLLER",
     "BINDING_NAME_RAIDLOOTCONTROLLER_TOGGLE",
     "UISpecialFrames",
+    "StaticPopupDialogs",
 }
 read_globals = {
     "C_AddOns", "C_ChatInfo", "C_ClassColor", "C_Container", "C_Item", "C_Timer", "C_TooltipInfo",
     "ChatEdit_InsertLink", "ChatFrameUtil", "ClearCursor", "ClickTradeButton", "CopyTable",
-    "CreateFrame", "DEFAULT_CHAT_FRAME", "Enum", "ERR_TRADE_COMPLETE", "GameTooltip", "GameTooltip_Hide",
+    "CreateFrame", "StaticPopup_Show", "YES", "NO", "DEFAULT_CHAT_FRAME", "Enum", "ERR_TRADE_COMPLETE", "GameTooltip", "GameTooltip_Hide",
     "GetClassInfo", "GetCursorInfo", "GetInstanceInfo", "GetInventoryItemLink", "PlaySound", "SOUNDKIT", "GetLootSlotInfo", "GetLootSlotLink",
     "GetLootSourceInfo", "GetMasterLootCandidate", "GetNormalizedRealmName", "GetNumClasses",
     "GetNumGroupMembers", "GetNumLootItems", "GetNumSubgroupMembers", "GetServerTime", "GetCursorPosition", "GetMinimapShape", "GetTime", "GetTradePlayerItemLink",

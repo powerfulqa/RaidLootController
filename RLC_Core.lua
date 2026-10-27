@@ -32,6 +32,7 @@ NS.CanRead = NS.Kit.CanRead
 
 NS.versions = {} -- name -> version, this session only
 local toldNewer = false
+local newerBy -- the first player who reported a newer version
 
 -- The chat line carries a green [Click here] link that opens the download
 -- address ready to copy (the game cannot open a browser). Registered with
@@ -56,7 +57,13 @@ function NS.NoteVersion(name, v)
     end
     NS.versions[name] = v
     if not toldNewer and Rules.VersionNewer(v, NS.VERSION) then
+        -- Two players must say so: one could make up any version.
+        if not newerBy or newerBy.name == name then
+            newerBy = { name = name, v = v }
+            return
+        end
         toldNewer = true
+        v = Rules.VersionNewer(v, newerBy.v) and newerBy.v or v
         NS.Print("|cffffff00A newer version (%s) is out|r; you have %s. %s to get it.", v, NS.VERSION, UPDATE_LINK)
     end
 end
@@ -268,7 +275,7 @@ end
 -- a session, so a master looter must not give loot on theirs alone.
 function NS.TrustedHost(S)
     local r = S and roster[S.host]
-    return S ~= nil and (S.host == NS.Me() or (r ~= nil and r.lead == true))
+    return S ~= nil and (S.host == NS.Me() or (r ~= nil and r.lead == true and not r.stale))
 end
 
 function NS.Short(name)
@@ -281,18 +288,32 @@ end
 -- history can colour names of players who have left.
 
 -- Raiders present while the raid is live, kept on the session (never
--- sent): Rules.DryFrom reads it.
-local function markAttendance()
+-- sent): Rules.DryFrom reads it. Seen twice at least ATTEND_MIN apart (a
+-- roster change, a boss, the raid's end), so dropping in for a minute
+-- does not make you roll first next week. ending: the raid just ended.
+local ATTEND_MIN = 600
+local function markAttendance(ending)
     local S = NS.S()
-    if S and S.phase == "live" then
-        S.att = S.att or {}
-        for name in pairs(roster) do
-            S.att[name] = true
+    if S and (S.phase == "live" or ending) then
+        local now = GetServerTime()
+        S.att, S.seen = S.att or {}, S.seen or {}
+        for name, r in pairs(roster) do
+            S.seen[name] = not r.stale and (S.seen[name] or now) or S.seen[name]
+            if not r.stale and S.seen[name] and now - S.seen[name] >= ATTEND_MIN then
+                S.att[name] = true
+            end
+        end
+        -- Gone in between: the 10 minutes start again if they come back.
+        for name in pairs(S.seen) do
+            if not roster[name] then
+                S.seen[name] = nil
+            end
         end
     end
 end
 
 local toldDup = {} -- canonical name -> true once told it is shared
+local interestAt = {} -- session id .. "\t" .. item key -> when it went up (host only)
 
 function NS.RefreshRoster()
     -- A unit whose name cannot be read now (secret during an encounter)
@@ -327,13 +348,21 @@ function NS.RefreshRoster()
             unread[#unread + 1] = unit
         else
             local _, classFile, classID = UnitClass(unit)
+            local lead, assist = UnitIsGroupLeader(unit), UnitIsGroupAssistant(unit)
+            -- These can be secret while the name is not: a secret must
+            -- never reach saved data or a trust check. Keep the last values.
+            if not NS.CanRead(classFile, classID, lead, assist) then
+                local prev = prevByUnit[unit]
+                local p = prev and prev.name == full and prev.r or {}
+                classFile, classID, lead, assist = p.classFile, p.classID, p.lead, p.assist
+            end
             entry = {
                 unit = unit,
                 first = first,
                 classID = classID,
                 classFile = classFile,
-                lead = UnitIsGroupLeader(unit),
-                assist = UnitIsGroupAssistant(unit),
+                lead = lead,
+                assist = assist,
             }
             if classFile and NS.DB then
                 NS.DB.classes[full] = classFile
@@ -366,7 +395,10 @@ function NS.RefreshRoster()
     for _, unit in ipairs(unread) do
         local prev = prevByUnit[unit]
         if prev and not roster[prev.name] and not dup[prev.name] then
-            prev.r.unit = unit
+            -- Unit tokens shift when someone leaves: this may now be another
+            -- player. Kept for rolls and messages by name, never used to
+            -- tell who a unit is (trade, whisper, attendance).
+            prev.r.unit, prev.r.stale = unit, true
             addAliases(prev.name, prev.r.first or prev.name)
             roster[prev.name] = prev.r
         end
@@ -392,7 +424,7 @@ end
 
 function NS.IsLeadOrAssist(name)
     local r = roster[name]
-    return r and (r.lead or r.assist) or false
+    return r and not r.stale and (r.lead or r.assist) or false
 end
 
 -- ---- items -----------------------------------------------------------------
@@ -484,10 +516,10 @@ function NS.ApplyOps(ops, broadcast)
         local undone = op[1] == "UNDO" and S and S.items[op[2]]
         undone = undone and undone.winner and { who = undone.winner, s = undone.itemString }
         -- A resent NEW of our own session keeps who attended (local only).
-        local prevAtt = op[1] == "NEW" and S and S.id == op[2] and S.att
+        local prev = op[1] == "NEW" and S and S.id == op[2] and S
         local newS, why = Rules.Apply(S, op)
-        if newS and prevAtt then
-            newS.att = newS.att or prevAtt
+        if newS and prev then
+            newS.att, newS.seen = newS.att or prev.att, newS.seen or prev.seen
         end
         local owedList = undone and newS and NS.DB.owed[undone.who]
         if owedList then
@@ -516,7 +548,17 @@ function NS.ApplyOps(ops, broadcast)
                 changedHistory = true
             end
             if k == "PHASE" then
-                markAttendance()
+                markAttendance(op[2] == "ended")
+            elseif k == "ITEM" or k == "UNDO" or k == "CANCEL" or k == "AWARD" then
+                -- When each item went up for interest (Rules.Intent CALL and
+                -- OPEN). Kept while it is up; a take-back starts it again.
+                -- A new mode (reserve dropping to normal) starts it again:
+                -- nobody could ask for it in the old one.
+                local ik = S.id .. "\t" .. tostring(op[2])
+                local up = k == "ITEM" and (op[3] == "interest" or op[3] == "rolling")
+                local was = interestAt[ik]
+                interestAt[ik] = up and (was and was.mode == op[4] and was or { at = GetServerTime(), mode = op[4] })
+                    or nil
             end
             local winKey = S.id .. "\t" .. tostring(op[2])
             if k == "UNDO" then
@@ -649,7 +691,7 @@ function NS.HandleRequest(who, req, quiet)
             return
         end
         lastSyncFrom[who] = now
-        NS.Net.SendSnapshot(req[2] == "1") -- "1": the asker has no session
+        NS.Net.SendSnapshot(req[2] == "1", who) -- "1": the asker has no session
         return
     end
     local ops, note = Rules.Intent(S, who, req, {
@@ -657,6 +699,10 @@ function NS.HandleRequest(who, req, quiet)
         now = GetServerTime(),
         describe = NS.Specs.DescribeItem,
         dry = NS.DryLastRaid,
+        since = function(key)
+            local up = interestAt[S.id .. "\t" .. key]
+            return up and up.at
+        end,
     })
     if not ops then
         -- A refused roll is told to the player who rolled, not the host. Only
@@ -690,7 +736,7 @@ end
 function NS.Act(...)
     local req = { ... }
     if not NS.S() then
-        NS.Print("No raid session. An officer starts one from the Raid tab.")
+        NS.Print("No raid session. The raid leader or an assistant starts one from the Raid tab.")
         return
     end
     if NS.IsHost() then
@@ -867,6 +913,9 @@ end)
 -- player per 5 s.
 local lastWhisperTo = {}
 NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid)
+    if NS.Demo and NS.Demo.active then
+        return -- the fake raid: never tell a real player it took their reserve
+    end
     if not NS.IsHost() or not NS.CanRead(text, sender, guid) or type(text) ~= "string" then
         return
     end
@@ -875,6 +924,7 @@ NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid
     -- The GUID, not the name: first names are not unique here, and a
     -- stranger sharing one would otherwise reserve as that raider.
     local r = who and NS.roster[who]
+    r = r and not r.stale and r or nil
     local unitGUID = r and r.unit and UnitGUID(r.unit)
     if not guid or not NS.CanRead(unitGUID) or unitGUID ~= guid or GetTime() - (lastWhisperTo[who] or -60) < 5 then
         return -- not a command, or not from someone in the group
@@ -911,7 +961,7 @@ end
 
 -- Every /rlc command, in the order the Commands tab lists them. One table
 -- drives the slash handler, /rlc help and the tab's Run buttons.
---   args: the command needs more typed (the tab opens chat prefilled)
+--   args: the command needs more typed (the tab's How prints what to type)
 --   state(): true/false for a toggle, shown as on/off
 --   when(S): shown only when it can do something for you right now. The
 --   host still re-checks every request, so this only tidies the list.

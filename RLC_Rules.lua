@@ -45,10 +45,39 @@ local LOGS = {
     specs = true, -- an item's loot specs changed
     officer = true,
     unofficer = true,
+    close = true, -- closed a roll
+    deliv = true, -- marked a win delivered
+    live = true, -- started the raid
+    ended = true, -- ended the raid
 }
+-- Kinds v0.6.1 and older refuse as "bad LOG", and a refused op makes them
+-- ask for the whole raid again. So these travel as LOG2, an op kind those
+-- copies do not know: they say "newer version" once and never resync.
+Rules.NEW_LOGS = { close = true, deliv = true, live = true, ended = true }
 Rules.MAX_LOG = 200
+-- Dropped first when the log is full: an officer can make these by the
+-- hundred, and they must not push out who opened, closed or gave what.
+local CHEAP_LOGS =
+    { lock = true, unlock = true, spec = true, specs = true, cancel = true, officer = true, unofficer = true }
+-- Players per name set (reserves, specs, wants, rolls...): a raid has 40,
+-- so a host cannot grow every client's saved data without end.
+Rules.MAX_NAMES = 200
+Rules.INTEREST_MIN = 15 -- seconds an item is up before a call can open it to everyone
 Rules.MAX_ITEMS = 500 -- per raid session; far above any real raid
 Rules.MAX_ID = 2147483647 -- item ids and session keys: rejects "1e999" (inf) and NaN
+
+-- Whether name may be added to set t (Rules.MAX_NAMES). Removing and
+-- changing an entry is always allowed.
+local function roomFor(t, name)
+    if t[name] ~= nil then
+        return true
+    end
+    local n = 0
+    for _ in pairs(t) do
+        n = n + 1
+    end
+    return n < Rules.MAX_NAMES
+end
 
 -- A whole number in [lo, hi] from a wire field, or nil.
 function Rules.Int(v, lo, hi)
@@ -94,7 +123,10 @@ end
 -- "item:12345:..." (the itemString inside a link). Links themselves never go
 -- on the wire: an itemString is shorter and carries no colour codes.
 function Rules.ValidItemString(s)
-    return type(s) == "string" and #s <= 200 and s:match("^item:%d+[%d:%-]*$") ~= nil
+    return type(s) == "string"
+        and #s <= 200
+        and s:match("^item:%d+[%d:%-]*$") ~= nil
+        and tonumber(s:match("^item:(%d+)")) <= Rules.MAX_ID
 end
 
 -- Worn gear sent with a want: one or two itemStrings (rings, trinkets and
@@ -108,7 +140,7 @@ function Rules.ValidWorn(s)
     local n = 0
     for part in s:gmatch("[^,]+") do
         n = n + 1
-        if n > 2 or not Rules.ValidItemString(part) or (Rules.ItemIDOf(part) or 0) > Rules.MAX_ID then
+        if n > 2 or not Rules.ValidItemString(part) then
             return false
         end
     end
@@ -307,6 +339,9 @@ function Rules.AcceptNew(S, op, sender, ctx)
         -- this client only ended for age at login is still the host's.
         return S.phase ~= "ended" or S.autoEnded == true
     end
+    if ctx.known and ctx.known(op[2]) then
+        return false -- an old raid's id: a blank copy would replace its saved history
+    end
     if S and S.phase ~= "ended" and ctx.me and S.host == ctx.me and sender ~= ctx.me and not ctx.inRaid then
         -- Our own running raid, while we are out of a raid group: a 2-man
         -- party is enough to lead. In a raid the leader may still take over,
@@ -483,7 +518,7 @@ function Rules.Apply(S, op)
         if type(op[2]) ~= "string" or op[2] == "" or not Rules.ValidName(op[3]) then
             return nil, "bad NEW"
         end
-        local title = tostring(op[4] or ""):gsub("[\t%^|]", ""):sub(1, 40)
+        local title = tostring(op[4] or ""):gsub("[%c%^|]", ""):sub(1, 40)
         return Rules.NewSession(op[2], op[3], title, Rules.Int(op[5], 0, Rules.MAX_ID) or 0)
     end
     if not S then
@@ -503,22 +538,32 @@ function Rules.Apply(S, op)
         return S
     end
     if kind == "SPEC" then
-        if not Rules.ValidName(op[2]) or (op[3] ~= "" and not Rules.ValidSpec(op[3])) then
+        if
+            not Rules.ValidName(op[2])
+            or (op[3] ~= "" and not Rules.ValidSpec(op[3]))
+            or not roomFor(S.specs, op[2])
+        then
             return nil, "bad SPEC"
         end
         S.specs[op[2]] = op[3] ~= "" and op[3] or nil
         return S
     end
     if kind == "DRY" then
-        if not Rules.ValidName(op[2]) then
+        S.dry = S.dry or {}
+        if not Rules.ValidName(op[2]) or not roomFor(S.dry, op[2]) then
             return nil, "bad DRY"
         end
-        S.dry = S.dry or {}
         S.dry[op[2]] = true
         return S
     end
-    if kind == "LOG" then
+    if kind == "LOG" or kind == "LOG2" then
+        if (kind == "LOG2") ~= (Rules.NEW_LOGS[op[4]] == true) and LOGS[op[4]] then
+            return nil, "bad LOG" -- each kind travels on its own op
+        end
         local t = Rules.Int(op[2], 0, Rules.MAX_ID * 2)
+        if type(op[4]) == "string" and op[4]:match("^%l+$") and not LOGS[op[4]] then
+            return nil, "unknown op" -- a newer host's kind: tell, never resync
+        end
         if not t or not Rules.ValidName(op[3]) or not LOGS[op[4]] then
             return nil, "bad LOG"
         end
@@ -531,7 +576,7 @@ function Rules.Apply(S, op)
         if #S.log >= Rules.MAX_LOG then
             local drop = 1
             for i, e in ipairs(S.log) do
-                if e.what ~= "award" and e.what ~= "undo" then
+                if CHEAP_LOGS[e.what] then
                     drop = i
                     break
                 end
@@ -543,7 +588,8 @@ function Rules.Apply(S, op)
     end
     if kind == "OFF" or kind == "LOCK" or kind == "RES" then
         local name = op[2]
-        if not Rules.ValidName(name) then
+        local set = kind == "OFF" and S.officers or kind == "LOCK" and S.locks or S.reserves
+        if not Rules.ValidName(name) or not roomFor(set, name) then
             return nil, "bad name"
         end
         if kind == "OFF" then
@@ -616,12 +662,22 @@ function Rules.Apply(S, op)
         if not set then
             return nil, "bad ITEMADD"
         end
+        local n = 0
+        for k in pairs(list) do
+            n = n + (set[k] and 0 or 1)
+        end
+        for _ in pairs(set) do
+            n = n + 1
+        end
+        if n > Rules.MAX_NAMES then
+            return nil, "bad ITEMADD"
+        end
         for k in pairs(set) do
             list[k] = true
         end
     elseif kind == "WANT" or kind == "ROLL" then
         local name = op[3]
-        if not Rules.ValidName(name) then
+        if not Rules.ValidName(name) or not roomFor(kind == "WANT" and item.wants or item.rolls, name) then
             return nil, "bad name"
         end
         if kind == "WANT" then
@@ -795,7 +851,12 @@ local function hasActed(S, name)
 end
 
 local function logOp(now, by, what, name, key)
-    return { "LOG", now, by, what, name or "", key or "" }
+    return { Rules.NEW_LOGS[what] and "LOG2" or "LOG", now, by, what, name or "", key or "" }
+end
+
+local function audit(ops, now, by, what, name, key)
+    ops[#ops + 1] = logOp(now, by, what, name, key)
+    return ops
 end
 
 function Rules.Intent(S, who, req, ctx)
@@ -856,7 +917,7 @@ function Rules.Intent(S, who, req, ctx)
         if not Rules.SpecFits(spec, classOf(who)) then
             return nil, "Not a spec."
         end
-        if S.phase ~= "reserve" and (S.specs[who] or hasActed(S, who)) and S.specs[who] ~= spec then
+        if (S.phase ~= "reserve" or anyAdded(S)) and (S.specs[who] or hasActed(S, who)) and S.specs[who] ~= spec then
             -- A late first report counts only before asking for anything:
             -- no spec on record lets you ask for every spec's gear.
             return nil, "Specs are locked once the raid starts. Ask an officer to change yours."
@@ -897,6 +958,9 @@ function Rules.Intent(S, who, req, ctx)
         elseif not Rules.CanRoll(S, item, name, classOf(name)) then
             return nil, "Your roll didn't count: you can't roll for this item. The Loot tab says why."
         end
+        -- No spec on record is NOT refused here, unlike WANT: a raider
+        -- without the addon cannot report one and rolls on class alone. A
+        -- modded copy that hides its spec looks the same, so it gets no more.
         return { { "ROLL", item.key, name, roll } }
     end
 
@@ -944,7 +1008,7 @@ function Rules.Intent(S, who, req, ctx)
         if req[2] ~= "live" and req[2] ~= "ended" then
             return nil, "Bad phase."
         end
-        local ops = { { "PHASE", req[2], now } }
+        local ops = audit({ { "PHASE", req[2], now } }, now, who, req[2])
         -- Raid start: players who won nothing in their last raid roll first
         -- tonight (ctx.dry comes from the host's saved history).
         if req[2] == "live" and not S.started and ctx.dry then
@@ -1017,8 +1081,15 @@ function Rules.Intent(S, who, req, ctx)
                 end
             end
             if not wanting then
-                return addItemOps({}, item, "interest", "open", item.classMask),
-                    "Nobody without an item wants this. It is now open to everyone."
+                -- Called the moment it went up, nobody has had time to ask:
+                -- that would hand it to everyone, locked players too.
+                local since = ctx.since and ctx.since(item.key)
+                if since and now - since < Rules.INTEREST_MIN then
+                    return nil, "Give the raid a few seconds to say they want it."
+                end
+                local ops = addItemOps({}, item, "interest", "open", item.classMask)
+                ops[#ops + 1] = logOp(now, who, "open", nil, item.key)
+                return ops, "Nobody without an item wants this. It is now open to everyone."
             end
             -- Fairness over few raid nights: players who won nothing in
             -- their last raid roll first when they want it.
@@ -1047,11 +1118,13 @@ function Rules.Intent(S, who, req, ctx)
                 how = "roll" -- could have asked normally: it counts as their item
             end
             local ops = { { "AWARD", item.key, winner, how, now } }
+            -- Who closed it, and when: an officer closing the moment a friend
+            -- rolls high shows in History. Their own win shows as an award.
             if winner == who then
-                -- An officer closing a roll they won themselves shows in History.
                 ops[2] = logOp(now, who, "award", winner, item.key)
+                return ops
             end
-            return ops
+            return audit(ops, now, who, "close", winner, item.key)
         elseif tied then
             return { { "REROLL", item.key, Rules.SetToCSV(tied) } },
                 "Tie on " .. best .. ". The tied players roll again."
@@ -1071,12 +1144,24 @@ function Rules.Intent(S, who, req, ctx)
         if st ~= "interest" and st ~= "rolling" then
             return nil, "That item is not up for rolls."
         end
+        if item.mode == "reserve" then
+            -- A reserver who is here keeps it; Call opens it if all have left.
+            for name in pairs(item.restrict or {}) do
+                if classOf(name) then
+                    return nil, "A reserver is here. Roll it for them, or give it by hand."
+                end
+            end
+        end
         if item.mode == "normal" then
             for name in pairs(item.wants) do
                 if classOf(name) and Rules.Eligible(S, item, name, classOf(name)) then
                     return nil, "Someone without an item wants this. Roll it normally, or give it by hand."
                 end
             end
+        end
+        local since = ctx.since and ctx.since(item.key)
+        if since and now - since < Rules.INTEREST_MIN then
+            return nil, "Give the raid a few seconds to say they want it."
         end
         local ops = addItemOps({}, item, st, "open", item.classMask)
         ops[#ops + 1] = logOp(now, who, "open", nil, item.key)
@@ -1121,7 +1206,7 @@ function Rules.Intent(S, who, req, ctx)
         elseif item.delivered then
             return nil, "Already delivered."
         end
-        return { { "DELIV", item.key, now } }
+        return audit({ { "DELIV", item.key, now } }, now, who, "deliv", item.winner, item.key)
     end
     return nil, "Unknown request."
 end

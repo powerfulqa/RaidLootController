@@ -52,7 +52,7 @@ local function cleanName(s)
     if type(s) ~= "string" then
         return nil
     end
-    s = s:gsub("[\t%^|]", ""):sub(1, 60)
+    s = s:gsub("[%c%^|]", ""):sub(1, 60)
     return s ~= "" and s or nil
 end
 
@@ -87,8 +87,10 @@ end
 -- that rise later show without a rebuild.
 local index = setmetatable({}, { __mode = "k" })
 
+local full = setmetatable({}, { __mode = "k" }) -- cat -> true: nothing heard-only to evict
+
 function Catalog.Forget(cat)
-    totals[cat], index[cat] = nil, nil
+    totals[cat], index[cat], full[cat] = nil, nil, nil
 end
 
 local function addHit(idx, id, boss, rec)
@@ -154,10 +156,35 @@ local function evict(cat, t)
     for k, e in pairs(t) do
         if heardOnly(e) then
             t[k] = nil
-            Catalog.Forget(cat)
+            if e.s and totals[cat] then
+                -- One item record: count it off, so a flood at the cap does
+                -- not recount the whole catalogue per message. The search
+                -- index rebuilds on its next use.
+                totals[cat], index[cat] = totals[cat] - 1, nil
+            else
+                Catalog.Forget(cat)
+            end
             return true
         end
     end
+    return false
+end
+
+-- evict, anywhere in the catalogue (the whole-catalogue cap). A failed
+-- search is remembered until the catalogue changes, so a flood at the cap
+-- costs one scan, not one per message.
+local function evictAny(cat)
+    if full[cat] then
+        return false
+    end
+    for _, inst in pairs(cat) do
+        for _, boss in pairs(inst.b) do
+            if evict(cat, boss.i) then
+                return true
+            end
+        end
+    end
+    full[cat] = true
     return false
 end
 
@@ -165,7 +192,10 @@ end
 local function newRecord(cat, boss, itemString, wire)
     if
         wire
-        and ((count(boss.i) >= Catalog.MAX_ITEMS and not evict(cat, boss.i)) or total(cat) >= Catalog.MAX_RECORDS)
+        and (
+            (count(boss.i) >= Catalog.MAX_ITEMS and not evict(cat, boss.i))
+            or (total(cat) >= Catalog.MAX_RECORDS and not evictAny(cat))
+        )
     then
         return nil
     end
@@ -210,6 +240,8 @@ function Catalog.Instance(cat, instID, instName, wire)
         end
         inst = { name = instName or heardNames[instID] or ("Instance " .. instID), b = {} }
         cat[instID] = inst
+    elseif instName and not wire then
+        inst.name = instName -- what we saw ourselves beats a heard name
     end
     return inst
 end
@@ -234,8 +266,8 @@ function Catalog.Boss(cat, instID, instName, bossKey, bossName, t, wire)
             i = {},
         }
         inst.b[bossKey] = boss
-    elseif bossName and boss.name:find("^Boss %d") then
-        boss.name = bossName -- a real name replaces a placeholder
+    elseif bossName and (not wire or boss.name:find("^Boss %d")) then
+        boss.name = bossName -- ours, or a real name for a placeholder
     end
     if t and t > 0 and (boss.f == 0 or t < boss.f) then
         boss.f = t
@@ -450,7 +482,9 @@ end
 -- above our own count is one we cannot check, so it never silences us:
 -- a guildmate sending 9999 would otherwise stop every honest answer.
 -- An honest peer who knows more costs one extra answer, nothing else.
-function Catalog.NoteHeard(inst, heard, op)
+-- Only a sender's first claim per entry counts: sweeping 1, 2, 3... to hit
+-- our count would otherwise keep us quiet.
+function Catalog.NoteHeard(inst, heard, op, sender)
     local key = inst and inst.b[int(op[3], 0, 1e9) or false]
     local own = key and ownKills(key)
     if key and op[1] == "CE" then
@@ -460,6 +494,15 @@ function Catalog.NoteHeard(inst, heard, op)
         key = nil
     end
     local v = int(op[5], 0, Catalog.MAX_COUNT)
+    if key and sender then
+        heard.by = heard.by or {}
+        local claimed = heard.by[sender] or {}
+        heard.by[sender] = claimed
+        if claimed[key] then
+            return
+        end
+        claimed[key] = true
+    end
     if key and v and v <= own then
         heard[key] = math.max(heard[key] or 0, v)
     end
@@ -487,6 +530,7 @@ end
 Catalog.KILL_GAP = 600
 Catalog.TRASH_IDS, Catalog.TRASH_GAP = 10, 60
 Catalog.KILL_KEYS = 20
+Catalog.KILL_ITEMS = 12 -- different items one kill id may report
 function Catalog.KillAllowed(seen, sender, op, now)
     local bossKey = int(op[4], 0, 1e9)
     if not bossKey then
@@ -513,11 +557,21 @@ function Catalog.KillAllowed(seen, sender, op, now)
         s = { at = now, ids = {}, n = 0 }
         mine[bossKey] = s
     end
-    if not s.ids[killId] then
+    local items = s.ids[killId]
+    if not items then
         if s.n >= max then
             return false
         end
-        s.ids[killId], s.n = true, s.n + 1
+        items, s.n = { n = 0 }, s.n + 1
+        s.ids[killId] = items
+    end
+    -- A kill drops a handful of items: one kill id cannot carry hundreds.
+    local item = tostring(op[6])
+    if not items[item] then
+        if items.n >= Catalog.KILL_ITEMS then
+            return false
+        end
+        items[item], items.n = true, items.n + 1
     end
     return true
 end
@@ -657,6 +711,9 @@ local function killKey(encID)
 end
 
 NS.On("ENCOUNTER_END", function(encID, encName, _, _, success)
+    if NS.Demo and NS.Demo.active then
+        return -- NS.DB is the fake raid's: a real kill would be lost with it
+    end
     -- Checked before any comparison: comparing a secret value throws.
     if not NS.CanRead(encID, encName, success) or success ~= 1 then
         return
@@ -690,6 +747,9 @@ local function attribution(instID, sourceGUID)
 end
 
 NS.On("LOOT_OPENED", function()
+    if NS.Demo and NS.Demo.active then
+        return
+    end
     local instID, instName = where()
     if not instID then
         return
@@ -829,7 +889,7 @@ function Catalog.OnMessage(ops, dest, sender)
         else
             local instID = int(op[2], 1, 1e9)
             if instID and pending[dest .. instID] then
-                Catalog.NoteHeard(cat()[instID], pending[dest .. instID], op)
+                Catalog.NoteHeard(cat()[instID], pending[dest .. instID], op, sender)
             end
             if kind == "CD" then
                 -- A live drop only counts from someone in our group: from
