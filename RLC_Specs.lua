@@ -11,9 +11,10 @@
 --      go only to the classes and specs that use them.
 --   2. Weapons: the spec must use that weapon type.
 --   3. Stats: if the item has any of the stats that tell specs apart
---      (strength, agility, intellect, spirit, attack power, spell damage,
---      healing, defense), the spec must want at least one of them. An item
---      with none of those (stamina only, say) passes this rule.
+--      (strength, agility, intellect, spirit, attack power, ranged or feral
+--      attack power, spell damage, healing, defense), the spec must want at
+--      least one of them, and one of the item's stats from each stat group
+--      it carries. An item with none of those (stamina only, say) passes.
 -- The item's own "Classes:" line, if any, limits it further. Officers see
 -- the result as the item's spec list and can change it.
 --
@@ -70,7 +71,7 @@ local RELIC = { [7] = "PALADIN", [8] = "DRUID", [9] = "SHAMAN" }
 local MELEE = set("STR", "AGI", "AP")
 local CASTER = set("INT", "SP")
 local HEALER = set("INT", "SPI", "HEAL")
-local HUNTER_STATS = set("AGI", "AP", "INT")
+local HUNTER_STATS = set("AGI", "AP", "RAP", "INT")
 local HUNTER_WEAPONS = with(RANGED, AXE1, AXE2, SWORD1, SWORD2, POLE, STAFF) -- never daggers or fist weapons
 local ROGUE_WEAPONS = with(RANGED, DAGGER, SWORD1, MACE1, FIST)
 local CLOTH_WEAPONS = set(SWORD1, STAFF, DAGGER, WAND)
@@ -99,7 +100,7 @@ Specs.LIST = {
         key = "PALADIN.PROT",
         name = "Protection",
         tree = 2,
-        wants = set("DEF", "STR", "SP"),
+        wants = set("DEF", "STR"),
         weapons = set(AXE1, MACE1, SWORD1),
         shield = true,
     },
@@ -151,12 +152,20 @@ Specs.LIST = {
         wants = set("INT", "SPI", "SP"),
         weapons = set(MACE1, STAFF, DAGGER),
     },
-    { key = "DRUID.CAT", name = "Feral (cat)", tree = 2, wants = MELEE, weapons = set(MACE2, STAFF) },
+    -- Cat takes attack power, bear takes defense; both take agility,
+    -- strength and feral attack power.
+    {
+        key = "DRUID.CAT",
+        name = "Feral (cat)",
+        tree = 2,
+        wants = set("STR", "AGI", "AP", "FAP"),
+        weapons = set(MACE2, STAFF),
+    },
     {
         key = "DRUID.BEAR",
         name = "Feral (bear)",
         tree = 2,
-        wants = set("DEF", "AGI", "STR", "AP"),
+        wants = set("DEF", "AGI", "STR", "FAP"),
         weapons = set(MACE2, STAFF),
     },
     { key = "DRUID.RESTO", name = "Restoration", tree = 3, wants = HEALER, weapons = set(MACE1, STAFF, DAGGER) },
@@ -166,14 +175,20 @@ Specs.BY_KEY = {}
 for _, spec in ipairs(Specs.LIST) do
     spec.class = spec.key:match("^(%u+)%.")
     Specs.BY_KEY[spec.key] = spec
+    local all = NS.Rules.CLASS_SPECS
+    all[spec.class] = all[spec.class] or {}
+    table.insert(all[spec.class], spec.key)
 end
 
--- Stat kinds that tell specs apart. Stamina, hit, crit and the like don't.
-Specs.TELLING = set("STR", "AGI", "INT", "SPI", "AP", "SP", "HEAL", "DEF")
+-- Stat kinds that tell specs apart. Stamina and the like don't. RAP is
+-- ranged attack power (hunters), FAP feral attack power (cat and bear).
+Specs.TELLING = set("STR", "AGI", "INT", "SPI", "AP", "RAP", "FAP", "SP", "HEAL", "DEF")
 
 -- Stat groups that mark what an item is for. Intellect and spirit are in
--- none: hunters use intellect, so it decides nothing on its own.
-local GROUPS = { set("STR", "AGI", "AP"), set("SP", "HEAL"), set("DEF") }
+-- none: hunters use intellect, so it decides nothing on its own. Casters
+-- want SP and healers HEAL, so "damage and healing" (both) suits both, and
+-- healing alone or spell damage alone only one side.
+local GROUPS = { set("STR", "AGI", "AP"), set("SP", "HEAL"), set("DEF"), set("RAP"), set("FAP") }
 
 local CLASS_ID = Rules.CLASS_ID
 
@@ -214,14 +229,17 @@ function Specs.SuitedSpecs(item)
                     break
                 end
             end
-            -- ...and something from every stat group the item carries, so
-            -- intellect alone cannot pull a hunter onto a spell staff.
+            -- ...and one of the item's own stats from every stat group it
+            -- carries, so intellect alone cannot pull a hunter onto a spell
+            -- staff, nor intellect a mage onto healing cloth.
             for _, group in ipairs(GROUPS) do
                 if ok then
                     local present, wanted = false, false
                     for kind in pairs(group) do
-                        present = present or telling[kind] == true
-                        wanted = wanted or spec.wants[kind] == true
+                        if telling[kind] then
+                            present = true
+                            wanted = wanted or spec.wants[kind] == true
+                        end
                     end
                     ok = not present or wanted
                 end
@@ -232,6 +250,78 @@ function Specs.SuitedSpecs(item)
         end
     end
     return out
+end
+
+-- Stat kinds from the client's stat table keys and the item's "Equip:" and
+-- "Use:" lines. The tooltip phrases are English; other clients still get
+-- the primary stats from GetItemStats. Dodge and parry are not defense:
+-- agility gear carries them too.
+local STAT_KEYS = {
+    ITEM_MOD_STRENGTH_SHORT = "STR",
+    ITEM_MOD_AGILITY_SHORT = "AGI",
+    ITEM_MOD_INTELLECT_SHORT = "INT",
+    ITEM_MOD_SPIRIT_SHORT = "SPI",
+    ITEM_MOD_ATTACK_POWER_SHORT = "AP",
+    ITEM_MOD_RANGED_ATTACK_POWER_SHORT = "RAP",
+    ITEM_MOD_FERAL_ATTACK_POWER_SHORT = "FAP",
+    ITEM_MOD_SPELL_POWER_SHORT = "SP HEAL", -- modern spell power is both
+    ITEM_MOD_SPELL_DAMAGE_DONE_SHORT = "SP",
+    ITEM_MOD_SPELL_HEALING_DONE_SHORT = "HEAL",
+    ITEM_MOD_HIT_SPELL_RATING_SHORT = "SP",
+    ITEM_MOD_CRIT_SPELL_RATING_SHORT = "SP",
+    ITEM_MOD_HIT_MELEE_RATING_SHORT = "AP",
+    ITEM_MOD_CRIT_MELEE_RATING_SHORT = "AP",
+    ITEM_MOD_DEFENSE_SKILL_RATING_SHORT = "DEF",
+    ITEM_MOD_BLOCK_RATING_SHORT = "DEF",
+}
+-- Lua patterns, tried in order on each lowercased line; a match is cut out
+-- so a later, wider pattern does not count it again ("ranged attack power"
+-- is not also "attack power", spell hit is not also melee hit).
+local LINE_PHRASES = {
+    { "damage and healing", "SP HEAL" },
+    { "healing done", "HEAL" },
+    { "healing spells", "HEAL" },
+    { "critical strike with holy spells", "HEAL" },
+    { "hit with %a*%s?spells", "SP" },
+    { "critical strike with %a*%s?spells", "SP" },
+    { "spell damage", "SP" },
+    { "damage done by", "SP" }, -- "Increases damage done by Fire spells..."
+    { "ranged attack power", "RAP" },
+    { "attack power by %d+ in cat", "FAP" }, -- "... in Cat, Bear, and Dire Bear forms only."
+    { "attack power", "AP" },
+    { "chance to hit", "AP" },
+    { "critical strike", "AP" },
+    { "defense", "DEF" },
+    { "block", "DEF" },
+}
+
+-- stats: the client's stat table (keys only are read); lines: tooltip
+-- lines ({ leftText = ... }). Either may be nil. Returns { KIND = true }.
+function Specs.ItemKinds(stats, lines)
+    local kinds = {}
+    local function add(list)
+        for kind in list:gmatch("%u+") do
+            kinds[kind] = true
+        end
+    end
+    for key in pairs(stats or {}) do
+        if STAT_KEYS[key] then
+            add(STAT_KEYS[key])
+        end
+    end
+    for _, line in ipairs(lines or {}) do
+        local text = type(line.leftText) == "string" and line.leftText:lower()
+        if text and (text:find("^equip:") or text:find("^use:")) then
+            for _, p in ipairs(LINE_PHRASES) do
+                local n
+                text, n = text:gsub(p[1], "")
+                if n > 0 then
+                    add(p[2])
+                end
+            end
+        end
+    end
+    return kinds
 end
 
 -- Readable list for the UI, e.g. "Rogue, Druid (Feral (cat))". A class with
@@ -271,57 +361,9 @@ if not NS.On then
     return -- loaded by the test suite without the client
 end
 
--- Stat kinds from the client's stat table keys and the item's "Equip:"
--- lines. The tooltip phrases are English; other clients still get the
--- primary stats from GetItemStats.
-local STAT_KEYS = {
-    ITEM_MOD_STRENGTH_SHORT = "STR",
-    ITEM_MOD_AGILITY_SHORT = "AGI",
-    ITEM_MOD_INTELLECT_SHORT = "INT",
-    ITEM_MOD_SPIRIT_SHORT = "SPI",
-    ITEM_MOD_ATTACK_POWER_SHORT = "AP",
-    ITEM_MOD_RANGED_ATTACK_POWER_SHORT = "AP",
-    ITEM_MOD_SPELL_POWER_SHORT = "SP",
-    ITEM_MOD_SPELL_DAMAGE_DONE_SHORT = "SP",
-    ITEM_MOD_SPELL_HEALING_DONE_SHORT = "HEAL",
-    ITEM_MOD_DEFENSE_SKILL_RATING_SHORT = "DEF",
-    ITEM_MOD_DODGE_RATING_SHORT = "DEF",
-    ITEM_MOD_PARRY_RATING_SHORT = "DEF",
-    ITEM_MOD_BLOCK_RATING_SHORT = "DEF",
-}
-local EQUIP_PHRASES = {
-    { "damage and healing", "SP" },
-    { "damage and healing", "HEAL" },
-    { "healing done", "HEAL" },
-    { "healing spells", "HEAL" },
-    { "spell damage", "SP" },
-    { "damage done by", "SP" }, -- "Increases damage done by Fire spells..."
-    { "attack power", "AP" },
-    { "defense", "DEF" },
-    { "dodge", "DEF" },
-    { "parry", "DEF" },
-    { "block", "DEF" },
-}
-
 local function readStats(itemString, data)
-    local kinds = {}
     local _, link = C_Item.GetItemInfo(itemString)
-    for key in pairs(C_Item.GetItemStats(link or itemString) or {}) do
-        if STAT_KEYS[key] then
-            kinds[STAT_KEYS[key]] = true
-        end
-    end
-    for _, line in ipairs(data and data.lines or {}) do
-        local text = type(line.leftText) == "string" and line.leftText:lower()
-        if text and text:find("^equip:") then
-            for _, p in ipairs(EQUIP_PHRASES) do
-                if text:find(p[1], 1, true) then
-                    kinds[p[2]] = true
-                end
-            end
-        end
-    end
-    return kinds
+    return Specs.ItemKinds(C_Item.GetItemStats(link or itemString), data and data.lines)
 end
 
 -- The host's describe() for Rules.Intent ADD: class mask from the item's

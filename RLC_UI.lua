@@ -40,19 +40,165 @@ end
 
 local AddGlow, ResizeGrip = NS.Kit.AddGlow, NS.Kit.ResizeGrip
 
--- What the active item is waiting on from this player: "want", "roll" or nil.
-local function myTurn(S)
-    local item = S and S.active and S.items[S.active]
-    if not item then
-        return nil
+-- ---- what the host would allow ----------------------------------------------------
+-- The buttons and the breadcrumb glow follow the host's own rules (Rules.Intent),
+-- so a greyed button would be refused and a glowing one is not.
+
+-- When this client saw each item go up (interest or rolling), in server
+-- time: the host times the same waits from its own copy, which is never
+-- later than ours, so our waits are a little longer, never shorter.
+-- up: since it went up in this mode; at: since its roll last opened.
+local upSeen = {} -- session id .. "\t" .. key -> { mode, up, sig, at, n }
+local function trackUp(S)
+    if not S then
+        return
     end
-    local me = NS.Me()
-    local myClass = NS.ClassOf(me)
-    if item.state == "rolling" and Rules.CanRoll(S, item, me, myClass) then
-        return "roll"
-    elseif item.state == "interest" and not item.wants[me] and Rules.CanWant(S, item, me, myClass) then
-        return "want"
+    local now = GetServerTime()
+    for key, item in pairs(S.items) do
+        local k = S.id .. "\t" .. key
+        if item.state == "interest" or item.state == "rolling" then
+            local e = upSeen[k]
+            if not e or e.mode ~= item.mode then
+                e = { mode = item.mode, up = now }
+                upSeen[k] = e
+            end
+            local n = 0
+            for _ in pairs(item.rolls) do
+                n = n + 1
+            end
+            -- A call, a tie or wiped rolls (a boss pull) opens the roll again.
+            local sig = item.state .. "/" .. Rules.SetToCSV(item.restrict)
+            if e.sig ~= sig or n < (e.n or 0) then
+                e.sig, e.at = sig, now
+            end
+            e.n = n
+        else
+            upSeen[k] = nil
+        end
     end
+end
+-- Seconds since the item went up, and since its roll last opened.
+local function upFor(S, item)
+    local e = upSeen[S.id .. "\t" .. item.key]
+    local now = GetServerTime()
+    return e and now - e.up or 0, e and now - e.at or 0
+end
+
+-- Redraw once a wait runs out, so a greyed button lights up on time.
+local laterTimer, laterAt
+local function later(wait)
+    if not wait or wait <= 0 then
+        return
+    end
+    local at = GetTime() + wait
+    if laterTimer and laterAt > GetTime() and laterAt <= at then
+        return -- an earlier redraw is already due
+    end
+    if laterTimer then
+        laterTimer:Cancel()
+    end
+    laterAt = at
+    laterTimer = C_Timer.NewTimer(wait, function()
+        laterTimer = nil
+        NS.Refresh()
+    end)
+end
+
+local function inFight()
+    return C_InstanceEncounter.IsEncounterInProgress() == true
+end
+
+-- Whether a player still here and allowed asked for the item.
+local function anyWanter(S, item)
+    for name in pairs(item.wants) do
+        local c = NS.ClassOf(name)
+        if c and Rules.Eligible(S, item, name, c) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Call roll: whether the host takes it now, and seconds until it is worth
+-- a glow (everyone has had the interest wait to ask).
+local function callState(S, item)
+    if item.state ~= "interest" or inFight() then
+        return false
+    end
+    if item.mode == "reserve" then
+        return true, 0
+    end
+    local wait = math.max(0, Rules.INTEREST_MIN + 1 - upFor(S, item))
+    return wait == 0 or item.mode ~= "normal" or anyWanter(S, item), wait
+end
+
+-- Close roll: whether the host takes it now, and seconds until it is worth
+-- a glow. The same test as the host's CLOSE: the minimum roll time passed,
+-- or the roll is limited to named players and all of them rolled.
+local function closeState(S, item)
+    if item.state ~= "rolling" then
+        return false
+    end
+    local all, rolled = item.restrict ~= nil and next(item.restrict) ~= nil, false
+    for name in pairs(item.restrict or {}) do
+        local c = NS.ClassOf(name)
+        if c and Rules.Eligible(S, item, name, c) and not item.rolls[name] then
+            all = false
+        end
+    end
+    for name in pairs(item.rolls) do
+        local c = NS.ClassOf(name)
+        rolled = rolled
+            or (
+                c ~= nil
+                and Rules.Eligible(S, item, name, c)
+                and (item.mode ~= "reserve" or S.reserves[name] == item.itemID)
+            )
+    end
+    local _, open = upFor(S, item)
+    local wait = math.max(0, Rules.ROLL_MIN + 1 - open)
+    -- Nobody rolled: only a regulars-first roll closes (it opens to everyone).
+    local dryOnly = item.mode == "normal" and item.restrict ~= nil and next(item.restrict) ~= nil
+    for name in pairs(item.restrict or {}) do
+        dryOnly = dryOnly and S.dry ~= nil and S.dry[name] == true
+    end
+    local ok = (rolled or dryOnly) and (all or wait == 0)
+    return ok, all and 0 or wait
+end
+
+-- Open to all: refused while a reserver is here, a player without an item
+-- it suits wants it, or before the interest wait.
+local function openOK(S, item)
+    if (item.state ~= "interest" and item.state ~= "rolling") or item.mode == "open" then
+        return false
+    end
+    if item.mode == "reserve" then
+        for name in pairs(item.restrict or {}) do
+            if NS.ClassOf(name) then
+                return false
+            end
+        end
+    elseif item.mode == "normal" then
+        local view = { classMask = item.classMask, mode = "normal", specs = item.specs }
+        for name in pairs(item.wants) do
+            local c = NS.ClassOf(name)
+            if c and not S.locks[name] and Rules.Suits(S, view, name, c) then
+                return false
+            end
+        end
+    end
+    return upFor(S, item) >= Rules.INTEREST_MIN + 1
+end
+
+-- Whether a roll is open: locks, specs and Who can roll wait until it closes.
+local function rollOpen(S)
+    local cur = S and S.active and S.items[S.active]
+    return cur ~= nil and cur.state == "rolling"
+end
+
+-- I want this needs a loot spec on record for spec-limited items.
+local function needSpec(S, item, me)
+    return item.specs ~= nil and not item.restrict and item.mode ~= "open" and not S.specs[me]
 end
 
 local function Text(parent, font, justify)
@@ -451,7 +597,7 @@ end
 
 local function page(key)
     local p = CreateFrame("Frame", nil, f)
-    p:SetPoint("TOPLEFT", 12, -66) -- input boxes draw a few px above their frame
+    p:SetPoint("TOPLEFT", 12, -72) -- under the Next line; input boxes draw a few px above their frame
     p:SetPoint("BOTTOMRIGHT", -12, 30)
     p:Hide()
     pages[key] = p
@@ -487,8 +633,14 @@ for i, def in ipairs(TABS) do
         showPage(def[1])
     end)
     b:SetPoint("TOPLEFT", 12 + (i - 1) * 96, -30)
+    AddGlow(b)
     tabs[def[1]] = b
 end
+
+-- The one next step for this player, in plain words, under the tabs.
+local nextText = Text(f, "GameFontNormalSmall")
+nextText:SetPoint("TOPLEFT", 16, -55)
+nextText:SetPoint("TOPRIGHT", -16, -55)
 NS.ShowPage = function(key)
     current = key
     NS.Show()
@@ -501,6 +653,7 @@ NS.helpPage = page("help")
 
 local lp = page("loot")
 local selKey, selPlayer
+local rowGlowKey -- the queue row that glows: the next step is on an item not selected
 
 local queue = List(lp, 280, 300, { 150, 90 }, true, function(item)
     selKey = item.key
@@ -523,6 +676,7 @@ local addLootBtn = Button(lp, "Add from loot", 130, function()
     Loot.AddFromWindow()
 end)
 addLootBtn:SetPoint("BOTTOMLEFT", 0, 0)
+AddGlow(addLootBtn)
 
 -- Right side: the selected item.
 -- Shown on the right while there is no item to show.
@@ -642,6 +796,9 @@ local awardBtn = adminButton("Give to player", BW, BX, 0, function()
 end)
 local cancelBtn = adminButton("Remove item", BW, BX * 2, 0, onSel("CANCEL"))
 local undoBtn = adminButton("Undo win", BW, BX * 3, 0, onSel("UNDO"))
+AddGlow(startBtn)
+AddGlow(callBtn)
+AddGlow(closeBtn)
 
 -- Class-coloured, localized class name for a class token.
 local function classLabel(token)
@@ -668,7 +825,7 @@ local function refreshLoot(S)
     end
     -- The queue only changes with items, states, winners, the selection, the
     -- sort or item data arriving; a want or a roll alone leaves it as it is.
-    local sig = { tostring(selKey), tostring(queue.sortCol), tostring(queue.desc), itemInfoGen }
+    local sig = { tostring(selKey), tostring(rowGlowKey), tostring(queue.sortCol), tostring(queue.desc), itemInfoGen }
     for _, key in ipairs(order) do
         local item = S.items[key]
         sig[#sig + 1] = tostring(item) .. "=" .. item.state .. "=" .. tostring(item.winner)
@@ -692,6 +849,10 @@ local function refreshLoot(S)
             r.icon:SetTexture(NS.IconOf(item.itemString))
             r.cols[1]:SetText(NS.LinkOf(item.itemString))
             r.cols[2]:SetText(item.state == "done" and NS.ColorName(item.winner) or STATE_TEXT[item.state])
+            if not r.SetGlow then
+                AddGlow(r)
+            end
+            r.SetGlow(item.key == rowGlowKey)
             return item.key == selKey
         end)
     end
@@ -748,6 +909,8 @@ local function refreshLoot(S)
         myInfo:SetText("|cff00ff00You can roll now.|r")
     elseif item.rolls[me] then
         myInfo:SetText("You rolled " .. item.rolls[me] .. ".")
+    elseif canWant and not wanted and needSpec(S, item, me) then
+        myInfo:SetText("|cffff8800Pick your loot spec on the Raid tab first. Then you can ask for this item.|r")
     elseif canWant then
         myInfo:SetText(wanted and "You want this item." or "You can ask for this item.")
     elseif item.mode == "normal" and item.specs and S.specs[me] and not item.specs[S.specs[me]] then
@@ -764,12 +927,9 @@ local function refreshLoot(S)
     local live = item.state == "interest" or item.state == "rolling"
     wantBtn:SetShown(live and (canWant or wanted))
     wantBtn:SetText(wanted and "Not interested" or "I want this")
+    wantBtn:SetEnabled(wanted or not needSpec(S, item, me))
     rollBtn:SetShown(item.state == "rolling")
     rollBtn:SetEnabled(canRoll)
-    -- Glow only on the item that is up now, for the click it is waiting on.
-    local turn = item.key == S.active and myTurn(S)
-    wantBtn.SetGlow(turn == "want")
-    rollBtn.SetGlow(turn == "roll")
 
     -- Everyone who wants it, rolled, or may roll (reserve or tie), highest
     -- roll first.
@@ -817,8 +977,8 @@ local function refreshLoot(S)
         if S.reserves[name] == item.itemID then
             tags[#tags + 1] = "|cff66ccffreserved|r"
         end
-        if S.dry and S.dry[name] and not S.locks[name] then
-            tags[#tags + 1] = "|cff66ff66no loot last raid|r"
+        if S.dry and S.dry[name] then
+            tags[#tags + 1] = "|cff66ff66regular|r"
         end
         if S.locks[name] and item.winner ~= name then
             tags[#tags + 1] = "|cffff8800has an item|r"
@@ -828,15 +988,23 @@ local function refreshLoot(S)
         return name == selPlayer
     end)
 
+    -- Greyed when the host would refuse it (Rules.Intent).
     local finished = item.state == "done" or item.state == "cancelled"
-    startBtn:SetEnabled(item.state == "pending")
-    callBtn:SetEnabled(item.state == "interest")
-    closeBtn:SetEnabled(item.state == "rolling")
-    openBtn:SetEnabled(live and item.mode ~= "open")
-    specBtn:SetEnabled(not finished)
-    awardBtn:SetEnabled(selPlayer ~= nil and not finished)
+    local cur = S.active and S.items[S.active]
+    local busy = cur ~= nil and cur ~= item and (cur.state == "interest" or cur.state == "rolling")
+    later(select(2, callState(S, item)))
+    later(select(2, closeState(S, item)))
+    if live then
+        later(Rules.INTEREST_MIN + 1 - upFor(S, item))
+    end
+    startBtn:SetEnabled(item.state == "pending" and not busy)
+    callBtn:SetEnabled((callState(S, item)))
+    closeBtn:SetEnabled((closeState(S, item)))
+    openBtn:SetEnabled(openOK(S, item))
+    specBtn:SetEnabled(not finished and not rollOpen(S))
+    awardBtn:SetEnabled(selPlayer ~= nil and NS.ClassOf(selPlayer) ~= nil and not finished)
     cancelBtn:SetEnabled(not finished)
-    undoBtn:SetEnabled(item.state == "done")
+    undoBtn:SetEnabled(item.state == "done" and (not item.delivered or NS.IsHost()))
 end
 
 -- ---- spec menus ------------------------------------------------------------------------
@@ -1099,6 +1267,8 @@ local endBtn = Button(rpg, "End raid", 90, function()
     NS.Act("PHASE", "ended")
 end)
 endBtn:SetPoint("LEFT", beginBtn, "RIGHT", 6, 0)
+AddGlow(newBtn)
+AddGlow(beginBtn)
 local syncBtn = Button(rpg, "Resync", 80, function()
     NS.RequestSync(0)
 end)
@@ -1138,6 +1308,12 @@ local unresBtn = Button(rpg, "Clear", 60, function()
     NS.Act("RES", 0)
 end)
 unresBtn:SetPoint("LEFT", resBtn, "RIGHT", 4, 0)
+-- A soft glow on the reserve box: reserving is a choice, not a must.
+local resGlow = CreateFrame("Frame", nil, rpg)
+resGlow:SetPoint("TOPLEFT", resBox, "TOPLEFT", -6, 2)
+resGlow:SetPoint("BOTTOMRIGHT", resBtn, "BOTTOMRIGHT", 2, -2)
+resGlow:SetAlpha(0.5)
+AddGlow(resGlow)
 
 -- Shift-clicking an item while the reserve box has focus fills it in.
 local function onInsertLink(text)
@@ -1175,7 +1351,12 @@ confirmSpecBtn:SetPoint("LEFT", mySpecBtn, "RIGHT", 6, 0)
 AddGlow(mySpecBtn)
 AddGlow(confirmSpecBtn)
 
-local players = List(rpg, 690, 205, { 110, 90, 170, 50, 100, 70 }, false, function(name)
+-- Who rolls first tonight, and who is on the bench.
+local firstText = Text(rpg)
+firstText:SetPoint("TOPLEFT", 0, -112)
+firstText:SetPoint("TOPRIGHT", 0, -112)
+
+local players = List(rpg, 690, 205, { 110, 90, 150, 50, 120, 70 }, false, function(name)
     raidSel = name
     NS.Refresh()
 end, { "Player", "Spec", "Reserve", "Won", "Status", "Role" })
@@ -1216,6 +1397,69 @@ local setSpecBtn = Button(rpg, "Set spec", 90, function(self)
     end
 end)
 setSpecBtn:SetPoint("LEFT", offBtn, "RIGHT", 6, 0)
+
+-- Officers: mark players from recent raids who are not in the group as
+-- bench (standby) tonight. Bench counts as being there for attendance.
+local BENCH_RAIDS, BENCH_MAX = 8, 45
+local function showBenchMenu(owner)
+    local S = NS.S()
+    if not S then
+        return
+    end
+    local ids = {}
+    for id, rec in pairs(NS.DB.history) do
+        if id ~= S.id and rec.started then
+            ids[#ids + 1] = id
+        end
+    end
+    table.sort(ids, function(a, b)
+        return (NS.DB.history[a].created or 0) > (NS.DB.history[b].created or 0)
+    end)
+    local cand = {}
+    for name in pairs(S.bench or {}) do
+        cand[name] = true
+    end
+    for i = 1, math.min(#ids, BENCH_RAIDS) do
+        local rec = NS.DB.history[ids[i]]
+        for name in pairs(Rules.SeenIn(rec)) do
+            cand[name] = true
+        end
+        for name in pairs(rec.att or {}) do
+            cand[name] = true
+        end
+    end
+    local names = {}
+    for name in pairs(cand) do
+        if not NS.roster[name] or (S.bench and S.bench[name]) then
+            names[#names + 1] = name
+        end
+    end
+    table.sort(names)
+    local entries = { { text = "Bench tonight" } }
+    if #names == 0 then
+        entries[2] = { text = "|cff999999Nobody from recent raids is missing.|r" }
+    end
+    for i = 1, math.min(#names, BENCH_MAX) do
+        local name = names[i]
+        entries[#entries + 1] = {
+            text = NS.ColorName(name),
+            col = i > 1 and (i - 1) % 15 == 0,
+            checked = function()
+                local now = NS.S()
+                return now ~= nil and now.bench ~= nil and now.bench[name] == true
+            end,
+            onClick = function()
+                local now = NS.S()
+                NS.Act("BENCH", name, (now and now.bench and now.bench[name]) and 0 or 1)
+            end,
+        }
+    end
+    showFlyout(owner, entries)
+end
+local benchBtn = Button(rpg, "Bench...", 90, function(self)
+    showBenchMenu(self)
+end)
+benchBtn:SetPoint("LEFT", setSpecBtn, "RIGHT", 6, 0)
 local owedText = Text(rpg)
 owedText:SetPoint("BOTTOMLEFT", 0, 4)
 owedText:SetWidth(600)
@@ -1258,9 +1502,35 @@ local function refreshRaid(S)
     local mine = S and S.reserves[me]
     resLabel:SetText("Your reserve: " .. (mine and NS.LinkOf("item:" .. mine) or "none"))
     resLabel:SetShown(S ~= nil)
+    -- Reserves close at the first item on the list.
+    local resOpen = reserving and next(S.items) == nil
     resBox:SetShown(reserving)
     resBtn:SetShown(reserving)
+    resBtn:SetEnabled(resOpen)
     unresBtn:SetShown(reserving and mine ~= nil)
+    unresBtn:SetEnabled(resOpen)
+
+    local function colored(set)
+        local out = {}
+        for name in pairs(set or {}) do
+            out[#out + 1] = name
+        end
+        table.sort(out)
+        for i, name in ipairs(out) do
+            out[i] = NS.ColorName(name)
+        end
+        return out
+    end
+    local first, bench = colored(S and S.dry), colored(S and S.bench)
+    local firstLine = ""
+    if S and S.phase ~= "reserve" then
+        firstLine = "Regulars roll first tonight: "
+            .. (#first > 0 and table.concat(first, ", ") or "|cff999999nobody yet (not enough past raids)|r")
+    end
+    if #bench > 0 then
+        firstLine = "Bench: " .. table.concat(bench, ", ") .. (firstLine ~= "" and ".  " or "") .. firstLine
+    end
+    firstText:SetText(firstLine)
 
     -- Everyone in the group plus anyone the session knows about.
     local names, seen = {}, {}
@@ -1279,6 +1549,9 @@ local function refreshRaid(S)
             add(name)
         end
         for name in pairs(S.locks) do
+            add(name)
+        end
+        for name in pairs(S.bench or {}) do
             add(name)
         end
         for _, item in pairs(S.items) do
@@ -1311,7 +1584,8 @@ local function refreshRaid(S)
     players:Set(#names, function(r, i)
         local name = names[i]
         r.data = name
-        r.cols[1]:SetText(NS.ColorName(name) .. (NS.roster[name] and "" or " |cff999999(left)|r"))
+        local away = (S and S.bench and S.bench[name]) and " |cff66ccff(bench)|r" or " |cff999999(left)|r"
+        r.cols[1]:SetText(NS.ColorName(name) .. (NS.roster[name] and "" or away))
         local res = S and S.reserves[name]
         local spec = S and S.specs[name]
         r.cols[2]:SetText(spec and specName(spec) or "|cff999999-|r")
@@ -1320,6 +1594,9 @@ local function refreshRaid(S)
         local status = ""
         if S then
             status = S.locks[name] and "|cffff8800Has an item|r" or "|cff00ff00Can roll|r"
+            if S.dry and S.dry[name] then
+                status = status .. ", |cff66ff66regular|r"
+            end
         end
         if Rules.VersionNewer(NS.VERSION, NS.versions[name]) then
             status = status .. " |cffff3333old addon|r"
@@ -1329,14 +1606,17 @@ local function refreshRaid(S)
         return name == raidSel
     end)
 
+    -- Locks and specs wait until an open roll is closed (the host refuses).
+    local rolling = rollOpen(S)
     lockBtn:SetShown(officer)
-    lockBtn:SetEnabled(raidSel ~= nil)
+    lockBtn:SetEnabled(raidSel ~= nil and not rolling)
+    benchBtn:SetShown(officer and S.phase ~= "ended")
     lockBtn:SetText((S and raidSel and S.locks[raidSel]) and "Unlock" or "Lock")
     offBtn:SetShown(NS.IsHost())
     offBtn:SetEnabled(raidSel ~= nil and raidSel ~= me)
     offBtn:SetText((S and raidSel and S.officers[raidSel]) and "Remove officer" or "Make officer")
     setSpecBtn:SetShown(officer)
-    setSpecBtn:SetEnabled(raidSel ~= nil)
+    setSpecBtn:SetEnabled(raidSel ~= nil and not rolling)
 
     -- Own spec: what we would report, and what the raid has on record.
     local mySpec, picked = NS.Specs.Mine()
@@ -1345,8 +1625,6 @@ local function refreshRaid(S)
         .. (mySpec and specName(mySpec) or "|cffff8800unknown, pick one|r")
         .. (mySpec and (picked and " (confirmed)" or " |cffff8800(from talents: confirm it)|r") or "")
     confirmSpecBtn:SetShown(mySpec ~= nil and not picked)
-    confirmSpecBtn.SetGlow(mySpec ~= nil and not picked)
-    mySpecBtn.SetGlow(mySpec == nil)
     if onRecord and onRecord ~= mySpec then
         line = line .. "\n|cffff8800Raid has you as " .. specName(onRecord) .. " (locked).|r"
     end
@@ -1405,13 +1683,28 @@ local LOG_TEXT = {
     deliv = "marked %s's item delivered",
     live = "started the raid",
     ended = "ended the raid",
+    bench = "put %s on the bench",
+    unbench = "took %s off the bench",
 }
-local function logLine(e)
+-- rec: the raid the entry belongs to, for the item it names.
+local function logLine(e, rec)
+    local item = e.key and rec and rec.items and rec.items[e.key]
+    local link = item and NS.LinkOf(item.itemString) or "an item"
+    local who = e.name and NS.ColorName(e.name) or "?"
+    local text
+    if e.what == "mlgive" then
+        text = "gave " .. link .. " to " .. who .. " from the loot window"
+    elseif e.what == "void" then
+        text = "wiped the rolls on " .. link .. " (a boss was pulled): everyone rolls again"
+    else
+        text = (LOG_TEXT[e.what] or "%s"):format(e.name and NS.Short(e.name) or "")
+    end
     return date("%H:%M", e.t)
         .. "  "
         .. NS.ColorName(e.by)
         .. " "
-        .. (LOG_TEXT[e.what] or "%s"):format(e.name and NS.Short(e.name) or "")
+        .. text
+        .. (e.kept and " |cff999999(only on your copy)|r" or "")
 end
 
 local raidsList = List(hp, 230, 380, { 70, 130 }, false, function(id)
@@ -1450,10 +1743,32 @@ histItems.onEnter = function(row, item)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Wanted by: " .. table.concat(wants, ", "), 1, 1, 1, true)
     end
+    -- A win taken back: who had it, how, and the rolls then.
+    local u = item.undone
+    if u then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(
+            "Taken back from " .. NS.ColorName(u.winner) .. " (" .. (HOW_TEXT[u.how] or "given") .. ")",
+            1,
+            0.5,
+            0.25,
+            true
+        )
+        local old = {}
+        for name, n in pairs(u.rolls or {}) do
+            old[#old + 1] = { name = name, n = n }
+        end
+        table.sort(old, function(a, b)
+            return a.n > b.n
+        end)
+        for _, l in ipairs(old) do
+            GameTooltip:AddDoubleLine(NS.ColorName(l.name), l.n, 1, 1, 1, 0.6, 0.6, 0.6)
+        end
+    end
     local rec = histSel and NS.DB.history[histSel]
     for _, e in ipairs(rec and rec.log or {}) do
         if e.key == item.key then
-            GameTooltip:AddLine(logLine(e), 1, 0.8, 0.2, true)
+            GameTooltip:AddLine(logLine(e, rec), 1, 0.8, 0.2, true)
         end
     end
     GameTooltip:Show()
@@ -1463,7 +1778,7 @@ local logBtn = Button(hp, "Officer log", 100, function()
     local rec = histSel and NS.DB.history[histSel]
     local lines = {}
     for _, e in ipairs(rec and rec.log or {}) do
-        lines[#lines + 1] = logLine(e)
+        lines[#lines + 1] = logLine(e, rec)
     end
     NS.ShowCopy("Officer log", #lines > 0 and table.concat(lines, "\n") or "None in this raid.")
 end)
@@ -1476,7 +1791,7 @@ logBtn:SetScript("OnEnter", function(self)
         GameTooltip:AddLine("None in this raid.", 0.6, 0.6, 0.6)
     end
     for i = math.max(1, #log - 29), #log do
-        GameTooltip:AddLine(logLine(log[i]), 1, 1, 1)
+        GameTooltip:AddLine(logLine(log[i], rec), 1, 1, 1)
     end
     GameTooltip:Show()
 end)
@@ -1539,20 +1854,32 @@ local function refreshHistory()
     if rec then
         for _, key in ipairs(rec.order) do
             local item = rec.items[key]
-            if item.state == "done" then
+            -- Won, removed, or a win taken back (and not given again).
+            if item.state == "done" or item.state == "cancelled" or item.undone then
                 shown[#shown + 1] = item
             end
         end
+    end
+    -- What the How column says: removed and taken-back items too.
+    local function howText(item)
+        if item.state == "cancelled" then
+            return "|cff999999removed|r"
+        elseif item.state ~= "done" then
+            return "|cffff8800taken back|r"
+        end
+        return (HOW_TEXT[item.how] or "")
+            .. (item.undone and " |cffff8800(re-given)|r" or "")
+            .. (item.delivered and " |cff00ff00delivered|r" or "")
     end
     histItems:Sort(shown, {
         function(item)
             return itemKey(item.itemString)
         end,
         function(item)
-            return NS.Short(item.winner)
+            return item.winner and NS.Short(item.winner) or ""
         end,
         function(item)
-            return HOW_TEXT[item.how] or ""
+            return item.state == "done" and HOW_TEXT[item.how] or item.state
         end,
     })
     histItems:Set(#shown, function(r, i)
@@ -1560,8 +1887,8 @@ local function refreshHistory()
         r.data = item
         r.icon:SetTexture(NS.IconOf(item.itemString))
         r.cols[1]:SetText(NS.LinkOf(item.itemString))
-        r.cols[2]:SetText(NS.ColorName(item.winner))
-        r.cols[3]:SetText((HOW_TEXT[item.how] or "") .. (item.delivered and " |cff00ff00delivered|r" or ""))
+        r.cols[2]:SetText(item.winner and NS.ColorName(item.winner) or "|cff999999-|r")
+        r.cols[3]:SetText(howText(item))
     end)
     delBtn:SetEnabled(rec ~= nil)
     logBtn:SetEnabled(rec ~= nil)
@@ -1847,7 +2174,7 @@ local function refreshCatalog()
 
     local S = NS.S()
     catReserve:SetShown(S ~= nil and S.phase == "reserve")
-    catReserve:SetEnabled(catItem ~= nil)
+    catReserve:SetEnabled(catItem ~= nil and S ~= nil and next(S.items) == nil) -- closed at the first item
     catForget:SetEnabled(catBoss ~= nil)
 end
 
@@ -1861,17 +2188,53 @@ statsHelp:SetPoint("BOTTOMLEFT", 0, 4)
 statsHelp:SetPoint("BOTTOMRIGHT", 0, 4)
 statsHelp:SetWordWrap(true)
 statsHelp:SetText(
-    "From every raid in History. Raids counts the raids the addon saw a player in. "
+    "Raids: raids a player was there for (most of the raid, or on the bench), out of raids with "
+        .. Rules.MIN_ATTEND
+        .. " or more players. Regulars came to most recent raids and roll first. "
         .. "Items leaves out free rolls. Hover a player to see what they won."
 )
-local statsList = List(sp, 696, 360, { 150, 60, 60, 70, 70, 110 }, false, nil, {
+local statsList = List(sp, 696, 360, { 140, 45, 45, 60, 45, 60, 55, 90 }, false, nil, {
     "Player",
     "Raids",
+    "Att %",
+    "Regular",
     "Items",
     "Free rolls",
     "Per raid",
     "Last item",
 })
+
+-- Attendance over saved raids: name -> raids present (Rules.Present, bench
+-- counts), and how many raids count at all (started, trusted, MIN_ATTEND
+-- present in person). The live raid counts once it has started.
+local function attendance(history)
+    local att, counting = {}, 0
+    for _, rec in pairs(history or {}) do
+        if rec.started and not rec.untrusted then
+            local cand = Rules.SeenIn(rec)
+            for _, set in ipairs({ rec.att or {}, rec.bench or {} }) do
+                for name in pairs(set) do
+                    cand[name] = true
+                end
+            end
+            local here, n = {}, 0
+            for name in pairs(cand) do
+                if Rules.Present(rec, name) then
+                    -- The bench counts as present, but not toward MIN_ATTEND.
+                    here[#here + 1] = name
+                    n = n + ((rec.bench and rec.bench[name]) and 0 or 1)
+                end
+            end
+            if n >= Rules.MIN_ATTEND then
+                counting = counting + 1
+                for _, name in ipairs(here) do
+                    att[name] = (att[name] or 0) + 1
+                end
+            end
+        end
+    end
+    return att, counting
+end
 statsList.frame:SetPoint("TOPLEFT", 4, -20)
 statsList.frame:SetPoint("BOTTOMRIGHT", -26, 30)
 -- name -> wins, newest first; built once per history change, not per hover.
@@ -1921,10 +2284,19 @@ end
 -- Wants and rolls in the live raid count too, but those arrive many times a
 -- second during a roll: they redo the stats at most every 3 s.
 local statsCache, statsGen, statsOp, statsAt, statsLater
+local attCache, attRaids, regulars = {}, 0, {}
 local function refreshStats()
     local stale = statsOp ~= NS.opGen
     if statsGen ~= NS.historyGen or (stale and GetTime() - statsAt >= 3) then
         statsCache, statsGen, statsOp, statsAt = Rules.PlayerStats(NS.DB.history), NS.historyGen, NS.opGen, GetTime()
+        attCache, attRaids = attendance(NS.DB.history)
+        regulars = {}
+        for _, name in ipairs(NS.DryLastRaid()) do
+            regulars[name] = true
+        end
+        for name in pairs(attCache) do
+            statsCache[name] = statsCache[name] or { raids = 0, won = 0, free = 0, last = 0 }
+        end
     elseif stale and not statsLater then
         statsLater = true
         C_Timer.After(3, function()
@@ -1938,14 +2310,24 @@ local function refreshStats()
         names[#names + 1] = name
     end
     table.sort(names)
+    -- Items per raid: over raids attended, or raids seen in when that is
+    -- more (wins in small raids that do not count for attendance).
+    local function raids(name)
+        return attCache[name] or 0
+    end
     local function perRaid(name)
-        local e = stats[name]
-        return e.raids > 0 and e.won / e.raids or 0
+        local n = math.max(raids(name), stats[name].raids)
+        return n > 0 and stats[name].won / n or 0
+    end
+    local function attPct(name)
+        return attRaids > 0 and math.floor(raids(name) / attRaids * 100 + 0.5) or 0
     end
     statsList:Sort(names, {
         NS.Short,
+        raids,
+        attPct,
         function(name)
-            return stats[name].raids
+            return regulars[name] and 1 or 0
         end,
         function(name)
             return stats[name].won
@@ -1962,11 +2344,13 @@ local function refreshStats()
         local name, e = names[i], stats[names[i]]
         r.data = name
         r.cols[1]:SetText(NS.ColorName(name))
-        r.cols[2]:SetText(e.raids)
-        r.cols[3]:SetText(e.won)
-        r.cols[4]:SetText(e.free > 0 and e.free or "")
-        r.cols[5]:SetText(string.format("%.2f", perRaid(name)))
-        r.cols[6]:SetText(e.last > 0 and date("%d %b %Y", e.last) or "|cff999999never|r")
+        r.cols[2]:SetText(raids(name))
+        r.cols[3]:SetText(attRaids > 0 and (attPct(name) .. "%") or "")
+        r.cols[4]:SetText(regulars[name] and "|cff66ff66yes|r" or "")
+        r.cols[5]:SetText(e.won)
+        r.cols[6]:SetText(e.free > 0 and e.free or "")
+        r.cols[7]:SetText(string.format("%.2f", perRaid(name)))
+        r.cols[8]:SetText(e.last > 0 and date("%d %b %Y", e.last) or "|cff999999never|r")
     end)
 end
 
@@ -2081,15 +2465,155 @@ local function refreshCommands()
     cmdChild:SetHeight(-y + 8)
 end
 
+-- ---- next step (breadcrumbs) ------------------------------------------------------------
+-- Exactly one thing glows per player: the click the raid is waiting on from
+-- them. On another tab, that tab's button glows; with the window shut, the
+-- minimap button. Same rules as the host's (Rules.Intent), so it never
+-- leads to a refusal. Returns { id, tab, text, key, soft } or nil.
+
+local START_AFTER = 1800 -- seconds after New raid before Start raid glows outside an instance
+
+local function inRaidInstance()
+    local _, kind = GetInstanceInfo()
+    return NS.CanRead(kind) and kind == "raid"
+end
+
+local function myStep(S)
+    local me = NS.Me()
+    local live = S ~= nil and S.phase ~= "ended"
+    local item = live and S.active and S.items[S.active] or nil
+    local myClass = NS.ClassOf(me)
+
+    -- An item waiting on this player.
+    if item and item.state == "rolling" and Rules.CanRoll(S, item, me, myClass) then
+        return { id = "roll", tab = "loot", key = item.key, text = "Next: click Roll (1-100)." }
+    end
+    if item and item.state == "interest" and not item.wants[me] and Rules.CanWant(S, item, me, myClass) then
+        if needSpec(S, item, me) then
+            return {
+                id = "spec",
+                tab = "raid",
+                text = "Next: pick your loot spec on the Raid tab, then ask for the item.",
+            }
+        end
+        return { id = "want", tab = "loot", key = item.key, text = "Next: click I want this if you can use the item." }
+    end
+
+    -- Officers run the loot.
+    if live and NS.IsOfficer() then
+        if item and item.state == "rolling" then
+            local ok, wait = closeState(S, item)
+            if ok and wait == 0 then
+                return { id = "close", tab = "loot", key = item.key, text = "Next: click Close roll." }
+            end
+            later(wait)
+        elseif item and item.state == "interest" then
+            local ok, wait = callState(S, item)
+            if ok and wait == 0 then
+                return { id = "call", tab = "loot", key = item.key, text = "Next: click Call roll." }
+            end
+            later(wait)
+        end
+        local n = Loot.lootOpen and Loot.PendingFromWindow() or 0
+        if n > 0 then
+            return { id = "add", tab = "loot", text = "Next: click Add " .. n .. " from loot." }
+        end
+        if not (item and (item.state == "interest" or item.state == "rolling")) then
+            local sel = selKey and S.items[selKey]
+            local key = sel and sel.state == "pending" and selKey or nil
+            for _, k in ipairs(S.order) do
+                key = key or (S.items[k].state == "pending" and k or nil)
+            end
+            if key then
+                return { id = "start", tab = "loot", key = key, text = "Next: pick a waiting item and click Start." }
+            end
+        end
+    end
+
+    -- The host starts the raid in the instance (or after a while).
+    if live and NS.IsHost() and S.phase == "reserve" then
+        local wait = START_AFTER - (GetServerTime() - (S.created or 0))
+        if inRaidInstance() or wait <= 0 then
+            return {
+                id = "begin",
+                tab = "raid",
+                text = "Next: click Start raid when the raid begins. Reserves close then.",
+            }
+        end
+        later(wait)
+    end
+    if not live and IsInRaid() and UnitIsGroupLeader("player") then
+        return { id = "new", tab = "raid", text = "Next: click New raid to start a loot session." }
+    end
+
+    -- Your loot spec: confirmed before the start, or at least known.
+    if live then
+        local mine, picked = NS.Specs.Mine()
+        if S.phase == "reserve" and mine and not picked then
+            return {
+                id = "confirm",
+                tab = "raid",
+                text = "Next: click Confirm if that is the spec you want gear for, or Change loot spec.",
+            }
+        elseif
+            not mine
+            and (
+                S.phase == "reserve" and next(S.items) == nil
+                or not S.specs[me] and not rollOpen(S) and not (item and (item.wants[me] or item.rolls[me]))
+            )
+        then
+            return {
+                id = "spec",
+                tab = "raid",
+                text = "Next: click Change loot spec and pick the spec you want gear for.",
+            }
+        end
+        -- Reserving is optional: a soft glow, and not on the minimap.
+        if S.phase == "reserve" and next(S.items) == nil and not S.reserves[me] and picked then
+            return {
+                id = "reserve",
+                tab = "raid",
+                soft = true,
+                text = "Next: reserve the one item you want most, if you like (optional).",
+            }
+        end
+    end
+end
+
+-- Steps -> the button that glows when its tab is shown.
+local STEP_BUTTON = {
+    want = wantBtn,
+    roll = rollBtn,
+    close = closeBtn,
+    call = callBtn,
+    add = addLootBtn,
+    start = startBtn,
+    begin = beginBtn,
+    new = newBtn,
+    spec = mySpecBtn,
+    confirm = confirmSpecBtn,
+    reserve = resGlow,
+}
+local glowing -- the frame glowing now
+local function glowOnly(target)
+    if glowing ~= target then
+        if glowing then
+            glowing.SetGlow(false)
+        end
+        if target then
+            target.SetGlow(true)
+        end
+        glowing = target
+    end
+end
+
+local mmButton
 local function refreshNow()
     pendingRefresh = false
     if not NS.DB then
         return
     end
     local S = NS.S()
-    if NS.UpdateMinimapGlow then
-        NS.UpdateMinimapGlow()
-    end
     -- A new item up for rolls pops the window open on the Loot page.
     local active = S and S.active
     if active and active ~= lastActive then
@@ -2100,9 +2624,31 @@ local function refreshNow()
         end
     end
     lastActive = active
+    if S and (not selKey or not S.items[selKey]) then
+        selKey = S.active or S.order[#S.order]
+    end
+    trackUp(S)
+    local step = myStep(S)
+    if mmButton then
+        mmButton.SetGlow(step ~= nil and not step.soft)
+    end
     if not f:IsShown() then
+        glowOnly(nil)
         return
     end
+    -- The step's button, or its item's row when another item is selected,
+    -- or its tab when another tab is shown.
+    local target
+    rowGlowKey = nil
+    if step and step.tab ~= current then
+        target = tabs[step.tab]
+    elseif step and step.key and step.key ~= selKey then
+        rowGlowKey = step.key
+    elseif step then
+        target = STEP_BUTTON[step.id]
+    end
+    glowOnly(target)
+    nextText:SetText(step and step.text or "")
     -- The session's status lives in the title, so the tab row has room.
     if S then
         f:SetTitle("Raid Loot Controller - " .. (S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or ""))
@@ -2158,7 +2704,6 @@ end
 -- it round the minimap edge. /rlc minimap hides or shows it. Same shape as
 -- the WoWClearance button, which is measured working on this client.
 
-local mmButton
 local function createMinimapButton()
     -- Not created at all when hidden: parenting a frame to the minimap is
     -- itself what some minimap replacements react badly to.
@@ -2198,7 +2743,7 @@ local function createMinimapButton()
         end,
     })
     AddGlow(mmButton, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-    mmButton.SetGlow(myTurn(NS.S()) ~= nil)
+    NS.Refresh() -- sets its glow
 end
 
 function NS.SetMinimapButton(show)
@@ -2214,11 +2759,9 @@ function NS.SetMinimapButton(show)
 end
 
 NS.On("PLAYER_LOGIN", createMinimapButton)
-
--- The minimap button pulses while an item is waiting on you, so a player
--- who closed the window still sees it.
-function NS.UpdateMinimapGlow()
-    if mmButton then
-        mmButton.SetGlow(myTurn(NS.S()) ~= nil)
-    end
-end
+-- The minimap button pulses while this player has a next step (refreshNow),
+-- so a player who closed the window still sees it. A boss fight greys
+-- Call roll, and the leader gets New raid on joining a raid.
+NS.On("ENCOUNTER_START", NS.Refresh)
+NS.On("ENCOUNTER_END", NS.Refresh)
+NS.On("PARTY_LEADER_CHANGED", NS.Refresh)

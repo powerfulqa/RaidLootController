@@ -128,9 +128,10 @@ do
     check(it2.winner == C and it2.how == "reserve" and client.locks[C], "single reserver gets it on call, no roll")
 end
 
--- ---- a win before the reserved item drops keeps the reserve --------------
+-- ---- a regular's win before the reserved item drops keeps the reserve ----
 do
     fresh()
+    host.dry, client.dry = { [A] = true }, { [A] = true } -- A is a regular
     act(A, { "RES", 500 })
     act(HOST, { "PHASE", "live" })
     act(HOST, { "ADD", "item:1" })
@@ -246,7 +247,7 @@ do
     act(A, { "WANT", "1", 1 })
     act(B, { "WANT", "1", 1 })
     local _, note = act(HOST, { "CALL", "1" })
-    check(note and note:find("no loot last raid"), "dry first pass announced")
+    check(note == "Regulars roll first.", "regulars first pass announced")
     check(act(HOST, { "ROLLSEEN", A, 99, 1, 100 }) == nil, "a non-dry player waits for the dry first pass")
     act(HOST, { "ROLLSEEN", B, 5, 1, 100 })
     act(HOST, { "CLOSE", "1" })
@@ -269,10 +270,19 @@ do
         },
         now = { started = 3, created = 3, specs = {}, items = {} },
     }
-    local dry = table.concat(R.DryFrom(history, "now"), ",")
-    check(dry == B, "dry: seen last raid, no non-free win, a reserve alone is not seen (got " .. dry .. ")")
-    check(#R.DryFrom({}, nil) == 0, "no history: nobody is dry")
-
+    local function ten(t) -- pad a legacy raid to MIN_ATTEND wanters
+        for i = 1, R.MIN_ATTEND do
+            t.items["p" .. i] = { wants = { ["P" .. i .. "-Realm"] = true }, rolls = {} }
+        end
+        return t
+    end
+    ten(history.last)
+    local dry = table.concat(R.RegularsFrom(history, "now"), ",")
+    local function has(n)
+        return dry:find(n, 1, true) ~= nil
+    end
+    check(not has(C) and has(A) and has(B), "legacy raid: present = wanted or rolled, winners too")
+    check(#R.RegularsFrom({}, nil) == 0, "no history: nobody is a regular")
     fresh()
     act(HOST, { "PHASE", "live" })
     check(act(HOST, { "ADD", "item:1", "Creature-0-1-2-3-4-5:1" }), "a loot slot is added")
@@ -773,6 +783,10 @@ do -- audit: the log shows phases, closes and deliveries (not to old copies)
     check(R.Apply(host, { "LOG", 1000, HOST, "close", "", "" }) == nil, "and only as LOG2")
     local _, why = R.Apply(host, { "LOG", 1000, HOST, "someday", "", "" })
     check(why == "unknown op", "an unknown log kind reads as a newer host, not a missed op")
+    _, why = R.Apply(host, { "SOMEDAY", "Ann-R", 1 })
+    check(why == "unknown op", "an unknown op kind reads as a newer host, not a missed op")
+    _, why = R.Apply(host, { "WANT", "999", "Ann-R", 1 })
+    check(why == "no item", "a known item op for a missing item still asks for a resync")
 end
 
 do -- name sets are capped
@@ -945,8 +959,15 @@ do -- untrusted raids never decide who rolls first
             items = { ["1"] = { wants = { [B] = true }, rolls = {} } },
         },
     }
-    local dry = R.DryFrom(H)
-    check(#dry == 1 and dry[1] == A, "dry list skips an untrusted newer raid and spec-only attendees")
+    for i = 1, R.MIN_ATTEND do
+        H.real.items["p" .. i] = { wants = { ["P" .. i .. "-Realm"] = true }, rolls = {} }
+        H.fake.items["p" .. i] = { wants = { ["F" .. i .. "-Realm"] = true }, rolls = {} }
+    end
+    local dry = "," .. table.concat(R.RegularsFrom(H), ",") .. ","
+    local function has(n)
+        return dry:find("," .. n .. ",", 1, true) ~= nil
+    end
+    check(has(A) and not has(B) and not has(C), "regulars skip an untrusted raid and spec-only names")
 end
 
 do -- a reserve pays out only if the item still suits the reserver's loot spec
@@ -974,15 +995,15 @@ do -- roll-first from attendance (rec.att, local only); small parties never coun
             items = { ["1"] = { state = "done", winner = A, how = "roll", wants = { [B] = true }, rolls = {} } },
         },
     }
-    local dry = R.DryFrom(H)
-    check(#dry == R.MIN_ATTEND - 1 and dry[1] == "P1-Realm", "att: everyone seen in the group, winners aside")
+    local dry = R.RegularsFrom(H)
+    check(#dry == R.MIN_ATTEND and dry[1] == A, "att: everyone seen in the group, winners too")
     local inAtt = {}
     for _, n in ipairs(dry) do
         inAtt[n] = true
     end
     check(not inAtt[B] and not inAtt[C], "att: a want or reserve from someone not in the group counts for nothing")
-    H.party = { started = 1, created = 9, att = { [B] = true, [C] = true }, items = {} }
-    check(#R.DryFrom(H) == R.MIN_ATTEND - 1, "att: a newer raid under MIN_ATTEND players is skipped")
+    H.party = { started = R.NIGHT + 9, created = R.NIGHT + 9, att = { [B] = true, [C] = true }, items = {} }
+    check(#R.RegularsFrom(H) == R.MIN_ATTEND, "att: a newer raid under MIN_ATTEND players is skipped")
     local S = R.Apply(nil, { "NEW", "Host-Realm-5", HOST, "x", 5 })
     S.att = att
     local found = false
@@ -1093,6 +1114,344 @@ do -- reserve item, every reserver gone: CALL falls back to normal interest
     check(client.items["1"].mode == "normal" and client.items["1"].state == "interest", "no reserver here: normal")
 end
 
+-- ---- fairness fixes (2026-10-28, docs/FAIRNESS_AUDIT.md) --------------------
+-- Host copy rebuilt from its snapshot, compared field by field.
+local function snapshotMatches()
+    local function same(a, b)
+        if type(a) ~= type(b) or type(a) ~= "table" then
+            return a == b
+        end
+        for k, v in pairs(a) do
+            if not same(v, b[k]) then
+                return false
+            end
+        end
+        for k in pairs(b) do
+            if a[k] == nil then
+                return false
+            end
+        end
+        return true
+    end
+    local rebuilt
+    for _, op in ipairs(R.Snapshot(host)) do
+        rebuilt = assert(R.Apply(rebuilt, R.Decode(R.EncodeOp(op))[1]))
+    end
+    return same(host, rebuilt) and same(host, client)
+end
+local function wins(name)
+    local n = 0
+    for _, it in pairs(host.items) do
+        n = n + ((it.state == "done" and it.winner == name and it.how ~= "open") and 1 or 0)
+    end
+    return n
+end
+
+do -- F1: a tie reroll does not let a player locked mid-roll win a second item
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(B, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 77, 1, 100 })
+    act(HOST, { "ROLLSEEN", B, 77, 1, 100 })
+    act(HOST, { "CLOSE", "1" }) -- tie: A and B reroll
+    check(act(HOST, { "AWARD", "2", A }) == nil, "F1: no hand award of another item mid-roll")
+    for _, op in ipairs({ { "LOCK", A, 1 } }) do -- as an older host could still send
+        host, client = assert(R.Apply(host, op)), assert(R.Apply(client, op))
+    end
+    check(act(HOST, { "ROLLSEEN", A, 90, 1, 100 }) == nil, "F1: a locked player cannot roll in a tie reroll")
+    act(HOST, { "ROLLSEEN", B, 10, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].winner == B and wins(A) == 0, "F1: the unlocked tied player wins")
+end
+
+do -- F1: co-reservers without an item roll first
+    fresh()
+    host.dry, client.dry = { [A] = true }, { [A] = true } -- A is a regular: the reserve survives a win
+    act(A, { "RES", 500 })
+    act(B, { "RES", 500 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 50, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    act(HOST, { "ADD", "item:500" })
+    act(HOST, { "START", "2" })
+    check(client.items["2"].restrict[A] and client.items["2"].restrict[B], "F1: both reservers are listed")
+    act(HOST, { "CALL", "2" })
+    check(client.items["2"].winner == B and client.items["2"].how == "reserve", "F1: the unlocked reserver gets it")
+    check(client.reserves[A] == 500, "F1: the locked regular keeps the reserve")
+end
+
+do -- F2: a reserve is a second item only for a regular
+    fresh()
+    act(A, { "RES", 500 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 20, 1, 100 })
+    local ops = act(HOST, { "CLOSE", "1" })
+    check(ops[2][1] == "RES" and client.reserves[A] == nil, "F2: a non-regular's win uses up the reserve")
+    check(snapshotMatches(), "F2: snapshot carries the used-up reserve")
+    act(HOST, { "UNDO", "1" })
+    check(client.reserves[A] == 500 and not client.locks[A], "F2: undo of that win gives the reserve back")
+    act(HOST, { "AWARD", "1", A })
+    client.reserves[A], host.reserves[A] = 500, 500 -- as if an officer locked A with the reserve left
+    act(HOST, { "ADD", "item:500" })
+    act(HOST, { "START", "2" })
+    check(client.items["2"].mode == "normal", "F2: a locked non-regular's reserve does not pay out")
+end
+
+do -- F3: a reserved item keeps its class limit
+    fresh()
+    act(C, { "RES", 5 })
+    act(HOST, { "PHASE", "live" })
+    ctx.describe = function()
+        return R.ClassBit(8), ""
+    end
+    act(HOST, { "ADD", "item:5" })
+    ctx.describe = nil
+    act(HOST, { "START", "1" })
+    check(client.items["1"].mode == "reserve" and client.items["1"].classMask == R.ClassBit(8), "F3: mask kept")
+end
+
+do -- regulars: 75% of the last 8 raids, 75% of each raid, one night per 12 h
+    local function rec(created, inst, present, span)
+        local att = {}
+        for i = 1, R.MIN_ATTEND do
+            att["Fill" .. i .. "-Realm"] = 3600
+        end
+        for n, t in pairs(present) do
+            att[n] = t
+        end
+        return { started = created, created = created, inst = inst, att = att, attSpan = span or 3600, items = {} }
+    end
+    local H, day = {}, 86400
+    for w = 1, 8 do
+        -- A: every week. B: 6 of 8. C: 5 of 8. D: every week, 10 minutes.
+        local p = { [A] = 3600, ["D-Realm"] = 600 }
+        p[B] = w > 2 and 3600 or nil
+        p[C] = w > 3 and 3600 or nil
+        H["w" .. w] = rec(w * 7 * day, 409, p)
+    end
+    local function list(inst)
+        return "," .. table.concat(R.RegularsFrom(H, "now", inst), ",") .. ","
+    end
+    local l = list(409)
+    check(l:find("," .. A .. ",", 1, true) and l:find("," .. B .. ",", 1, true), "regulars: 8 and 6 of 8 count")
+    check(not l:find("," .. C .. ",", 1, true), "regulars: 5 of 8 does not")
+    check(not l:find("D-Realm", 1, true), "regulars: ten minutes a night is not attendance")
+    H.alt = rec(8 * 7 * day + 3600, 309, { [C] = 3600 }) -- an alt run elsewhere, an hour later
+    check(list(409) == l, "regulars: another instance does not count")
+    H.split = rec(8 * 7 * day + 1800, 409, { [C] = 3600 }) -- End raid + New raid, same night
+    check(list(409) == l, "regulars: a second session the same night is one night")
+    H.split = nil
+    H.alt.inst = nil -- no instance and attSpan: never in a raid instance
+    check(list(409) == l, "regulars: a session outside any raid instance does not count")
+    H.w8.bench = { [C] = true }
+    H.w3.bench = { [C] = true }
+    check(list(409):find("," .. C .. ",", 1, true), "regulars: bench counts as present")
+    check(R.Present({ att = { [A] = 2700 }, attSpan = 3600 }, A), "present: 75% of the raid")
+    check(not R.Present({ att = { [A] = 2699 }, attSpan = 3600 }, A), "present: under 75% is not")
+end
+
+do -- F6: a first spec set after the start cannot make a main-spec win free
+    fresh()
+    act(B, { "SPEC", "PALADIN.RET" })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "SPECS", "1", "WARRIOR.ARMS,WARRIOR.FURY" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "CALL", "1" }) -- nobody asked: open
+    check(act(A, { "SPEC", "WARRIOR.PROT" }), "F6: first spec after the start is taken")
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 90, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    check(client.items["1"].how == "roll" and client.locks[A], "F6: judged by class: the win locks")
+    check(client.lateSpec[A] and not client.lateSpec[B], "F6: only the late spec is marked")
+    check(snapshotMatches(), "F6: snapshot keeps the late mark")
+end
+
+do -- F7: undo keeps the lock when a free win was really their item
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 60, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    act(HOST, { "START", "2" })
+    act(HOST, { "CALL", "2" }) -- B stays quiet: open
+    act(A, { "WANT", "2", 1 })
+    act(HOST, { "CALL", "2" })
+    act(HOST, { "ROLLSEEN", A, 80, 1, 100 })
+    act(HOST, { "CLOSE", "2" })
+    check(client.items["2"].how == "open", "F7 fixture: the second win was free")
+    act(HOST, { "UNDO", "1" })
+    check(client.locks[A], "F7: undo of the locking win keeps the free winner locked")
+end
+
+do -- O1: no repeated phase changes; the log keeps the evidence
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    local ok, why = act(HOST, { "PHASE", "live" })
+    check(not ok and why == "The raid has already started.", "O1: PHASE live twice refused")
+    act(HOST, { "PHASE", "ended" })
+    check(act(HOST, { "PHASE", "ended" }) == nil, "O1: PHASE ended twice refused")
+    fresh()
+    R.Apply(host, { "LOG", 1, HOST, "unlock", A, "" })
+    R.Apply(host, { "LOG", 2, HOST, "cancel", nil, "1" })
+    R.Apply(host, { "LOG2", 3, HOST, "void", nil, "1" })
+    for i = 4, R.MAX_LOG + 50 do
+        R.Apply(host, { "LOG2", i, HOST, i % 2 == 0 and "live" or "ended", "", "" })
+    end
+    local w = host.log
+    check(w[1].what == "unlock" and w[2].what == "cancel" and w[3].what == "void", "O1: a phase flood keeps the rest")
+    for i = 1, R.MAX_LOG do
+        R.Apply(host, { "LOG", 1000 + i, HOST, "award", A, "1" })
+    end
+    check(
+        #host.log == R.MAX_LOG and host.log[1].what == "unlock" and host.log[4].t == 1004,
+        "O1: all kept kinds: the oldest of the flood's own kind goes, still bounded"
+    )
+end
+
+do -- O2: eligibility is frozen during a roll; suggested specs are kept
+    fresh()
+    act(A, { "SPEC", "WARRIOR.FURY" })
+    act(C, { "RES", 9 })
+    act(HOST, { "PHASE", "live" })
+    ctx.describe = function()
+        return 0, "WARRIOR.ARMS,WARRIOR.FURY"
+    end
+    act(HOST, { "ADD", "item:1" })
+    ctx.describe = nil
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    local _, why = act(HOST, { "LOCK", A, 1 })
+    check(why == "Wait until the roll is closed.", "O2: no lock during a roll")
+    check(act(HOST, { "SETSPEC", A, "WARRIOR.PROT" }) == nil, "O2: no spec change during a roll")
+    check(act(HOST, { "SPECS", "1", "MAGE.FIRE" }) == nil, "O2: no Who can roll change during a roll")
+    act(HOST, { "CANCEL", "1" })
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "SPECS", "2", "WARRIOR.ARMS,WARRIOR.FURY" }) -- the first list stays suggested
+    act(HOST, { "START", "2" })
+    act(A, { "WANT", "2", 1 })
+    act(HOST, { "SPECS", "2", "MAGE.FIRE" }) -- emptied for A's spec while nobody rolls
+    check(act(HOST, { "OPEN", "2" }) == nil, "O2: Open still sees the suggested specs")
+    act(HOST, { "CALL", "2" }) -- nobody eligible now: it opens
+    act(HOST, { "CALL", "2" })
+    act(HOST, { "ROLLSEEN", A, 50, 1, 100 })
+    act(HOST, { "CLOSE", "2" })
+    check(client.items["2"].how == "roll" and client.locks[A], "O2: a main-spec win stays a locking win")
+    check(snapshotMatches(), "O2: snapshot keeps the suggested specs")
+    check(act(HOST, { "SETSPEC", C, "MAGE.FROST" }) == nil, "O2: a reserver's spec stays after the start")
+    check(act(HOST, { "LOCK", B, 0 }) and #act(HOST, { "LOCK", B, 0 }) == 0, "O1: an unchanged lock logs nothing")
+end
+
+do -- O3: undo keeps the result; cancel names the item
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 40, 1, 100 })
+    act(HOST, { "ROLLSEEN", B, 30, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    act(HOST, { "UNDO", "1" })
+    local u = client.items["1"].undone
+    check(u and u.winner == A and u.how == "roll" and u.rolls[B] == 30, "O3: the undone result stays on the item")
+    check(snapshotMatches(), "O3: snapshot keeps the undone result")
+    act(HOST, { "CANCEL", "1" })
+    check(client.log[#client.log].what == "cancel" and client.log[#client.log].key == "1", "O3: cancel names the item")
+end
+
+do -- O4: a roll stays open a few seconds; only a named-players roll closes early
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(B, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    local at = ctx.now
+    ctx.rollingSince = function()
+        return at
+    end
+    act(HOST, { "ROLLSEEN", A, 40, 1, 100 })
+    local _, why = act(HOST, { "CLOSE", "1" })
+    check(why == "Give everyone a few seconds to roll.", "O4: no close the second a friend rolls")
+    act(HOST, { "ROLLSEEN", B, 30, 1, 100 })
+    -- Anyone in the group may roll on an open-to-wanters roll: it waits.
+    check(act(HOST, { "CLOSE", "1" }) == nil, "O4: every wanter rolled: an unrestricted roll still waits")
+    ctx.now = at + R.ROLL_MIN
+    check(act(HOST, { "CLOSE", "1" }) and client.items["1"].winner == A, "O4: closes after ROLL_MIN")
+    ctx.now = 1000
+    ctx.rollingSince = nil
+end
+
+do -- F9, VOID, MLGAVE, BENCH
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    ctx.inEncounter = function()
+        return true
+    end
+    local _, why = act(HOST, { "CALL", "1" })
+    check(why == "Wait for the fight to end.", "F9: no call during a boss fight")
+    ctx.inEncounter = nil
+    host.dry, client.dry = { [A] = true }, { [A] = true }
+    act(HOST, { "CALL", "1" })
+    act(HOST, { "ROLLSEEN", A, 3, 1, 100 })
+    check(act(A, { "VOID", "1" }) == nil, "VOID: officers only")
+    act(HOST, { "VOID", "1" })
+    local it = client.items["1"]
+    check(not next(it.rolls) and it.state == "rolling" and it.restrict[A] and not it.restrict[B], "VOID: rolls wiped")
+    check(client.log[#client.log].what == "void", "VOID: logged")
+    check(act(HOST, { "ROLLSEEN", A, 70, 1, 100 }), "VOID: the roll can be made again")
+    check(act(B, { "MLGAVE", "1", C }) == nil, "MLGAVE: a raider cannot report")
+    ctx.isMasterLooter = function(n)
+        return n == B
+    end
+    check(act(B, { "MLGAVE", "1", C }) and client.log[#client.log].what == "mlgive", "MLGAVE: the master looter can")
+    check(#act(B, { "MLGAVE", "1", C }) == 0, "MLGAVE: logged once")
+    ctx.isMasterLooter = nil
+    check(act(A, { "BENCH", C, 1 }) == nil, "BENCH: officers only")
+    act(HOST, { "BENCH", C, 1 })
+    check(client.bench[C] and client.log[#client.log].what == "bench", "BENCH: marked and logged")
+    local kinds = {}
+    for _, op in ipairs(R.Snapshot(host)) do
+        kinds[op[1] .. (op[4] or "")] = true
+    end
+    check(kinds.LOG2void and kinds.LOG2mlgive and kinds.LOG2bench, "new log kinds go as LOG2")
+    check(snapshotMatches(), "BENCH: snapshot keeps the bench")
+    check(R.Present(host, C) and R.Present({ bench = { [C] = true }, att = {} }, C), "BENCH: counts as present")
+end
+
+do -- the lock log names the item being rolled
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "LOCK", A, 1 })
+    check(client.log[#client.log].what == "lock" and client.log[#client.log].key == "1", "lock log names the item")
+end
+
 -- Help search highlight.
 do
     local Y = "<"
@@ -1105,6 +1464,247 @@ do
     )
     check(NS.Kit.Highlight("a|nb", "|n", Y) == "a|nb", "escape codes themselves never match")
     check(NS.Kit.Highlight("text", "", Y) == "text", "empty search changes nothing")
+end
+
+-- ---- review round (2026-10-28) ----------------------------------------------
+local function closeOne(key, winner) -- a finished roll on item `key`
+    act(HOST, { "START", key })
+    act(winner, { "WANT", key, 1 })
+    act(HOST, { "CALL", key })
+    act(HOST, { "ROLLSEEN", winner, 50, 1, 100 })
+    act(HOST, { "CLOSE", key })
+end
+local function inLog(what)
+    for _, e in ipairs(client.log or {}) do
+        if e.what == what then
+            return true
+        end
+    end
+    return false
+end
+
+do -- V1: a flood of unlocks or master loot reports only pushes out itself
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    closeOne("1", A)
+    act(HOST, { "OFF", B, 1 })
+    check(inLog("close"), "V1 fixture: the win is logged")
+    for i = 1, 2 * R.MAX_LOG do
+        act(B, { "LOCK", C, i % 2 })
+    end
+    check(#client.log == R.MAX_LOG and inLog("close"), "V1: lock/unlock toggles keep the win in the log")
+    check(snapshotMatches(), "V1: snapshot after the flood")
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    closeOne("1", A)
+    ctx.isMasterLooter = function(n)
+        return n == C
+    end
+    local _, why = act(C, { "MLGAVE", "1", "Fake-R" })
+    check(why == "That player is not in the group.", "V1: MLGAVE names a group member")
+    check(#act(C, { "MLGAVE", "1", A }) == 0, "V1: MLGAVE to the winner is no report")
+    check(act(C, { "MLGAVE", "1", B }) and client.log[#client.log].what == "mlgive", "V1: MLGAVE to another")
+    check(#act(C, { "MLGAVE", "1", HOST }) == 0, "V1: one MLGAVE per item, whatever the name")
+    ctx.isMasterLooter = nil
+end
+
+do -- V2: no hand award or undo of another item while a roll is open
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "ADD", "item:3" })
+    closeOne("3", B)
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "CALL", "1" })
+    local _, why = act(HOST, { "AWARD", "2", A })
+    check(why == "Wait until the roll is closed.", "V2: no AWARD of another item mid-roll")
+    _, why = act(HOST, { "UNDO", "3" })
+    check(why == "Wait until the roll is closed.", "V2: no UNDO mid-roll")
+    check(act(HOST, { "AWARD", "1", A }), "V2: the rolled item itself can still be given")
+end
+
+do -- V3: the bench rides in LOG2 (v0.6.1 resyncs on an unknown op kind)
+    local OLD_KINDS = {}
+    for k in
+        ("NEW PHASE SPEC DRY LOG LOG2 OFF LOCK RES ADD ITEM WANT ROLL REROLL AWARD UNDO CANCEL ITEMADD DELIV"):gmatch(
+            "%u+%d?"
+        )
+    do
+        OLD_KINDS[k] = true
+    end
+    fresh()
+    act(HOST, { "PHASE", "live" })
+    local ops = act(HOST, { "BENCH", C, 1 })
+    check(#ops == 1 and ops[1][1] == "LOG2" and client.bench[C], "V3: BENCH is one LOG2 op and sets the bench")
+    act(HOST, { "BENCH", C, 0 })
+    act(HOST, { "BENCH", C, 1 })
+    act(HOST, { "BENCH", B, 1 })
+    act(HOST, { "BENCH", B, 0 })
+    check(client.bench[C] and not client.bench[B], "V3: unbench clears it")
+    local old = true
+    for _, op in ipairs(R.Snapshot(host)) do
+        old = old and OLD_KINDS[op[1]] == true
+    end
+    check(old, "V3: a snapshot has only op kinds v0.6.1 knows")
+    check(R.Apply(host, { "BENCH", A, 1 }) == nil, "V3: no BENCH op any more")
+    check(snapshotMatches(), "V3: a late joiner gets the same bench")
+    for i = 1, R.MAX_LOG do -- kept kinds push the bench entries out of the log
+        local op = { "LOG", 2000 + i, HOST, "award", A, "1" }
+        host, client = assert(R.Apply(host, op)), assert(R.Apply(client, op))
+    end
+    check(not inLog("bench") and client.bench[C], "V3 fixture: bench entry gone, bench kept")
+    check(snapshotMatches(), "V3: snapshot still carries a bench the log dropped")
+    check(R.Apply(host, { "LOG2", 1, HOST, "bench", "", "" }) == nil, "V3: a bench entry needs a name")
+end
+
+do -- V4: a reserve used up by another win no longer pays out
+    fresh()
+    act(A, { "RES", 7 })
+    act(B, { "RES", 9 })
+    act(C, { "RES", 9 })
+    act(HOST, { "ADD", "item:7" })
+    act(HOST, { "ADD", "item:8" })
+    act(HOST, { "ADD", "item:9" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "AWARD", "2", A }) -- spends A's reserve while item 1 waits
+    check(not client.reserves[A], "V4 fixture: reserve used up")
+    act(HOST, { "CALL", "1" })
+    check(
+        client.items["1"].state == "interest" and client.items["1"].mode == "normal",
+        "V4: CALL skips a spent reserve"
+    )
+    act(HOST, { "CANCEL", "1" })
+    act(HOST, { "START", "3" })
+    act(HOST, { "CALL", "3" })
+    act(HOST, { "ROLLSEEN", B, 90, 1, 100 })
+    act(HOST, { "ROLLSEEN", C, 10, 1, 100 })
+    local op = { "RES", B, 0 } -- as an older host could still send mid-roll
+    host, client = assert(R.Apply(host, op)), assert(R.Apply(client, op))
+    act(HOST, { "CLOSE", "3" })
+    check(client.items["3"].winner == C, "V4: CLOSE skips a roll on a spent reserve")
+end
+
+do -- V5: only a named-players roll closes before ROLL_MIN, once all rolled
+    fresh()
+    act(A, { "RES", 7 })
+    act(B, { "RES", 7 })
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:7" })
+    act(HOST, { "START", "1" })
+    act(HOST, { "CALL", "1" })
+    local at = ctx.now
+    ctx.rollingSince = function()
+        return at
+    end
+    act(HOST, { "ROLLSEEN", A, 40, 1, 100 })
+    check(act(HOST, { "CLOSE", "1" }) == nil, "V5: a reserver has not rolled: wait")
+    act(HOST, { "ROLLSEEN", B, 30, 1, 100 })
+    check(act(HOST, { "CLOSE", "1" }) and client.items["1"].winner == A, "V5: every reserver rolled: close at once")
+    act(HOST, { "ADD", "item:2" })
+    act(HOST, { "START", "2" })
+    act(B, { "WANT", "2", 1 })
+    act(HOST, { "CALL", "2" })
+    act(HOST, { "ROLLSEEN", B, 40, 1, 100 })
+    check(client.items["2"].state == "rolling", "V5 fixture: a normal roll")
+    check(act(HOST, { "CLOSE", "2" }) == nil, "V5: the only wanter rolled, but anyone may: wait")
+    ctx.rollingSince = nil
+end
+
+do -- V6, V8: who makes a raid count, and what is one night
+    local function raid(day, present, bench, start)
+        local att, b = {}, {}
+        for _, n in ipairs(present) do
+            att[n] = 3600
+        end
+        for _, n in ipairs(bench or {}) do
+            b[n] = true
+        end
+        local t = start or day * 86400
+        return { created = t, started = t + 60, inst = 409, att = att, attSpan = 3600, bench = b, items = {} }
+    end
+    local ten, a, b = {}, {}, {}
+    for i = 1, R.MIN_ATTEND do
+        ten[i] = "T" .. i .. "-R"
+    end
+    for i = 1, 6 do
+        a[i], b[i] = "A" .. i .. "-R", "B" .. i .. "-R"
+    end
+    local H = {}
+    for d = 1, 4 do
+        H["r" .. d] = raid(d, { A, B, C }, ten)
+    end
+    check(#R.RegularsFrom(H, nil, 409) == 0, "V6: a bench list does not make a small party count")
+    for d = 1, 4 do
+        H["r" .. d] = raid(d, ten, { C })
+    end
+    local l = "," .. table.concat(R.RegularsFrom(H, nil, 409), ",") .. ","
+    check(l:find("," .. C .. ",", 1, true) ~= nil, "V6: the bench still counts as present")
+    H = {}
+    for d = 1, 3 do
+        H["x" .. d] = raid(d, a)
+        H["y" .. d] = raid(d, b, nil, d * 86400 + 3600)
+    end
+    check(#R.RegularsFrom(H, nil, 409) == 12, "V8: two half raids in one night make one counting night")
+    H = {}
+    for i = 1, 9 do -- 11 h apart: no chain of nights
+        H["c" .. i] = raid(0, i == 1 and ten or { A, unpack(ten, 2) }, nil, i * 11 * 3600)
+    end
+    l = "," .. table.concat(R.RegularsFrom(H, nil, 409), ",") .. ","
+    check(
+        not l:find(",T1-R,", 1, true) and l:find("," .. A .. ",", 1, true),
+        "V8: a night is 12 h from its first start"
+    )
+end
+
+do -- V7: no spec on record: a first spec between items, never a dead end
+    fresh()
+    ctx.describe = function(s)
+        return 0, s == "item:9" and "WARRIOR.PROT" or ""
+    end
+    act(HOST, { "PHASE", "live" })
+    act(HOST, { "ADD", "item:1" })
+    act(HOST, { "START", "1" })
+    act(A, { "WANT", "1", 1 })
+    act(HOST, { "WANT", "1", 1 }) -- wants, never rolls: no item
+    act(HOST, { "CALL", "1" })
+    local _, why = act(B, { "SPEC", "PALADIN.HOLY" })
+    check(why == "Wait until the roll is closed.", "V7: no first spec mid-roll")
+    act(HOST, { "ROLLSEEN", A, 50, 1, 100 })
+    act(HOST, { "CLOSE", "1" })
+    act(HOST, { "ADD", "item:9" })
+    act(HOST, { "START", "2" })
+    _, why = act(HOST, { "WANT", "2", 1 })
+    check(why == "Pick your loot spec first.", "V7 fixture: the spec item asks for a spec")
+    check(
+        act(HOST, { "SPEC", "WARRIOR.PROT" }) and client.lateSpec[HOST],
+        "V7: a first spec after an earlier want, marked late"
+    )
+    check(act(HOST, { "WANT", "2", 1 }), "V7: then the spec item can be asked for")
+    check(act(HOST, { "SPEC", "WARRIOR.ARMS" }) == nil, "V7: and the spec is locked")
+    ctx.describe = nil
+end
+
+-- No spec on record (no addon): the item must suit every spec of the class,
+-- so skipping the addon never widens what you can roll on.
+do
+    local W = R.CLASS_ID.WARRIOR
+    local S = { specs = { ["Tank-R"] = "WARRIOR.PROT" }, locks = {} }
+    local tank = { mode = "normal", classMask = 0, specs = { ["WARRIOR.PROT"] = true } }
+    local any = {
+        mode = "normal",
+        classMask = 0,
+        specs = { ["WARRIOR.ARMS"] = true, ["WARRIOR.FURY"] = true, ["WARRIOR.PROT"] = true },
+    }
+    R.CLASS_SPECS.WARRIOR = { "WARRIOR.ARMS", "WARRIOR.FURY", "WARRIOR.PROT" }
+    check(R.Suits(S, tank, "Tank-R", W), "a prot warrior suits tank plate")
+    check(not R.Suits(S, tank, "Nox-R", W), "no addon: tank plate does not suit a warrior of unknown spec")
+    check(R.Suits(S, any, "Nox-R", W), "no addon: an item for every warrior spec suits")
+    check(R.Suits(S, { mode = "open", classMask = 0, specs = tank.specs }, "Nox-R", W), "and open items still do")
+    R.CLASS_SPECS.WARRIOR = nil
 end
 
 print(string.format("test_rules: %d passed, %d failed", passed, failed))

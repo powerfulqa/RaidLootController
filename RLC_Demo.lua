@@ -113,6 +113,11 @@ local function buildSession(now)
     S = wonItem(S, "4", 18879, "WARRIOR.PROT", "normal", "Brakk", "manual", nil, now - 2400)
     S = wonItem(S, "5", 18814, "", "open", "Pyra", "open", { Pyra = 77, Ilyra = 54, Noct = 23 }, now - 1800)
 
+    -- A win taken back and given again: History shows who had it first.
+    S = wonItem(S, "12", 16700, "", "normal", "Tor", "roll", { Tor = 63, Ruka = 48 }, now - 1200)
+    S = apply(S, { "UNDO", "12" })
+    S = apply(S, { "AWARD", "12", full("Ruka"), "manual", now - 1100 })
+
     -- Up now: a rogue dagger. Shade already has an item, so only Vex can
     -- roll unless nobody else wants it.
     S = apply(S, { "ADD", "6", "item:21404" })
@@ -130,11 +135,33 @@ local function buildSession(now)
     S = apply(S, { "ADD", "10", "item:21405" })
     S = apply(S, { "CANCEL", "10" })
     S = apply(S, { "ADD", "11", "item:18821" })
+
+    -- Officer log: the new kinds, so History has one of each.
+    local by = full("Lyssa")
+    S = apply(S, { "LOG2", now - 4800, me, "live", "", "" })
+    S = apply(S, { "LOG2", now - 4700, by, "bench", full("Kaelen"), "" })
+    S = apply(S, { "LOG", now - 1200, me, "undo", full("Tor"), "12" })
+    S = apply(S, { "LOG", now - 1100, me, "award", full("Ruka"), "12" })
+    S = apply(S, { "LOG2", now - 900, by, "void", "", "6" })
+    S = apply(S, { "LOG2", now - 600, by, "mlgive", full("Gorrum"), "3" })
+    S = apply(S, { "LOG", now - 500, by, "cancel", "", "10" })
+    S.log[#S.log].kept = true -- an entry the host's copy no longer has
+
+    -- On the bench tonight: not in the group, counts as there.
+    S = apply(S, { "LOG2", now - 400, by, "bench", full("Kaelen"), "" })
+
+    -- Attendance this client saw (local only, never sent). Pyra came late.
+    S.inst, S.attSpan, S.att = BARROW, 4800, {}
+    for _, r in ipairs(RAIDERS) do
+        S.att[full(r[1])] = r[1] == "Pyra" and 1500 or 4800
+    end
+    S.att[me] = 4800
     return S
 end
 
--- A past raid for the History tab.
-local function pastRaid(title, daysAgo, wins, now)
+-- A past raid for the History tab. Everyone was there for the whole raid
+-- except `away` (short name -> seconds seen); `bench` sat it out on the bench.
+local function pastRaid(title, inst, daysAgo, wins, now, away, bench)
     local t = now - daysAgo * 86400
     local S = apply(nil, { "NEW", "demo-" .. daysAgo, NS.Me(), title, t })
     S = apply(S, { "PHASE", "live", t + 600 })
@@ -142,6 +169,14 @@ local function pastRaid(title, daysAgo, wins, now)
         local mode = w[3] == "open" and "open" or "normal"
         S = wonItem(S, tostring(i), w[1], "", mode, w[2], w[3], w[4], t + 600 + i * 300)
     end
+    for _, name in ipairs(bench or {}) do
+        S = apply(S, { "LOG2", t + 600, NS.Me(), "bench", full(name), "" })
+    end
+    S.inst, S.attSpan, S.att = inst, 10200, {}
+    for _, r in ipairs(RAIDERS) do
+        S.att[full(r[1])] = (away or {})[r[1]] or 10200
+    end
+    S.att[NS.Me()] = 10200
     return apply(S, { "PHASE", "ended", t + 10800 })
 end
 
@@ -216,30 +251,35 @@ function Demo.Toggle()
     for _, r in ipairs(RAIDERS) do
         db.classes[full(r[1])] = classOf(r[2])
     end
+    db.classes[full("Kaelen")] = "PRIEST" -- on the bench, not in the group
     Demo.active = true
     NS.DB = db
     db.session = buildSession(now)
     local past = {
-        pastRaid("Barrow Deeps", 7, {
+        pastRaid("Barrow Deeps", BARROW, 7, {
             { 16698, "Morv", "roll", { Morv = 61, Zev = 33 } },
             { 21406, "Shade", "roll", { Shade = 95, Vex = 12, Fang = 50 } },
             { 16690, "Miriel", "roll", { Miriel = 70 } },
             { 16733, "Brakk", "manual" },
-        }, now),
-        pastRaid("Barrow Deeps", 14, {
+        }, now, { Zev = 2400, Sel = 0 }, { "Kaelen" }),
+        pastRaid("Barrow Deeps", BARROW, 14, {
             { 16693, "Noct", "roll", { Noct = 44, Miriel = 39 } },
             { 16669, "Tor", "open", { Tor = 81, Brakk = 20 } },
             { 19140, "Lyssa", "roll", { Lyssa = 99, Ruka = 2 } },
-        }, now),
-        pastRaid("Hyjal Summit", 21, {
+        }, now, { Zev = 9000, Fang = 3000 }),
+        pastRaid("Hyjal Summit", HYJAL, 21, {
             { 18543, "Pyra", "roll", { Pyra = 58, Ilyra = 57 } },
             { 21403, "Fenna", "roll", { Fenna = 66 } },
-        }, now),
+        }, now, { Tor = 4000 }),
     }
     for _, S in ipairs(past) do
         db.history[S.id] = S
     end
     db.history[db.session.id] = db.session
+    -- Regulars roll first tonight, from the demo history (the host does this at Start raid).
+    for _, name in ipairs(Rules.RegularsFrom(db.history, db.session.id, BARROW)) do
+        db.session = apply(db.session, { "DRY", name })
+    end
     db.catalog = buildCatalog(now)
     NS.RefreshRoster()
     NS.historyGen = NS.historyGen + 1

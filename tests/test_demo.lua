@@ -8,6 +8,7 @@ local NS = {}
 assert(loadfile("RLC_Rules.lua"))("RaidLootController", NS)
 assert(loadfile("RLC_Catalog.lua"))("RaidLootController", NS)
 assert(loadfile("RLC_Specs.lua"))("RaidLootController", NS)
+local Rules = NS.Rules
 
 -- Client stubs.
 GetServerTime = function()
@@ -75,6 +76,28 @@ check(
 )
 check(next(real.history) == nil and next(real.catalog) == nil, "real saved data untouched")
 check(S.locks["Shade-Demo"] and not S.reserves["Gorrum-Demo"], "winners locked, a won reserve is used up")
+
+-- Every new view has something to show.
+local u = S.items["12"].undone
+check(u and u.winner == "Tor-Demo" and S.items["12"].winner == "Ruka-Demo", "a win taken back and given again")
+check(not S.locks["Tor-Demo"], "the taken-back winner is unlocked")
+check(S.bench["Kaelen-Demo"] and Rules.Present(S, "Kaelen-Demo"), "a bench name counts as present")
+check(Rules.Present(S, "Brakk-Demo") and not Rules.Present(S, "Pyra-Demo"), "attendance: late joiner not present")
+local kinds, kept = {}, false
+for _, e in ipairs(S.log) do
+    kinds[e.what] = true
+    kept = kept or e.kept == true
+end
+check(
+    kinds.void and kinds.mlgive and kinds.bench and kinds.undo and kept,
+    "log: void, mlgive, bench, undo, a kept entry"
+)
+local regs = {}
+for _, name in ipairs(Rules.RegularsFrom(db.history, S.id, 2001)) do
+    regs[name] = true
+end
+check(regs["Brakk-Demo"] and not regs["Zev-Demo"] and not regs["Fang-Demo"], "regulars: came to both Barrow raids")
+check(S.dry["Brakk-Demo"] and not S.dry["Zev-Demo"], "regulars roll first tonight")
 
 NS.Demo.Toggle()
 check(not NS.Demo.active and NS.DB == real, "demo off: real data back")

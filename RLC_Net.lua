@@ -351,7 +351,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
             else
                 S = Rules.Apply(nil, op)
                 -- Not started by the group leader: never trusted for the
-                -- roll-first list (Rules.DryFrom). ApplyOps makes its own
+                -- roll-first list (Rules.RegularsFrom). ApplyOps makes its own
                 -- table from the op, so the mark goes on the op.
                 -- Small groups are handled by Rules.MIN_ATTEND on attendance.
                 op.untrusted = not newCtx.isLead(sender) or nil

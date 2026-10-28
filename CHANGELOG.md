@@ -4,7 +4,43 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
-### Unreleased
+### v0.7.0
+
+**Turning up counts.** A fairness review: regulars roll first, real attendance, tighter rules for officers, and a one-click installer.
+
+New:
+
+- **Regulars roll first.** Players who came to at least 3 of every 4 recent raids (75% of the last 8 in that instance) roll first on items they want. This replaces "no loot last raid rolls first".
+- Attendance is real time in the raid: you count as there if you were in the group and online for 75% of it. Nights under 10 players in the group don't count (bench does not make up the 10), and raids within 12 hours of the night's first raid count as one night.
+- Officers can mark a player **Bench** for the night. Bench counts as present. Players on v0.6.1 no longer reload the whole raid each time someone is benched.
+- A one-click installer for Windows (Install-RaidLootController.bat) and Mac or Linux (install-raidlootcontroller.command). It finds WoW: Forever, installs or updates, and keeps your settings. Run it again to update. If the game folder needs permission, it offers to try again as administrator. A linked addon folder (a dev checkout) loses only the link, never the files.
+- A glowing next-step button for every role, and a "Next:" line at the top of the window.
+- History shows removed items and wins taken back. Stats shows attendance. The Raid tab lists tonight's regulars.
+- Adding an item when loot is not on Master Looter, and it is not in your bags, warns that whoever looted it must trade it.
+
+Fairer:
+
+- A reserve pays out as a second item only for regulars. For anyone else, a normal win uses it up.
+- Several players on one reserve: those without an item roll first.
+- Reserves close when the first boss is pulled, even if nobody clicked Start raid.
+- In a tie or a roll-first pass, a player who already has an item can no longer win a second.
+- A spec first picked after the raid started is judged by class only on items open to everyone. It can be picked between items (not mid-roll, not for an item you already asked for), so a player without a spec is never stuck.
+- A reserve used up by another win no longer pays out when its item comes up.
+- Without the addon (no loot spec), you can roll only on items that suit every spec of your class. Skipping the addon no longer lets a fury warrior roll on tank plate. An officer can set your spec with Set spec.
+- Undo win keeps the player locked if they hold a free win they could have asked for normally.
+- A reserved item that falls back to normal rolls keeps its class limit.
+- Best for: healing gear goes to healers and spell damage gear to casters. Ranged attack power is for hunters only, feral attack power for cat and bear. Use: lines, hit and crit now count. Dodge and parry no longer make an item tank-only. Protection paladins no longer roll on spell damage gear, and cat and bear are told apart.
+
+Officers held to the rules:
+
+- No unlock, spec change or Who can roll change while a roll is open, and no Give to player or Undo win on another item.
+- No Close roll in the first 15 seconds, unless only some players may roll (reservers, regulars, a tie) and all of them rolled. The Close roll glow follows the same rule.
+- No Call roll during a boss fight. A boss pull during a roll wipes it after the fight, and everyone rolls again.
+- No spec change for a player holding a reserve once reserves close.
+- The officer log never drops gives, take-backs, closes, removals or unlocks to make room: a flood of one kind only pushes out its own kind. Starting a raid twice is refused.
+- Undo win keeps the old winner and rolls on the item, for History.
+- A master looter giving a raid item to someone other than its winner is logged for everyone, once per item, and only for a player in the group.
+- A resync from the raid host never shortens your officer log.
 
 **Fairer and steadier.** A second security review, fixes for a crash and for raids that could lock players out.
 
@@ -29,7 +65,6 @@ Safer:
 - Players who roll first can no longer hold an item up by never rolling.
 - An officer who closes a roll they won themselves shows in the officer log, and only the raid host can take back a delivered win. The log keeps the newest entries.
 - Guild catalogue sharing ignores made-up drops and counts, and can no longer be silenced or flooded by one player.
-- Rolling first next raid counts only players the raid host saw in the group while the raid was on, in raids of 10 or more. A reserve alone no longer counts.
 - A party leader can no longer replace a raid you host while you are out of a raid group.
 - Pick a loot spec before saying "I want this" on spec-limited items.
 - /rlc sync can no longer be spammed to stall the raid, and a refresh sent for someone else no longer blanks your Loot tab.
@@ -43,11 +78,9 @@ Safer:
 - Items with impossible item numbers are refused.
 - A master looter's addon no longer hands out items given by hand, or items typed in by ID: it says who should get them, and the master looter decides.
 - The officer log also shows each roll an officer closed, each item marked delivered, and when the raid started and ended.
-- Dropping into the raid for a minute no longer makes you roll first next week: the addon must see you twice, at least 10 minutes apart.
 - Guild catalogue sharing: one kill can no longer report hundreds of items, and junk can no longer fill the catalogue for good.
 - A made-up version number from one player no longer shows "a newer version is out". Two players must have it.
 - A raid host can no longer grow everyone's saved data without end, or freeze their updates with a fake count.
-- Leaving the raid resets your 10 minutes, so popping in at the start and the end no longer counts as being there.
 - An officer can no longer call an item open to everyone the moment it goes up, before anyone could say they want it. Opening it that way is logged too.
 - Loot specs lock as soon as the first drop is added, even before Start raid.
 - If someone leaves during a boss fight, the addon no longer mixes up who is who in the trade window or for whispered reserves.

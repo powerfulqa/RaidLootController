@@ -61,6 +61,19 @@ jobs:
           done
           zip -r RaidLootController.zip RaidLootController/
 
+      - name: Build installers
+        # One-file installers, attached next to the zip so players get stable
+        # releases/latest/download/<name> links. The .bat carries the .ps1
+        # below its marker line; cmd wants CRLF line ends.
+        run: |
+          { cat tools/install/Install-RaidLootController.bat
+            echo '#RLCPAYLOAD#'
+            cat tools/install/Install-RaidLootController.ps1
+          } | sed 's/\r*$/\r/' > Install-RaidLootController.bat
+          test "$(grep -c '^#RLCPAYLOAD#' Install-RaidLootController.bat)" = 1
+          cp tools/install/install-raidlootcontroller.command .
+          chmod +x install-raidlootcontroller.command
+
       - name: Commit version update back to repo
         run: |
           git config user.name "github-actions[bot]"
@@ -85,6 +98,9 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3 (v3.0.3)
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
-          files: RaidLootController.zip
+          files: |
+            RaidLootController.zip
+            Install-RaidLootController.bat
+            install-raidlootcontroller.command
           body_path: release-body.md
           generate_release_notes: true

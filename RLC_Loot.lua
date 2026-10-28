@@ -16,6 +16,16 @@ local Rules = NS.Rules
 local Loot = {}
 NS.Loot = Loot
 
+-- The master looter's unit, or nil when loot is not on Master Looter.
+-- The second return says whether loot is on Master Looter.
+local function masterLooterUnit()
+    local method, partyID, raidID = C_PartyInfo.GetLootMethod()
+    if method ~= Enum.LootMethod.Masterlooter then
+        return nil, false
+    end
+    return raidID and ("raid" .. raidID) or partyID == 0 and "player" or partyID and ("party" .. partyID) or nil, true
+end
+
 -- ---- rolls -----------------------------------------------------------------
 
 -- Inventory slots an item would replace, by equip location. Two slots for
@@ -127,10 +137,25 @@ function Loot.PendingFromWindow()
     return n
 end
 
+-- Without Master Looter whoever loots a drop keeps it, so an item that is
+-- not in our bags may never reach its winner. Said once per add, never
+-- refused: the looter can still trade it.
+function Loot.WarnAdd(itemString)
+    local id = Rules.ItemIDOf(itemString)
+    local _, ml = masterLooterUnit()
+    if id and NS.IsOfficer() and not ml and C_Item.GetItemCount(id) == 0 then
+        NS.Print(
+            "%s is not in your bags and loot is not on Master Looter. Whoever looted it must trade it to the winner.",
+            NS.LinkOf(itemString)
+        )
+    end
+end
+
 function Loot.AddFromWindow()
     for _, e in ipairs(Loot.LootSlots()) do
         if not added[e.key] then
             added[e.key] = true
+            Loot.WarnAdd(e.itemString)
             NS.Act("ADD", e.itemString, e.key)
         end
     end
@@ -173,17 +198,25 @@ end
 -- Whether this client hands won items over: the master looter when loot
 -- is on Master Looter (only they can give from the loot window, and the
 -- drops are in their bags otherwise), else the raid host.
+-- Whether `unit` is the master looter's unit (false when unknown).
+local function isUnit(unit, mlUnit)
+    local same = unit and mlUnit and UnitIsUnit(unit, mlUnit) -- can be secret
+    return NS.CanRead(same) and same == true
+end
+
 function Loot.IAmGiver()
-    local method, partyID, raidID = C_PartyInfo.GetLootMethod()
-    if method == Enum.LootMethod.Masterlooter then
-        local unit = raidID and ("raid" .. raidID) or partyID == 0 and "player" or partyID and ("party" .. partyID)
-        if not unit then
-            return false
-        end
-        local same = UnitIsUnit(unit, "player") -- can be secret
-        return NS.CanRead(same) and same == true
+    local unit, ml = masterLooterUnit()
+    if ml then
+        return isUnit("player", unit)
     end
     return NS.IsHost()
+end
+
+-- Whether the canonical `name` is the master looter now. A stale roster
+-- entry may be another player, so it never is.
+function Loot.IsMasterLooter(name)
+    local r = name and NS.roster[name]
+    return r ~= nil and not r.stale and isUnit(r.unit, (masterLooterUnit())) or false
 end
 
 -- Put a win on the owed list: it goes in the trade window next time.
@@ -208,13 +241,34 @@ local byHand = {} -- loot slot -> { winner, itemString }: waiting for the master
 
 -- The master looter giving a slot from Blizzard's own menu: if it is a
 -- win given by hand and goes to its winner, confirm it like our own give.
+-- A session item given to anyone but its winner (or before it has one) is
+-- logged for the whole raid, so it shows in everyone's History.
+local function sessionItemAt(slot)
+    local S = NS.S()
+    if not S or S.phase == "ended" then
+        return
+    end
+    local src = tostring(GetLootSourceInfo(slot)) .. ":" .. slot
+    local s = NS.ItemStringOf(GetLootSlotLink(slot))
+    for _, item in pairs(S.items) do
+        if item.src == src and sameItem(s, item.itemString) then
+            return item
+        end
+    end
+end
+
 if GiveMasterLoot then
     hooksecurefunc("GiveMasterLoot", function(slot, index)
+        local raw = GetMasterLootCandidate(slot, index)
+        local name = NS.CanRead(raw) and NS.Canon(raw) or nil
         local g = byHand[slot]
-        local name = g and GetMasterLootCandidate(slot, index)
-        if g and NS.CanRead(name) and name and NS.Canon(name) == g.winner then
+        if g and name == g.winner then
             byHand[slot] = nil
             giving[slot], lastGive = g, slot
+        end
+        local item = name and sessionItemAt(slot)
+        if item and item.winner ~= name then
+            NS.Act("MLGAVE", item.key, name)
         end
     end)
 end

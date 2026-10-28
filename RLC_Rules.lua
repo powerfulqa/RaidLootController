@@ -22,8 +22,11 @@
 --   * A win on an item opened to all (a free roll, usually off-spec) does
 --     not lock the winner and does not touch their reserve.
 --   * A soft reserve made before the raid starts wins the item outright. If
---     several players reserved it, only they roll. Winning another item first
---     keeps the reserve: it pays out when it drops, as a second item.
+--     several players reserved it, only they roll (unlocked ones first). A
+--     regular who wins another item first keeps the reserve: it pays out when
+--     it drops, as a second item. Anyone else uses it up with that win.
+--   * Regulars (present for most of the last 8 raids) roll first on an item
+--     they want.
 --   * An officer can restrict an item to some classes.
 local NS = select(2, ...)
 
@@ -49,20 +52,49 @@ local LOGS = {
     deliv = true, -- marked a win delivered
     live = true, -- started the raid
     ended = true, -- ended the raid
+    void = true, -- wiped the rolls of an item (a boss pull during the roll)
+    mlgive = true, -- the master looter gave a session item to someone else
+    bench = true, -- marked a player bench for the night (counts as present)
+    unbench = true,
 }
--- Kinds v0.6.1 and older refuse as "bad LOG", and a refused op makes them
--- ask for the whole raid again. So these travel as LOG2, an op kind those
--- copies do not know: they say "newer version" once and never resync.
-Rules.NEW_LOGS = { close = true, deliv = true, live = true, ended = true }
+-- Kinds v0.6.1 does not know. They travel as LOG2: v0.6.1 answers a LOG2
+-- of an unknown kind with "newer version" once and never resyncs. A new
+-- TOP-LEVEL op kind would be worse: v0.6.1 looks for an item named by its
+-- second field, refuses it, and asks for the whole raid again. So new state
+-- rides inside LOG2 (bench / unbench set S.bench), never a new op kind.
+Rules.NEW_LOGS = {
+    close = true,
+    deliv = true,
+    live = true,
+    ended = true,
+    void = true,
+    mlgive = true,
+    bench = true,
+    unbench = true,
+}
 Rules.MAX_LOG = 200
 -- Dropped first when the log is full: an officer can make these by the
 -- hundred, and they must not push out who opened, closed or gave what.
-local CHEAP_LOGS =
-    { lock = true, unlock = true, spec = true, specs = true, cancel = true, officer = true, unofficer = true }
+local CHEAP_LOGS = { lock = true, spec = true, specs = true, officer = true, unofficer = true }
+-- Op kinds that act on an item: any other kind with no item is unknown.
+local ITEM_KINDS = {
+    ITEM = true,
+    WANT = true,
+    ROLL = true,
+    REROLL = true,
+    AWARD = true,
+    UNDO = true,
+    CANCEL = true,
+    DELIV = true,
+}
+-- Never dropped while any other entry can go: the evidence of who gave,
+-- took back, closed, wiped, removed or unlocked what.
+local KEEP_LOGS = { award = true, undo = true, close = true, void = true, mlgive = true, cancel = true, unlock = true }
 -- Players per name set (reserves, specs, wants, rolls...): a raid has 40,
 -- so a host cannot grow every client's saved data without end.
 Rules.MAX_NAMES = 200
 Rules.INTEREST_MIN = 15 -- seconds an item is up before a call can open it to everyone
+Rules.ROLL_MIN = 15 -- seconds a roll stays open before a close, unless every wanter rolled
 Rules.MAX_ITEMS = 500 -- per raid session; far above any real raid
 Rules.MAX_ID = 2147483647 -- item ids and session keys: rejects "1e999" (inf) and NaN
 
@@ -227,11 +259,28 @@ function Rules.CSVToSpecs(csv)
     return Rules.CSVToSet(csv, Rules.ValidSpec)
 end
 
--- Whether any spec in the set belongs to this class.
-local function classInSpecs(specs, classID)
+-- Every loot spec key of a class (token -> list), filled by RLC_Specs.lua.
+Rules.CLASS_SPECS = {}
+
+-- Whether the set suits this class without knowing the spec: every spec of
+-- the class must be in it, so a player without the addon (no spec on
+-- record) never rolls on more than one who has it. Without the class's
+-- list (a bare test), any spec of the class will do.
+-- any: one spec of the class is enough (a spec chosen late, see
+-- suitsNormally).
+local function classInSpecs(specs, classID, any)
     local token = classID and Rules.CLASS_TOKEN[classID]
     if not token then
         return false
+    end
+    local all = not any and Rules.CLASS_SPECS[token]
+    if all then
+        for _, key in ipairs(all) do
+            if not specs[key] then
+                return false
+            end
+        end
+        return true
     end
     local prefix = token .. "."
     for key in pairs(specs) do
@@ -410,7 +459,9 @@ function Rules.NewSession(id, host, title, t)
         order = {}, -- keys in the order they were added
         active = nil, -- key of the item being rolled for
         seq = 0,
-        dry = {}, -- name -> true: won nothing in their last raid, rolls first
+        dry = {}, -- name -> true: a regular (Rules.RegularsFrom), rolls first
+        bench = {}, -- name -> true: bench for the night, counts as present
+        lateSpec = {}, -- name -> true: first spec came after the start
         log = {}, -- officer actions, for History: { t, by, what, name, key }
     }
 end
@@ -427,14 +478,16 @@ function Rules.Suits(S, item, name, classID)
     if spec then
         return item.specs[spec] == true
     end
-    -- No spec on record (no addon): the class must suit it at least.
+    -- No spec on record (no addon): it must suit every spec of the class.
     return classInSpecs(item.specs, classID)
 end
 
 -- Whether `name` may take part in `item` at all, ignoring its state.
 function Rules.Eligible(S, item, name, classID)
     if item.restrict then
-        return item.restrict[name] == true
+        -- A tie or a roll-first pass: only these players. In a normal roll a
+        -- lock still counts, so a win elsewhere mid-roll drops them out.
+        return item.restrict[name] == true and (item.mode ~= "normal" or not S.locks[name])
     end
     return Rules.Suits(S, item, name, classID) and (item.mode == "open" or not S.locks[name])
 end
@@ -495,15 +548,18 @@ end
 --   WANT    key name 0|1
 --   ROLL    key name roll
 --   REROLL  key csv                 tie: only these roll again
---   AWARD   key name how time       locks the winner
+--   AWARD   key name how time [r] [res]  locks the winner; res = a reserve
+--                                   the win used up (an undo gives it back)
 --   CANCEL  key
 --   SPEC    name specKey            "" clears it
 --   UNDO    key                     reverses an award
 --   ITEMADD key r|s csv             appends names (r) or specs (s) to a
 --                                   list an ITEM op marked "+" (too long
 --                                   for one addon message)
---   DRY     name                    won nothing in their last raid
+--   DRY     name                    a regular: rolls first
 --   LOG     time by what name key   an officer action, shown in History
+--   LOG2    the same, for kinds v0.6.1 does not know. A bench / unbench
+--           entry also sets S.bench (bench for the night, counts as present)
 --   DELIV   key time                a won item reached its winner (trade,
 --                                   master loot, or the host won it)
 -- ITEM has a seventh field: the specs that may roll ("" = any).
@@ -545,6 +601,18 @@ function Rules.Apply(S, op)
         then
             return nil, "bad SPEC"
         end
+        -- A first spec once the raid started (or a drop was up) is marked:
+        -- an open win is then judged by class alone, so a late off-spec
+        -- report cannot make a main-spec win free.
+        S.lateSpec = S.lateSpec or {}
+        if op[3] == "" then
+            S.lateSpec[op[2]] = nil
+        elseif not S.specs[op[2]] and (S.started or next(S.items)) then
+            if not roomFor(S.lateSpec, op[2]) then
+                return nil, "bad SPEC"
+            end
+            S.lateSpec[op[2]] = true
+        end
         S.specs[op[2]] = op[3] ~= "" and op[3] or nil
         return S
     end
@@ -569,17 +637,35 @@ function Rules.Apply(S, op)
         end
         local name = Rules.ValidName(op[5]) and op[5] or nil
         local key = Rules.Int(op[6], 1, Rules.MAX_ID) and op[6] or nil
+        if op[4] == "bench" or op[4] == "unbench" then
+            -- The bench lives here, not in an op of its own: v0.6.1 asks for
+            -- the whole raid again on an op kind it does not know.
+            S.bench = S.bench or {}
+            if not name or not roomFor(S.bench, name) then
+                return nil, "bad LOG"
+            end
+            S.bench[name] = op[4] == "bench" or nil
+        end
         S.log = S.log or {}
         -- Full: the oldest entry goes, so the latest officer actions always
-        -- show. Awards and take-backs stay longest: a flood of locks or spec
-        -- changes must not hide who gave what.
+        -- show. Cheap kinds go first, then anything but KEEP_LOGS. When only
+        -- kept kinds are left, the oldest of the incoming kind (or, for a
+        -- kind that is not kept, the incoming entry itself): a flood of
+        -- unlocks or master loot reports only pushes out itself, never who
+        -- gave what.
         if #S.log >= Rules.MAX_LOG then
-            local drop = 1
+            local cheap, other, same
             for i, e in ipairs(S.log) do
                 if CHEAP_LOGS[e.what] then
-                    drop = i
+                    cheap = i
                     break
                 end
+                other = other or (not KEEP_LOGS[e.what] and i) or nil
+                same = same or (e.what == op[4] and i) or nil
+            end
+            local drop = cheap or other or same or (KEEP_LOGS[op[4]] and 1)
+            if not drop then
+                return S
             end
             table.remove(S.log, drop)
         end
@@ -638,7 +724,9 @@ function Rules.Apply(S, op)
     end
     local item = S.items[key]
     if not item then
-        return nil, "no item"
+        -- A kind this copy does not know is a newer host's: tell, never
+        -- resync (v0.6.1 asked for the raid again on every one).
+        return nil, ITEM_KINDS[kind] and "no item" or "unknown op"
     end
     if kind == "ITEM" then
         -- "done" only comes with a winner, through AWARD.
@@ -651,6 +739,12 @@ function Rules.Apply(S, op)
         -- "+": the list is long and follows in ITEMADD ops.
         item.restrict = op[6] == "+" and {} or Rules.CSVToSet(op[6])
         item.specs = op[7] == "+" and {} or Rules.CSVToSpecs(op[7])
+        -- The first list is the host's "Best for" from ADD (false = any).
+        -- Kept so emptying Who can roll cannot make a main-spec win free.
+        -- The same table: a "+" list fills both.
+        if item.suggested == nil then
+            item.suggested = item.specs or false
+        end
         if item.state == "interest" or item.state == "rolling" then
             S.active = key
         elseif S.active == key then
@@ -721,6 +815,7 @@ function Rules.Apply(S, op)
         -- Winning the reserved item uses the reserve. A snapshot marks it
         -- "r" because it replays reserves after the items.
         item.usedReserve = nil
+        item.spentRes = Rules.Int(op[7], 1, Rules.MAX_ID)
         if S.reserves[op[3]] == item.itemID or op[6] == "r" then
             if S.reserves[op[3]] == item.itemID then
                 S.reserves[op[3]] = nil
@@ -755,7 +850,14 @@ function Rules.Apply(S, op)
         if item.usedReserve and not S.reserves[winner] then
             S.reserves[winner] = item.itemID
         end
+        -- What was taken back stays on the item, for History.
+        local rolls = {}
+        for name, n in pairs(item.rolls) do
+            rolls[name] = n
+        end
+        item.undone = { winner = winner, how = item.how, rolls = rolls }
         item.state, item.winner, item.how, item.awardedAt, item.usedReserve = "pending", nil, nil, nil, nil
+        item.spentRes = nil
         item.delivered = nil
         item.mode, item.restrict, item.wants, item.rolls, item.worn = "normal", nil, {}, {}, {}
         local other = false
@@ -775,13 +877,16 @@ end
 
 -- ---- intents (host only) -------------------------------------------------
 --
--- ctx = { classOf = fn(name) -> classID|nil, now = number }
+-- ctx = { classOf = fn(name) -> classID|nil, now = number }, and optional
+-- since(key), rollingSince(key), inEncounter(), isMasterLooter(name),
+-- describe(itemString), dry().
 -- Requests anyone may make:      WANT key 0|1, RES itemID, SPEC specKey
+-- Master looter or officer:      MLGAVE key name
 -- Officer requests:              ADD itemString, START key, CALL key, DELIV key,
 --                                CLOSE key, OPEN key, SPECS key csv,
---                                UNDO key, SETSPEC name spec,
+--                                UNDO key, SETSPEC name spec, VOID key,
 --                                AWARD key name, CANCEL key, LOCK name 0|1,
---                                PHASE live|ended
+--                                BENCH name 0|1, PHASE live|ended
 -- Host only:                     OFF name 0|1, ROLLSEEN name roll low high
 --
 -- Returns ops, note - or nil, reason. `note` is a short line worth showing
@@ -826,28 +931,58 @@ local function addItemOps(ops, item, state, mode, mask, restrict, specs)
     return ops
 end
 
+-- Would this item suit `name` in normal mode, locks aside? Judged on the
+-- specs from ADD and the current ones together, so an officer emptying Who
+-- can roll cannot turn a main-spec win free. A spec first set after the
+-- start is judged by class alone.
+local function suitsNormally(S, item, name, classID)
+    local specs = item.specs
+    if specs and item.suggested == false then
+        specs = nil -- ADD said any spec
+    elseif specs and item.suggested then
+        specs = {}
+        for k in pairs(item.suggested) do
+            specs[k] = true
+        end
+        for k in pairs(item.specs) do
+            specs[k] = true
+        end
+    end
+    if specs and S.lateSpec and S.lateSpec[name] and classInSpecs(specs, classID, true) then
+        specs = nil
+    end
+    return Rules.Suits(S, { classMask = item.classMask, mode = "normal", specs = specs }, name, classID)
+end
+
 -- Would `name` take part in this item in normal mode, unlocked? A win on
 -- an open item by such a player counts as their item: no free first win
 -- for staying quiet on I want this.
 local function normallyEligible(S, item, name, classID)
-    local view = { classMask = item.classMask, mode = "normal", specs = item.specs }
-    return Rules.Eligible(S, view, name, classID)
+    return not S.locks[name] and suitsNormally(S, item, name, classID)
+end
+
+-- Whether a roll is open. Eligibility (locks, specs, Who can roll) is
+-- frozen until it closes: nobody can be dropped from a roll once it is in.
+local function rolling(S)
+    local cur = S.active and S.items[S.active]
+    return cur ~= nil and cur.state == "rolling"
+end
+
+-- The AWARD op, and a RES op when the win uses up a reserve: a reserve pays
+-- out as a second item only to a regular. AWARD carries that reserve so an
+-- undo can give it back.
+local function awardOps(S, item, name, how, now)
+    local res = S.reserves[name]
+    if how ~= "open" and res and res ~= item.itemID and not (S.dry and S.dry[name]) then
+        return { "AWARD", item.key, name, how, now, "", res }, { "RES", name, 0 }
+    end
+    return { "AWARD", item.key, name, how, now }
 end
 
 -- Whether any item is on the list: reserves close at the first one, so
 -- nobody reserves a drop after seeing it (an added item is seen at once).
 local function anyAdded(S)
     return next(S.items) ~= nil
-end
-
--- Whether `name` has asked for or rolled on any item this raid.
-local function hasActed(S, name)
-    for _, it in pairs(S.items) do
-        if it.wants[name] or it.rolls[name] or it.winner == name then
-            return true
-        end
-    end
-    return false
 end
 
 local function logOp(now, by, what, name, key)
@@ -917,10 +1052,16 @@ function Rules.Intent(S, who, req, ctx)
         if not Rules.SpecFits(spec, classOf(who)) then
             return nil, "Not a spec."
         end
-        if (S.phase ~= "reserve" or anyAdded(S)) and (S.specs[who] or hasActed(S, who)) and S.specs[who] ~= spec then
-            -- A late first report counts only before asking for anything:
-            -- no spec on record lets you ask for every spec's gear.
-            return nil, "Specs are locked once the raid starts. Ask an officer to change yours."
+        if (S.phase ~= "reserve" or anyAdded(S)) and S.specs[who] ~= spec then
+            -- A late first report counts between items: not mid-roll, nor on
+            -- the item you already asked for or rolled on. It is marked late
+            -- (S.lateSpec), so it cannot make an earlier win free.
+            local cur = S.active and S.items[S.active]
+            if S.specs[who] or (cur and (cur.wants[who] or cur.rolls[who])) then
+                return nil, "Specs are locked once the raid starts. Ask an officer to change yours."
+            elseif rolling(S) then
+                return nil, "Wait until the roll is closed."
+            end
         end
         if S.specs[who] == spec then
             return {}
@@ -964,6 +1105,30 @@ function Rules.Intent(S, who, req, ctx)
         return { { "ROLL", item.key, name, roll } }
     end
 
+    -- The master looter (or an officer) saw a session item given from the
+    -- game's own loot menu to someone other than its winner. Logged once.
+    if kind == "MLGAVE" then
+        if not Rules.IsOfficer(S, who) and not (ctx.isMasterLooter and ctx.isMasterLooter(who)) then
+            return nil, "Only the master looter can report that."
+        end
+        local item, name = S.items[req[2]], req[3]
+        if not item then
+            return nil, "No such item."
+        elseif not Rules.ValidName(name) or not classOf(name) then
+            return nil, "That player is not in the group."
+        elseif name == item.winner then
+            return {}
+        end
+        -- One report per item: a drop is given once, and a flood of names
+        -- must not fill the log.
+        for _, e in ipairs(S.log or {}) do
+            if e.what == "mlgive" and e.key == item.key then
+                return {}
+            end
+        end
+        return { logOp(now, who, "mlgive", name, item.key) }
+    end
+
     -- Officers.
     if not Rules.IsOfficer(S, who) then
         return nil, "Only the raid host or an officer can do that."
@@ -985,32 +1150,59 @@ function Rules.Intent(S, who, req, ctx)
         local key = tostring(S.seq + 1)
         local ops = { { "ADD", key, req[2], src } }
         -- The host works out which classes and specs suit it.
-        local mask, specs = 0, ""
+        -- Always sent when known, even "any spec": its first ITEM op is what
+        -- the item stays suggested for (item.suggested).
         if ctx.describe then
-            mask, specs = ctx.describe(req[2])
-        end
-        if (mask or 0) ~= 0 or (specs or "") ~= "" then
-            ops[2] = { "ITEM", key, "pending", "normal", mask or 0, "", specs or "" }
+            local mask, specs = ctx.describe(req[2])
+            addItemOps(ops, { key = key }, "pending", "normal", mask or 0, nil, Rules.CSVToSpecs(specs) or {})
         end
         return ops
     elseif kind == "SETSPEC" then
         if not Rules.ValidName(req[2]) or (req[3] ~= "" and not Rules.SpecFits(req[3], classOf(req[2]))) then
             return nil, "Bad spec."
         end
+        if rolling(S) then
+            return nil, "Wait until the roll is closed."
+        end
+        if S.reserves[req[2]] and (S.phase ~= "reserve" or anyAdded(S)) and S.specs[req[2]] ~= req[3] then
+            -- START checks a reserve against the spec: a change now would
+            -- drop it without a word.
+            return nil, "That player has a reserve. Their spec stays until it pays out."
+        end
         return { { "SPEC", req[2], req[3] }, logOp(now, who, "spec", req[2]) }
     elseif kind == "LOCK" then
         if not Rules.ValidName(req[2]) then
             return nil, "No such player."
         end
+        if rolling(S) then
+            return nil, "Wait until the roll is closed."
+        end
         local on = bool(req[3])
-        return { { "LOCK", req[2], on and 1 or 0 }, logOp(now, who, on and "lock" or "unlock", req[2]) }
+        if (S.locks[req[2]] == true) == on then
+            return {} -- nothing changed: no log line to flood with
+        end
+        return { { "LOCK", req[2], on and 1 or 0 }, logOp(now, who, on and "lock" or "unlock", req[2], S.active) }
+    elseif kind == "BENCH" then
+        if not Rules.ValidName(req[2]) then
+            return nil, "No such player."
+        elseif S.phase == "ended" then
+            return nil, "The raid has ended."
+        end
+        local on = bool(req[3])
+        if (S.bench and S.bench[req[2]] == true) == on then
+            return {}
+        end
+        return { logOp(now, who, on and "bench" or "unbench", req[2]) }
     elseif kind == "PHASE" then
         if req[2] ~= "live" and req[2] ~= "ended" then
             return nil, "Bad phase."
+        elseif req[2] == S.phase then
+            -- Each start or end is a log line: repeats would flood the log.
+            return nil, req[2] == "live" and "The raid has already started." or "The raid has already ended."
         end
         local ops = audit({ { "PHASE", req[2], now } }, now, who, req[2])
-        -- Raid start: players who won nothing in their last raid roll first
-        -- tonight (ctx.dry comes from the host's saved history).
+        -- Raid start: regulars roll first tonight (ctx.dry comes from the
+        -- host's saved history, Rules.RegularsFrom).
         if req[2] == "live" and not S.started and ctx.dry then
             for _, name in ipairs(ctx.dry()) do
                 if Rules.ValidName(name) then
@@ -1035,15 +1227,20 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "Finish the current item first."
         end
         -- Only reservers who are here: a reserve does not pay out to
-        -- someone who left the group, or whose loot spec changed since.
+        -- someone who left the group, or whose loot spec changed since. Nor
+        -- as a second item to someone who is not a regular.
         local reservers, n = {}, 0
         for name in pairs((Rules.Reservers(S, item.itemID))) do
-            if classOf(name) and Rules.Suits(S, item, name, classOf(name)) then
+            if
+                classOf(name)
+                and Rules.Suits(S, item, name, classOf(name))
+                and (not S.locks[name] or (S.dry and S.dry[name]))
+            then
                 reservers[name], n = true, n + 1
             end
         end
         if n > 0 then
-            local ops = addItemOps({}, item, "interest", "reserve", 0, reservers)
+            local ops = addItemOps({}, item, "interest", "reserve", item.classMask, reservers)
             for name in pairs(reservers) do
                 ops[#ops + 1] = { "WANT", item.key, name, 1 }
             end
@@ -1054,14 +1251,27 @@ function Rules.Intent(S, who, req, ctx)
         if st ~= "interest" then
             return nil, "Rolls can only be called on an item that is open for interest."
         end
+        if ctx.inEncounter and ctx.inEncounter() then
+            -- Roll lines can't be read during a boss fight.
+            return nil, "Wait for the fight to end."
+        end
         if item.mode == "reserve" then
-            -- Reservers still here. One: nothing to roll for, it is theirs.
-            -- None (all left): the item goes to normal interest.
-            local here, only, n = {}, nil, 0
+            -- Reservers still here, the ones without an item first (a
+            -- regular's reserve can pay out as a second item, but not ahead
+            -- of a reserver with none). One: nothing to roll for, it is
+            -- theirs. None (all left): the item goes to normal interest.
+            local here, free = {}, {}
             for name in pairs(item.restrict or {}) do
-                if classOf(name) then
-                    here[name], only, n = true, name, n + 1
+                -- Still theirs: a win since may have used the reserve up.
+                if classOf(name) and S.reserves[name] == item.itemID then
+                    here[name] = true
+                    free[name] = not S.locks[name] or nil
                 end
+            end
+            here = next(free) and free or here
+            local only, n = nil, 0
+            for name in pairs(here) do
+                only, n = name, n + 1
             end
             if n == 1 then
                 return { { "AWARD", item.key, only, "reserve", now } }
@@ -1091,11 +1301,9 @@ function Rules.Intent(S, who, req, ctx)
                 ops[#ops + 1] = logOp(now, who, "open", nil, item.key)
                 return ops, "Nobody without an item wants this. It is now open to everyone."
             end
-            -- Fairness over few raid nights: players who won nothing in
-            -- their last raid roll first when they want it.
+            -- Time given counts: regulars roll first when they want it.
             if next(dry) then
-                return addItemOps({}, item, "rolling", "normal", item.classMask, dry),
-                    "Players with no loot last raid roll first."
+                return addItemOps({}, item, "rolling", "normal", item.classMask, dry), "Regulars roll first."
             end
         end
         return addItemOps({}, item, "rolling", item.mode, item.classMask, item.restrict), "Roll now!"
@@ -1103,11 +1311,31 @@ function Rules.Intent(S, who, req, ctx)
         if st ~= "rolling" then
             return nil, "Nobody is rolling for that item."
         end
+        -- Give everyone time to roll: closing the second a friend rolls high
+        -- would shut out the rest. Only a roll limited to named players
+        -- (reservers, regulars, a tie) may close early, once all of them
+        -- rolled: anyone in the group may roll on any other.
+        local since = ctx.rollingSince and ctx.rollingSince(item.key)
+        if since and now - since < Rules.ROLL_MIN then
+            local early = item.restrict ~= nil and next(item.restrict) ~= nil
+            for name in pairs(item.restrict or {}) do
+                if not item.rolls[name] and classOf(name) and Rules.Eligible(S, item, name, classOf(name)) then
+                    early = false
+                end
+            end
+            if not early then
+                return nil, "Give everyone a few seconds to roll."
+            end
+        end
         -- Only rolls from players still here and still allowed count: one
-        -- who left, or won another item mid-roll, drops out.
+        -- who left, or (in a normal roll) won another item mid-roll, drops out.
         local valid = {}
         for name, n in pairs(item.rolls) do
-            if classOf(name) and Rules.Eligible(S, item, name, classOf(name)) then
+            if
+                classOf(name)
+                and Rules.Eligible(S, item, name, classOf(name))
+                and (item.mode ~= "reserve" or S.reserves[name] == item.itemID)
+            then
                 valid[name] = n
             end
         end
@@ -1117,20 +1345,19 @@ function Rules.Intent(S, who, req, ctx)
             if how == "open" and normallyEligible(S, item, winner, classOf(winner)) then
                 how = "roll" -- could have asked normally: it counts as their item
             end
-            local ops = { { "AWARD", item.key, winner, how, now } }
+            local ops = { awardOps(S, item, winner, how, now) }
             -- Who closed it, and when: an officer closing the moment a friend
             -- rolls high shows in History. Their own win shows as an award.
             if winner == who then
-                ops[2] = logOp(now, who, "award", winner, item.key)
-                return ops
+                return audit(ops, now, who, "award", winner, item.key)
             end
             return audit(ops, now, who, "close", winner, item.key)
         elseif tied then
             return { { "REROLL", item.key, Rules.SetToCSV(tied) } },
                 "Tie on " .. best .. ". The tied players roll again."
         end
-        -- Only players who won nothing last raid may roll and none has: one
-        -- of them could otherwise hold the item up by asking and never rolling.
+        -- Only regulars may roll and none has: one of them could otherwise
+        -- hold the item up by asking and never rolling.
         local dryOnly = item.mode == "normal" and item.restrict and next(item.restrict) ~= nil
         for name in pairs(item.restrict or {}) do
             dryOnly = dryOnly and S.dry and S.dry[name]
@@ -1154,7 +1381,7 @@ function Rules.Intent(S, who, req, ctx)
         end
         if item.mode == "normal" then
             for name in pairs(item.wants) do
-                if classOf(name) and Rules.Eligible(S, item, name, classOf(name)) then
+                if classOf(name) and normallyEligible(S, item, name, classOf(name)) then
                     return nil, "Someone without an item wants this. Roll it normally, or give it by hand."
                 end
             end
@@ -1169,6 +1396,9 @@ function Rules.Intent(S, who, req, ctx)
     elseif kind == "AWARD" then
         if st == "done" or st == "cancelled" then
             return nil, "That item is finished."
+        elseif rolling(S) and item.key ~= S.active then
+            -- A win locks its winner: not while another roll is frozen.
+            return nil, "Wait until the roll is closed."
         end
         local name = req[3]
         if not Rules.ValidName(name) or not classOf(name) then
@@ -1178,7 +1408,7 @@ function Rules.Intent(S, who, req, ctx)
         if item.mode == "open" and not normallyEligible(S, item, name, classOf(name)) then
             how = "open" -- an open item given to a locked or off-spec player stays free
         end
-        return { { "AWARD", item.key, name, how, now }, logOp(now, who, "award", name, item.key) }
+        return audit({ awardOps(S, item, name, how, now) }, now, who, "award", name, item.key)
     elseif kind == "CANCEL" then
         if st == "done" or st == "cancelled" then
             return nil, "That item is finished."
@@ -1187,6 +1417,8 @@ function Rules.Intent(S, who, req, ctx)
     elseif kind == "SPECS" then
         if st == "done" or st == "cancelled" then
             return nil, "That item is finished."
+        elseif rolling(S) then
+            return nil, "Wait until the roll is closed."
         end
         local specs = Rules.CSVToSpecs(req[3]) -- nil = any spec
         local ops = addItemOps({}, item, st, item.mode, item.classMask, item.restrict, specs or {})
@@ -1197,9 +1429,44 @@ function Rules.Intent(S, who, req, ctx)
             return nil, "Only a won item can be taken back."
         elseif item.delivered and who ~= S.host then
             return nil, "That item was delivered. Only the raid host can take it back."
+        elseif rolling(S) then
+            -- An undo unlocks its winner (or locks one): not mid-roll.
+            return nil, "Wait until the roll is closed."
         end
-        return { { "UNDO", item.key }, logOp(now, who, "undo", item.winner, item.key) },
-            "Win taken back. This item is up again."
+        local winner = item.winner
+        local ops = { { "UNDO", item.key } }
+        if item.spentRes and not S.reserves[winner] then
+            ops[#ops + 1] = { "RES", winner, item.spentRes } -- the reserve this win used up
+        end
+        -- A free win they could have asked for normally becomes their item:
+        -- taking back the win that locked them must not leave them with an
+        -- item and no lock.
+        for _, it in pairs(S.items) do
+            if
+                it ~= item
+                and it.state == "done"
+                and it.winner == winner
+                and it.how == "open"
+                and suitsNormally(S, it, winner, classOf(winner))
+            then
+                ops[#ops + 1] = { "LOCK", winner, 1 }
+                break
+            end
+        end
+        return audit(ops, now, who, "undo", winner, item.key), "Win taken back. This item is up again."
+    elseif kind == "VOID" then
+        -- Wipe every roll: everyone rolls again. REROLL wipes, ITEM puts Who
+        -- may roll back, so older copies follow it too.
+        if st ~= "rolling" then
+            return nil, "Nobody is rolling for that item."
+        end
+        local first = next(item.rolls)
+        if not first then
+            return {}
+        end
+        local ops =
+            addItemOps({ { "REROLL", item.key, first } }, item, "rolling", item.mode, item.classMask, item.restrict)
+        return audit(ops, now, who, "void", nil, item.key), "Rolls wiped. Everyone rolls again."
     elseif kind == "DELIV" then
         if st ~= "done" then
             return nil, "Only a won item can be delivered."
@@ -1313,12 +1580,15 @@ Rules.ValidVersion = function(v)
     return type(v) == "string" and #v <= 16 and versionParts(v) ~= nil
 end
 
--- Players who won nothing (free rolls aside) in the most recent started,
--- trusted raid in `history` (saved sessions by id), other than currentID.
--- They roll first tonight. Being "in" a raid means this client saw them in
--- the group while it was live (rec.att, kept locally, never sent). Older
--- raids without att fall back to who wanted or rolled.
-Rules.MIN_ATTEND = 10
+-- ---- attendance and regulars ----------------------------------------------
+-- A saved raid's attendance is kept locally, never sent: rec.att[name] =
+-- seconds this client saw name in the group while the raid was live (true
+-- in older records: all of it), rec.attSpan = seconds the raid was live,
+-- rec.inst = the raid instance, rec.bench = players benched that night.
+Rules.MIN_ATTEND = 10 -- players present for a raid to count at all
+Rules.ATTEND_SHARE = 0.75 -- share of the raid you must be there for
+Rules.REGULAR_WINDOW, Rules.REGULAR_SHARE = 8, 0.75 -- in 75% of the last 8 raids
+Rules.NIGHT = 12 * 3600 -- raids this close together in one instance are one night
 
 local function count(set)
     local n = 0
@@ -1328,56 +1598,130 @@ local function count(set)
     return n
 end
 
-function Rules.DryFrom(history, currentID)
-    local last
+-- Whether `name` was there for raid `rec`. Older raids without att fall
+-- back to who wanted or rolled: a spec or a reserve alone does not count,
+-- both can be made before the raid.
+function Rules.Present(rec, name)
+    if rec.bench and rec.bench[name] then
+        return true
+    elseif not rec.att then
+        for _, it in pairs(rec.items or {}) do
+            if (it.wants and it.wants[name]) or (it.rolls and it.rolls[name]) then
+                return true
+            end
+        end
+        return false
+    end
+    local t = rec.att[name]
+    return t == true or (type(t) == "number" and rec.attSpan ~= nil and t >= Rules.ATTEND_SHARE * rec.attSpan)
+end
+
+-- Who was there for `rec`, bench included, and apart from it who was there
+-- in person: only they count toward MIN_ATTEND (a host could bench a list
+-- of alts to make a small party count).
+local function presentSet(rec)
+    local real, plain = {}, { att = rec.att, attSpan = rec.attSpan, items = rec.items }
+    local names = { rec.att or {} }
+    for _, it in pairs(rec.att and {} or rec.items or {}) do
+        names[#names + 1] = it.wants or {}
+        names[#names + 1] = it.rolls or {}
+    end
+    for _, set in ipairs(names) do
+        for name in pairs(set) do
+            real[name] = real[name] or Rules.Present(plain, name) or nil
+        end
+    end
+    local out = {}
+    for _, set in ipairs({ real, rec.bench or {} }) do
+        for name in pairs(set) do
+            out[name] = true
+        end
+    end
+    return out, real
+end
+
+-- Regulars: present in at least REGULAR_SHARE of the last REGULAR_WINDOW
+-- raids in `history` (saved sessions by id), other than currentID. They
+-- roll first tonight. With `inst`, only raids in that instance count (or
+-- older ones that never recorded it). Sorted names.
+function Rules.RegularsFrom(history, currentID, inst)
+    local raids = {}
     for id, rec in pairs(history or {}) do
         -- An untrusted raid (hosted by someone who was not the group leader,
-        -- seen from another client) could be made up to roll first. So could
-        -- a small party: a raid needs MIN_ATTEND players seen.
+        -- seen from another client) could be made up to put friends first.
         if
             id ~= currentID
             and rec.started
             and not rec.untrusted
-            and (not rec.att or count(rec.att) >= Rules.MIN_ATTEND)
-            and (not last or (rec.created or 0) > (last.created or 0))
+            and (not inst or rec.inst == inst or (rec.inst == nil and rec.attSpan == nil))
         then
-            last = rec
+            local seen, real = presentSet(rec)
+            raids[#raids + 1] = { rec = rec, seen = seen, real = real }
         end
     end
-    if not last then
-        return {}
-    end
-    -- Without att, seen = took part in the loot (a want or roll). A spec or
-    -- a reserve alone does not count: both can be made before the raid,
-    -- so joining and leaving would put you first next week.
-    local seen, won = {}, {}
-    for name in pairs(last.att or {}) do
-        seen[name] = true
-    end
-    for _, it in pairs(last.att and {} or last.items or {}) do
-        for name in pairs(it.wants or {}) do
-            seen[name] = true
+    table.sort(raids, function(x, y)
+        return (x.rec.created or 0) < (y.rec.created or 0)
+    end)
+    -- End raid + New raid in one evening is one night, not two: raids within
+    -- NIGHT of the night's first start, in one instance.
+    local all = {}
+    for _, r in ipairs(raids) do
+        local last, started = all[#all], tonumber(r.rec.started) or 0
+        if not (last and r.rec.inst == last.inst and started - last.started <= Rules.NIGHT) then
+            last = { inst = r.rec.inst, started = started, seen = {}, real = {} }
+            all[#all + 1] = last
         end
-        for name in pairs(it.rolls or {}) do
-            seen[name] = true
+        for _, f in ipairs({ "seen", "real" }) do
+            for name in pairs(r[f]) do
+                last[f][name] = true
+            end
         end
     end
-    for _, it in pairs(last.items or {}) do
-        if it.state == "done" and it.winner and it.how ~= "open" then
-            won[it.winner] = true
+    -- A small party does not count: a night needs MIN_ATTEND players there
+    -- in person. The newest REGULAR_WINDOW nights that count.
+    local nights = {}
+    for i = #all, 1, -1 do
+        if #nights >= Rules.REGULAR_WINDOW then
+            break
+        elseif count(all[i].real) >= Rules.MIN_ATTEND then
+            nights[#nights + 1] = all[i]
+        end
+    end
+    local times, need = {}, math.ceil(Rules.REGULAR_SHARE * #nights)
+    for _, night in ipairs(nights) do
+        for name in pairs(night.seen) do
+            times[name] = (times[name] or 0) + 1
         end
     end
     local out = {}
-    for name in pairs(seen) do
-        if not won[name] then
+    for name, n in pairs(times) do
+        if n >= need then
             out[#out + 1] = name
         end
     end
     table.sort(out)
     return out
 end
+Rules.DryFrom = Rules.RegularsFrom -- the old name, for one release
 
 -- ---- snapshot -------------------------------------------------------------
+
+local function sameSet(a, b)
+    if not a or not b then
+        return not a and not b
+    end
+    for k in pairs(a) do
+        if not b[k] then
+            return false
+        end
+    end
+    for k in pairs(b) do
+        if not a[k] then
+            return false
+        end
+    end
+    return true
+end
 
 -- Ops that rebuild S from nothing. Sent to a player who reloads or joins
 -- late. Locks go LAST and are sent for every past winner too, because each
@@ -1385,6 +1729,14 @@ end
 -- since.
 function Rules.Snapshot(S)
     local ops = { { "NEW", S.id, S.host, S.title, S.created } }
+    -- Specs before the start, except those first set later (S.lateSpec):
+    -- they follow the items, so the replay marks them late again.
+    local late = S.lateSpec or {}
+    for name, spec in pairs(S.specs) do
+        if not late[name] then
+            ops[#ops + 1] = { "SPEC", name, spec }
+        end
+    end
     if S.started then
         ops[#ops + 1] = { "PHASE", "live", S.started }
     end
@@ -1394,9 +1746,6 @@ function Rules.Snapshot(S)
     for name in pairs(S.officers) do
         ops[#ops + 1] = { "OFF", name, 1 }
     end
-    for name, spec in pairs(S.specs) do
-        ops[#ops + 1] = { "SPEC", name, spec }
-    end
     local lockNames = {}
     for name in pairs(S.locks) do
         lockNames[name] = true
@@ -1404,7 +1753,25 @@ function Rules.Snapshot(S)
     for _, key in ipairs(S.order) do
         local item = S.items[key]
         ops[#ops + 1] = { "ADD", key, item.itemString, item.src }
-        if item.state ~= "pending" or item.classMask ~= 0 or item.mode ~= "normal" or item.specs then
+        if item.suggested ~= nil and not sameSet(item.suggested, item.specs) then
+            addItemOps(ops, item, "pending", "normal", item.classMask, nil, item.suggested or {})
+        end
+        local u = item.undone
+        if u then -- the win taken back, replayed and taken back again
+            for name, n in pairs(u.rolls) do
+                ops[#ops + 1] = { "ROLL", key, name, n }
+            end
+            ops[#ops + 1] = { "AWARD", key, u.winner, u.how, 0 }
+            ops[#ops + 1] = { "UNDO", key }
+            lockNames[u.winner] = true
+        end
+        if
+            item.state ~= "pending"
+            or item.classMask ~= 0
+            or item.mode ~= "normal"
+            or item.specs
+            or item.suggested ~= nil
+        then
             -- Finished items replay as their last live state, then AWARD or
             -- CANCEL closes them, exactly as they happened.
             local st = (item.state == "done" or item.state == "cancelled") and "rolling" or item.state
@@ -1417,7 +1784,15 @@ function Rules.Snapshot(S)
             ops[#ops + 1] = { "ROLL", key, name, n }
         end
         if item.state == "done" then
-            ops[#ops + 1] = { "AWARD", key, item.winner, item.how, item.awardedAt or 0, item.usedReserve and "r" or "" }
+            ops[#ops + 1] = {
+                "AWARD",
+                key,
+                item.winner,
+                item.how,
+                item.awardedAt or 0,
+                item.usedReserve and "r" or "",
+                item.spentRes,
+            }
             if item.delivered then
                 ops[#ops + 1] = { "DELIV", key, item.delivered }
             end
@@ -1425,6 +1800,9 @@ function Rules.Snapshot(S)
         elseif item.state == "cancelled" then
             ops[#ops + 1] = { "CANCEL", key }
         end
+    end
+    for name in pairs(late) do
+        ops[#ops + 1] = { "SPEC", name, S.specs[name] }
     end
     for name in pairs(lockNames) do
         ops[#ops + 1] = { "LOCK", name, S.locks[name] and 1 or 0 }
@@ -1437,8 +1815,24 @@ function Rules.Snapshot(S)
     for name in pairs(S.dry or {}) do
         ops[#ops + 1] = { "DRY", name }
     end
+    -- The log replays the bench. One whose entry a full log dropped is
+    -- told again after it.
+    local benched = {}
     for _, e in ipairs(S.log or {}) do
         ops[#ops + 1] = logOp(e.t, e.by, e.what, e.name, e.key)
+        if e.what == "bench" or e.what == "unbench" then
+            benched[e.name] = e.what == "bench"
+        end
+    end
+    for name, on in pairs(benched) do
+        if on and not (S.bench and S.bench[name]) then
+            ops[#ops + 1] = logOp(S.created, S.host, "unbench", name)
+        end
+    end
+    for name in pairs(S.bench or {}) do
+        if not benched[name] then
+            ops[#ops + 1] = logOp(S.created, S.host, "bench", name)
+        end
     end
     -- A finished item replayed after the active one would have cleared
     -- `active` on its AWARD, so name the active item again last.

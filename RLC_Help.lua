@@ -14,26 +14,51 @@ local R = "|r"
 local ENTRIES = {
     { section = "start", title = "Getting started" },
     {
-        q = "What does this addon do?",
-        a = "It shares out raid loot fairly, without DKP. Everyone gets one item before anyone gets two. "
-            .. "You can reserve an item before the raid, rolls use the game's own /roll so nobody can fake one, "
-            .. "and every raid is saved in History. The Catalogue lists everything seen dropping, boss by boss.",
+        q = "How do I install it?",
+        a = "Download the installer from the addon's GitHub releases page: Install-RaidLootController.bat "
+            .. "on Windows, install-raidlootcontroller.command on Mac or Linux. Run it. "
+            .. "It finds WoW: Forever and puts the addon in place.\n\n"
+            .. 'If Windows asks "Are you sure you want to run this software?", click Run. '
+            .. "If it needs permission for the game folder, press Enter, then Yes. "
+            .. "If it can't find the game, it asks for the game folder.\n\n"
+            .. "You can also unzip RaidLootController.zip into Interface\\AddOns by hand.",
     },
     {
-        q = "How does a raid night go?",
-        a = "1) The raid leader opens the Raid tab and clicks New raid.\n"
-            .. "2) Everyone reserves one item (optional) and checks their spec on the Raid tab.\n"
-            .. "3) The raid leader clicks Start raid. Reserves and specs are now locked.\n"
-            .. "4) A boss dies. The master looter adds the loot, and the item comes up on the Loot tab.\n"
-            .. "5) Click I want this if you want it. When rolls are called, click Roll.\n"
-            .. "6) The highest roll wins. The winner gets the item by master loot or trade.",
-        tab = "raid",
+        q = "What do I click in the raid?",
+        a = "Type /rlc or click the minimap button to open the window. Then:\n"
+            .. '- Read the "Next:" line at the top. It says what to do now.\n'
+            .. "- Click the glowing button. It is always the next thing for you to click.\n\n"
+            .. "That is all most raiders need. The rest of this Help is for when you want to know why.",
+    },
+    {
+        q = "How do I update it?",
+        a = "Run the same installer again. It replaces the old version and keeps your settings and "
+            .. "loot history. If the game is open, type /reload afterwards.\n\n"
+            .. "The addon tells you in chat when someone in your guild or group has a newer version.",
+    },
+    {
+        q = "What does this addon do?",
+        a = "It shares out raid loot fairly, without DKP. Everyone gets one item before anyone gets two, "
+            .. "and players who come most weeks roll first. "
+            .. "You can reserve an item before the raid, rolls use the game's own /roll so nobody can fake one, "
+            .. "and every raid is saved in History. The Catalogue lists everything seen dropping, boss by boss.",
     },
     {
         q = "Does everyone need the addon?",
         a = "It works best if they do. Players without it can still type /roll and their rolls count, "
             .. "and they can reserve by whispering the raid host: !rlc reserve, then shift-click the item "
             .. "(or type its item ID). They can't click I want this or report their spec.",
+    },
+    {
+        q = "How does a raid night go?",
+        a = "1) The raid leader opens the Raid tab and clicks New raid.\n"
+            .. "2) Everyone reserves one item (optional) and checks their spec on the Raid tab.\n"
+            .. "3) The raid leader clicks Start raid, or the first boss pull starts it. "
+            .. "Reserves and specs are now locked.\n"
+            .. "4) A boss dies. The master looter adds the loot, and the item comes up on the Loot tab.\n"
+            .. "5) Click I want this if you want it. When rolls are called, click Roll.\n"
+            .. "6) The highest roll wins. The winner gets the item by master loot or trade.",
+        tab = "raid",
     },
 
     { section = "rolling", title = "Rolling for loot" },
@@ -52,11 +77,12 @@ local ENTRIES = {
         tab = "loot",
     },
     {
-        q = "Why is a button glowing?",
-        a = "A glowing button is the next thing you can click for the item that is up now: "
-            .. "I want this while officers ask who wants it, then Roll once rolls are called. "
-            .. "The minimap button glows too, in case you closed the window. "
-            .. "The glow stops once you click, or if you can't roll for that item.",
+        q = 'Why is a button glowing? What is the "Next:" line?',
+        a = "A glowing button is the next thing you can click. For raiders that is I want this, then Roll. "
+            .. "Officers and the raid host get a glowing button too: New raid, Start raid, Add from loot, "
+            .. "Start, Call roll, Close roll, whatever comes next.\n\n"
+            .. 'The "Next:" line at the top of the window says the same in words. '
+            .. "The minimap button glows too, in case you closed the window.",
         tab = "loot",
     },
     {
@@ -66,6 +92,7 @@ local ENTRIES = {
             .. "- You already won an item this raid. You can roll again if nobody without an item wants it.\n"
             .. "- The item is not for your spec (see Best for).\n"
             .. "- Someone reserved it, so only the players who reserved it roll.\n"
+            .. "- Regulars roll first, and you are not one yet.\n"
             .. "- It was a tie, so only the tied players roll again.",
         tab = "loot",
     },
@@ -88,24 +115,49 @@ local ENTRIES = {
         tab = "loot",
     },
     {
-        q = 'What does "no loot last raid" mean?',
-        a = "You were in the last raid and won nothing there (free rolls aside). "
-            .. "Tonight, when you want an item that suits you, only players with no loot last raid "
-            .. "roll on it first. If none of them want it, everyone rolls as usual. "
-            .. "If none of them roll, the officer's Close opens the roll to everyone who wants it. "
-            .. "It keeps loot moving when raid nights are few.\n\n"
-            .. "Only raids of 10 or more count, and only if the raid host's addon saw you in the group "
-            .. "while the raid was on, at least 10 minutes apart. A reserve alone does not count as being there.",
-        tab = "loot",
-    },
-    {
         q = "Does typing /roll in chat count?",
         a = "Yes, while rolls are open and only for 1-100. The Roll button does the same thing. "
             .. "A second roll from the same player is ignored.",
     },
     {
         q = "What happens on a tie?",
-        a = "Only the tied players roll again. Everyone else's rolls are cleared, so a lower roll can't sneak in.",
+        a = "Only the tied players roll again. Everyone else's rolls are cleared, so a lower roll can't sneak in. "
+            .. "A tied player who already has an item can't win a second one this way.",
+    },
+    {
+        q = "A boss was pulled while we were rolling.",
+        a = "The game can hide rolls during a boss fight. So when the fight ends, the roll is wiped "
+            .. "and everyone rolls again. Officers can't call a roll during a boss fight.",
+    },
+
+    { section = "regulars", title = "Regulars and attendance" },
+    {
+        q = "Who are the regulars? Why do they roll first?",
+        a = "A regular came to at least 3 of every 4 of the guild's recent raids: "
+            .. "75% of the last 8 raids in this instance. When a regular wants an item that suits them, "
+            .. "only the regulars who want it roll first. If none of them want it, everyone rolls as usual.\n\n"
+            .. "It rewards turning up, not points. Winning loot never stops you being a regular.\n\n"
+            .. "Only nights with 10 or more players in the group count (bench does not make up the 10). "
+            .. "Raids within 12 hours of the night's first raid count as one night. "
+            .. "The Raid tab lists tonight's regulars.",
+        tab = "raid",
+    },
+    {
+        q = "How does the addon know I was there?",
+        a = "The raid host's addon checks the group every minute while the raid is on. "
+            .. "You count as at a raid if you were in the group and online for 75% of that time. "
+            .. "Dropping in for 10 minutes does not count. A reserve alone does not count either.\n\n"
+            .. "Your attendance is on the Stats tab.",
+        tab = "stats",
+    },
+    {
+        q = "What is Bench?",
+        a = "A player an officer marks as bench (standby) for the night counts as present, "
+            .. "so sitting out to make room does not cost you your regular status. "
+            .. "Officers mark it on the Raid tab: click Bench... and tick the players from recent raids who are "
+            .. "not in the group. It is in the officer log. Bench does not count toward the 10 players "
+            .. "a raid needs to count.",
+        tab = "raid",
     },
 
     { section = "reserves", title = "Reserves" },
@@ -115,17 +167,27 @@ local ENTRIES = {
             .. GREEN
             .. "Reserves open"
             .. R
-            .. " (before Start raid), you can reserve one item on the Raid tab. "
+            .. ", you can reserve one item on the Raid tab. "
             .. "Shift-click the item into the box, type its item ID, or pick it from the Catalogue.\n\n"
             .. "If nobody else reserves it, it's yours when it drops. If several players reserve it, "
-            .. "only they roll. You can only reserve gear your class and loot spec can use. "
-            .. "Winning another item first does not cost you your reserve: "
-            .. "it still pays out when it drops, as your second item.\n\n"
-            .. "Reserves close when the raid starts or when the first item is added, whichever comes first. "
-            .. "You must be in the group when it drops.\n\n"
+            .. "only they roll, and those without an item yet roll first. "
+            .. "You can only reserve gear your class and loot spec can use. "
+            .. "It is checked again when the item comes up. You must be in the group when it drops.\n\n"
             .. "No addon? Whisper the raid host: !rlc reserve, then shift-click the item (or type its ID). "
             .. "The host's addon whispers back.",
         tab = "raid",
+    },
+    {
+        q = "When do reserves close?",
+        a = "At Start raid, when the first item is added, or when the first boss is pulled, "
+            .. "whichever comes first. So nobody can reserve an item after seeing it drop.",
+        tab = "raid",
+    },
+    {
+        q = "I won another item first. Do I keep my reserve?",
+        a = "Only if you are a regular. Then your reserve still pays out when it drops, as your second item.\n\n"
+            .. "If you are not a regular, winning another item uses up your reserve. "
+            .. "A free roll (an item open to everyone) never touches it.",
     },
     {
         q = "Where do I find items to reserve?",
@@ -147,36 +209,67 @@ local ENTRIES = {
             .. GREEN
             .. "Change loot spec"
             .. R
-            .. ". It is saved for this character. You can change it until the raid starts. "
-            .. "After that only an officer can.\n\n"
+            .. ". It is saved for this character. You can change it until reserves close. "
+            .. "After that only an officer can, and not while a roll is open or while you hold a reserve.\n\n"
             .. "You must pick a loot spec before you can click I want this on an item "
             .. "limited to some specs.",
         tab = "raid",
     },
     {
+        q = "I picked my spec after the raid started.",
+        a = "That works between items: not while a roll is open, and not for an item you already asked for. "
+            .. "For items open to everyone the addon then judges you by class only. "
+            .. "If your class could have asked for the item normally, winning it counts as your item.",
+    },
+    {
+        q = "I don't have the addon. What can I roll on?",
+        a = "Without the addon you have no loot spec, so you can roll only on items that suit every spec "
+            .. "of your class, and on items open to everyone. Ask an officer to set your spec (Set spec), "
+            .. "or install the addon.",
+    },
+    {
         q = 'What does "Best for" on an item mean?',
         a = "The specs the item suits. The addon looks at the armor type (hunters and shamans wear mail, "
-            .. "warriors and paladins plate, from level 40), the weapon type, and the stats. "
+            .. "warriors and paladins plate, from level 40), the weapon type, and the stats.\n\n"
+            .. "Healing gear goes to healers and spell damage gear to casters. Ranged attack power is for "
+            .. "hunters, feral attack power for cat and bear. Defense and block mean tank gear; "
+            .. "dodge or parry alone does not. Use: and Equip: lines, hit and crit all count.\n\n"
             .. "Only those specs can roll, unless none of them wants it. Officers can change the list.",
     },
 
     { section = "officers", title = "For the raid leader and officers" },
     {
         q = "How do I run the loot?",
-        a = "Pick an item on the Loot tab, then:\n"
+        a = "Follow the glowing button. Pick an item on the Loot tab, then:\n"
             .. "- Start: put it up so players can say they want it.\n"
             .. "- Call roll: open the rolls. If nobody it suits wants it, it opens to everyone instead.\n"
             .. "- Close roll: the highest roll wins.\n"
             .. "- Open to all: let anyone roll right away.\n"
             .. "- Who can roll: change the specs it is for.\n"
             .. "- Give to player: give it to the player you clicked in the list.\n"
+            .. "- Remove item: take it off the list. It still shows in History.\n"
             .. "- Undo win: take back a win given by mistake. The item goes back up and the winner is unlocked.",
         tab = "loot",
     },
     {
+        q = "What can't officers do?",
+        a = "The rules hold for officers too:\n"
+            .. "- No Unlock, Set spec or Who can roll while a roll is open.\n"
+            .. "- No Give to player or Undo win on another item while a roll is open.\n"
+            .. "- No Close roll in the first 15 seconds, unless only some players may roll "
+            .. "(reservers, regulars, a tie) and all of them have rolled.\n"
+            .. "- No Call roll during a boss fight.\n"
+            .. "- No spec change for a player holding a reserve, once reserves close.\n"
+            .. "- No Open to all while someone without an item wants it.\n"
+            .. "- No giving items to players outside the group.\n\n"
+            .. "Gives, undos, closes, removals and unlocks always stay in the officer log.",
+    },
+    {
         q = "How do items get into the addon?",
         a = "Open the boss's loot window and click Add from loot. Or drop an item from your bags on the "
-            .. "window, or type /rlc add and shift-click the item.",
+            .. "window, or type /rlc add and shift-click the item.\n\n"
+            .. "If loot is not on Master Looter and the item is not in your bags, the addon warns you: "
+            .. "whoever looted it must trade it to the winner.",
         tab = "loot",
     },
     {
@@ -190,15 +283,15 @@ local ENTRIES = {
             .. "and those items glow green in your bags. "
             .. "Trade the winner and the item comes off the list, even if you put it in the window "
             .. "yourself. /rlc owed clears that list.\n\n"
-            .. "History marks an item delivered when the host or an officer trades it to the winner, "
-            .. "or gives it by master loot.",
+            .. "If the master looter gives a raid item to someone other than its winner, "
+            .. "that shows in everyone's officer log.",
     },
     {
         q = "How do I make someone an officer, or unlock a player?",
-        a = "On the Raid tab, click the player, then Make officer (raid host only), Unlock or Set spec.",
+        a = "On the Raid tab, click the player, then Make officer (raid host only), Unlock or Set spec. "
+            .. "Bench... marks players who are not in the group.",
         tab = "raid",
     },
-
     {
         q = "Do we need Master Looter?",
         a = "Yes, it's the way the addon is meant to run. Without it, the game's own Need and Greed "
@@ -207,7 +300,7 @@ local ENTRIES = {
             .. "game to allow trading bound loot to the people at the kill.",
     },
 
-    { section = "catalog", title = "Catalogue and history" },
+    { section = "catalog", title = "Catalogue, history and stats" },
     {
         q = "What is the Catalogue?",
         a = "A loot list built from real drops: every rare or better item the addon has seen, filed under "
@@ -226,10 +319,13 @@ local ENTRIES = {
     {
         q = "What is in History?",
         a = "Every raid: who won what, how (roll, open roll, reserve or given), and everyone's rolls. "
-            .. "Hover an item to see the rolls.\n\n"
-            .. "Officer log: every item given by hand, win taken back, lock, unlock and spec change, "
-            .. "each roll an officer closed, each item marked delivered, and when the raid started and ended, "
+            .. "Hover an item to see the rolls. Removed items show too, and a win that was taken back "
+            .. "keeps its old winner and rolls.\n\n"
+            .. "Officer log: every item given by hand, win taken back, removed item, lock, unlock, bench "
+            .. "and spec change, each roll an officer closed or wiped, each item marked delivered, "
+            .. "master loot given to someone else, and when the raid started and ended, "
             .. "with the officer who did it. Click Officer log to see it all, or hover an item.\n\n"
+            .. "Your own History is your record: a resync from the host never shortens your log. "
             .. "A raid not hosted by the group leader shows (unverified).",
         tab = "history",
     },
@@ -241,9 +337,9 @@ local ENTRIES = {
     },
     {
         q = "What is the Stats tab?",
-        a = "Every player from your saved raids: how many raids the addon saw them in, how many items "
-            .. "they won, and when they last won one. Free rolls are counted apart. Use it to check "
-            .. "that loot is spread fairly. Hover a player to see what they won.",
+        a = "Every player from your saved raids: attendance, how many items they won, and when they "
+            .. "last won one. Free rolls are counted apart. Use it to check that loot is spread fairly "
+            .. "and who turns up. Hover a player to see what they won.",
         tab = "stats",
     },
     {
@@ -274,6 +370,7 @@ local ENTRIES = {
         q = "Will I know when there is a new version?",
         a = "Yes. When someone in your guild or group has a newer version, you get one line in chat. "
             .. "Click the green Click here in it: it shows the download link, ready to copy into your browser. "
+            .. "Or run the installer again. "
             .. "You also get it if the raid host's addon sends something yours does not know. "
             .. "On the Raid tab, hover a player to see their version; old ones show as old addon.",
     },

@@ -166,10 +166,10 @@ local function ordered(set, present)
 end
 
 -- ---- one raid night ----------------------------------------------------------
--- o = { id, present, drops, reserves, roll, wantPct, owned, prio, strict }
--- Raiders want what suits them and they do not own yet. With o.prio the sim
--- (not the addon) adds a cross-week rule: if any wanter is in o.prio, only
--- those wanters roll. Returns items won and who wanted something, by name.
+-- o = { id, present, drops, reserves, roll, wantPct, owned, history, strict }
+-- Raiders want what suits them and they do not own yet. With o.history the
+-- host passes Rules.RegularsFrom at the start: regulars roll first. Returns
+-- items won and who wanted something, by name.
 local function runNight(o, label)
     newRaid(o.id)
     for _, n in ipairs(o.present) do
@@ -179,7 +179,11 @@ local function runNight(o, label)
             act(n, { "RES", o.reserves[n] })
         end
     end
+    ctx.dry = o.history and function()
+        return R.RegularsFrom(o.history, host.id, 409)
+    end
     act(HOST, { "PHASE", "live" })
+    ctx.dry = nil
     local got, wanted, locked = {}, {}, {}
     for _, id in ipairs(o.drops) do
         local key = act(HOST, { "ADD", "item:" .. id })[1][2]
@@ -205,9 +209,6 @@ local function runNight(o, label)
             act(HOST, { next(it.wants) and "CALL" or "CANCEL", key })
         end
         local rollers = ordered(it.restrict or it.wants, o.present)
-        if o.prio and it.mode == "normal" and #ordered(o.prio, rollers) > 0 then
-            rollers = ordered(o.prio, rollers)
-        end
         while it.state == "rolling" do
             for _, n in ipairs(rollers) do
                 act(HOST, { "ROLLSEEN", n, o.roll(100), 1, 100 })
@@ -215,7 +216,7 @@ local function runNight(o, label)
             if not act(HOST, { "CLOSE", key }) then
                 act(HOST, { "CANCEL", key })
             end
-            rollers = ordered(it.restrict or {}, o.present) -- after a tie only they roll
+            rollers = ordered(it.restrict or it.wants, o.present) -- after a tie only they roll
         end
         local w = it.winner
         if w then
@@ -448,15 +449,16 @@ end
 -- 85% attendance, each boss item drops with 40% chance, raiders want an item
 -- that suits them with 70% chance, everyone present reserves one item.
 local WEEKS = 8
-local function season(usePrio)
+local function season(useRegulars)
     local world, luck = rng(4242), rng(777) -- world (attendance, drops) is the same in both variants
-    local owned, total, drought, longest, zero, starved = {}, {}, {}, {}, {}, {}
+    local owned, total, drought, longest, zero = {}, {}, {}, {}, {}
+    local history = useRegulars and {} or nil
     for _, n in ipairs(NAMES) do
         total[n], drought[n], longest[n] = 0, 0, 0
     end
     for week = 1, WEEKS do
         local o = { id = week, present = {}, drops = {}, reserves = {}, roll = luck, wantPct = 70, owned = owned }
-        o.prio = usePrio and starved or nil
+        o.history = history
         for _, n in ipairs(NAMES) do
             if n == HOST or world(100) <= 85 then
                 o.present[#o.present + 1] = n
@@ -478,12 +480,18 @@ local function season(usePrio)
             end
             o.reserves[n] = need[1] and need[luck(#need)]
         end
-        local got, wanted = runNight(o, (usePrio and "prio" or "base") .. " week " .. week)
+        local got, wanted = runNight(o, (useRegulars and "regulars" or "base") .. " week " .. week)
+        if history then -- what the host's client saw (RLC_Core keeps it)
+            host.att, host.attSpan, host.inst = {}, 3600, 409
+            for _, n in ipairs(o.present) do
+                host.att[n] = 3600
+            end
+            history[host.id] = host
+        end
         for _, n in ipairs(o.present) do
             total[n] = total[n] + (got[n] or 0)
             drought[n] = got[n] and 0 or wanted[n] and drought[n] + 1 or drought[n]
             longest[n] = math.max(longest[n], drought[n])
-            starved[n] = drought[n] > 0 or nil -- wanted and got nothing the last time they came
         end
         zero[week] = 0
         for _, n in ipairs(NAMES) do
@@ -497,13 +505,13 @@ local function season(usePrio)
     return { total = total, zero = zero, lo = lo, hi = hi, dry = dry }
 end
 
-local base, prio = season(false), season(true)
+local base, prio = season(false), season(true) -- prio: regulars roll first
 print(string.format("\nC. %d weeks, %d raiders. Items per player:", WEEKS, #NAMES))
-print(string.format("%-18s %-15s %5s %5s", "player", "spec", "base", "prio"))
+print(string.format("%-18s %-15s %5s %5s", "player", "spec", "base", "reg"))
 for _, n in ipairs(NAMES) do
     print(string.format("%-18s %-15s %5d %5d", n, SPEC[n], base.total[n], prio.total[n]))
 end
-for _, v in ipairs({ { "base", base }, { "prio", prio } }) do
+for _, v in ipairs({ { "base", base }, { "regulars", prio } }) do
     local s = v[2]
     local fmt = "%s: players with 0 items at week 4: %d, week %d: %d; min-max %d-%d (spread %d); longest drought %d"
     print(string.format(fmt, v[1], s.zero[4], WEEKS, s.zero[WEEKS], s.lo, s.hi, s.hi - s.lo, s.dry))

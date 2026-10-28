@@ -9,9 +9,22 @@ Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 
 ## Install
 
+**One click (Windows):** download **[Install-RaidLootController.bat](https://github.com/powerfulqa/RaidLootController/releases/latest/download/Install-RaidLootController.bat)** and double-click it. It finds WoW: Forever, installs the addon (or updates it) and keeps your settings and loot history.
+
+- If Windows asks "Are you sure you want to run this software?", click **Run**. If the browser warns about the file, choose **Keep**. If Windows needs permission to write to the game folder, the installer says so: press Enter, then **Yes**.
+- If it can't find the game, paste the game folder (Battle.net, WoW: Forever, gear menu, **Show in Explorer**).
+
+**Mac or Linux:** download **[install-raidlootcontroller.command](https://github.com/powerfulqa/RaidLootController/releases/latest/download/install-raidlootcontroller.command)**, open Terminal and run `bash ~/Downloads/install-raidlootcontroller.command`.
+
+**To update**, run the same file again. If the game is open, type `/reload`.
+
+**By hand:**
+
 1. Download **[RaidLootController.zip](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)** (latest release).
-2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. During the beta that folder is `World of Warcraft\_classic_beta_\Interface\AddOns`.
+2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. That folder is `World of Warcraft\_forever_\Interface\AddOns` (`_classic_beta_` during the beta).
 3. Restart the game (or `/reload`) and type `/rlc`.
+
+**In the raid:** open the window with `/rlc` or the minimap button, read the **Next:** line at the top, and click the glowing button. That is all most raiders need.
 
 Everyone in the raid should install it. Players without it can still roll with `/roll`, and reserve by whispering the raid host `!rlc reserve <item or ID>`, but can't click I want this.
 
@@ -22,16 +35,18 @@ Everyone in the raid should install it. Players without it can still roll with `
 ## What it does
 
 - **Everyone gets one item before anyone gets two.** Winning an item locks you for the rest of the raid (free rolls aside, see below).
-- **Soft reserves.** Before the raid starts, reserve one item. If nobody else reserves it, it is yours when it drops. If several players reserve it, only they roll.
+- **Regulars roll first.** Players who came to at least 3 of every 4 recent raids (75% of the last 8, same instance) roll first on items they want. It rewards turning up, not points.
+- **Real attendance.** The raid host's addon checks the group every minute. You count as at a raid if you were in the group and online for 75% of it. Officers can mark a player **Bench** (counts as present). Stats shows attendance.
+- **Soft reserves.** Before the raid starts, reserve one item. If nobody else reserves it, it is yours when it drops. If several players reserve it, only they roll, those without an item first.
+- **Always a next step.** The button you need next glows, for raiders, officers and the host alike, and a **Next:** line at the top of the window says it in words.
 - **Server-verified rolls.** The Roll button uses the game's own `/roll`, so nobody can fake a number. Everyone with the addon sees the rolls live.
 - **Best-for specs.** Each item is matched to the specs it suits (armor type, weapon type and stats), so a hunter can't roll on a rogue's leather. Your loot spec is guessed from your talents and confirmed by you once. Officers can change who may roll, and undo a win given by mistake.
-- **Officer controls.** The raid leader (or an assistant) hosts the session and can make other players officers. Officers put items up, call and close rolls, open an item to everyone, restrict an item to some classes, give an item by hand, and lock or unlock players.
-- **Fair over few raid nights.** Players who won nothing in their last raid roll first.
+- **Officer controls.** The raid leader (or an assistant) hosts the session and can make other players officers. Officers put items up, call and close rolls, open an item to everyone, restrict an item to some specs, give an item by hand, remove an item, unlock players and mark bench. The rules hold for them too (see below).
 - **Upgrade info.** Officers see what each player wears in that slot and the stat change the item would give them.
-- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, and an officer log of every manual action. A raid not hosted by the group leader is marked (unverified).
+- **Raid history.** Every raid is saved: who got what, how (roll, open roll, reserve, given), who rolled what, who wanted it, removed items, wins taken back (with the old winner and rolls), and an officer log of every manual action. A resync from the host never shortens your log. A raid not hosted by the group leader is marked (unverified).
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
 - **Delivery tracking.** Items still to trade are listed on the Raid tab, with the trade time left on bound items, and glow green in the giver's bags. A master loot give that fails (full bags, unique item, out of range) goes on that list too. Trading the winner takes the item off the list, and History marks it delivered.
-- **Stats.** Every player from your saved raids: raids, items won, free rolls and their last win, to check that loot is spread fairly.
+- **Stats.** Every player from your saved raids: attendance, items won, free rolls and their last win, to check that loot is spread fairly.
 - **Copy as text.** Copy a raid's results from the History tab to paste into Discord.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one (`/rlc tooltip` turns them off).
 - **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.
@@ -40,24 +55,31 @@ Everyone in the raid should install it. Players without it can still roll with `
 
 1. The raid leader sets loot to **Master Looter** (the host or an officer as master looter), opens `/rlc`, goes to **Raid**, and clicks **New raid**.
 2. Raiders reserve an item on the **Raid** tab: shift-click it into the box, or type its item ID. One reserve each.
-3. The leader clicks **Start raid**. Reserves are now closed (they also close when the first item is put up).
-4. A boss dies. The master looter opens the loot window and clicks **Add N from loot** (or drops an item from their bags on the window). The items appear on the **Loot** tab for everyone.
+3. The leader clicks **Start raid**, or the first boss pull in the raid starts it. Reserves are now closed (they also close when the first item is put up).
+4. A boss dies. The master looter opens the loot window and clicks **Add from loot** (or drops an item from their bags on the window). The items appear on the **Loot** tab for everyone. If loot is not on Master Looter and the item is not in their bags, the addon warns that whoever looted it must trade it.
 5. An officer picks an item and clicks **Start**. Raiders who can use it click **I want this**.
-6. The officer clicks **Call roll**:
+6. The officer clicks **Call roll** (not during a boss fight):
    - If nobody without an item wants it, it opens to everyone instead. Call roll again to start the rolls.
-   - If one player reserved it, they get it straight away.
-   - If anyone who won nothing last raid wants it, only they roll first.
+   - If one player reserved it, they get it straight away. Several: they roll, those without an item first.
+   - If any regular wants it, only the regulars roll first.
 7. Raiders click **Roll (1-100)**. Rolls show up live. The button you need to click next glows, as does the minimap button.
-8. The officer clicks **Close roll**. The highest roll wins; a tie makes only the tied players roll again.
+8. The officer clicks **Close roll** (after 15 seconds; a tie reroll or a regulars-first pass can close sooner once every player in it rolled). The highest roll wins; a tie makes only the tied players roll again. If a boss is pulled during the roll, the rolls are wiped after the fight and everyone rolls again.
 9. The master looter's addon gives the winner the item straight from the loot window (only when the raid host leads the group or is the master looter). If the window is closed (or loot is not on Master Looter, where the host hands items over), it goes on that player's "still to trade" list and glows green in their bags, and the addon puts it in the trade window the next time they trade the winner. Once it is given or traded, History marks it delivered.
 
 An officer can **Unlock** a player on the Raid tab so they can roll normally again.
 
 - **Free rolls don't count.** Winning an item that was opened to everyone does not lock you and does not touch your reserve, if you already had an item or it was off-spec for you. If you could have asked for it normally, it counts: staying quiet on **I want this** does not buy a free first item.
-- **Your reserve is safe.** Winning another item first does not cost you your reserve: it still pays out when it drops, as your second item.
-- **No loot last raid? You roll first.** Players who were in the last raid and won nothing there (free rolls aside) roll first on items that suit them. If none of them want it, everyone rolls. Only raids of 10 or more count, and only for players the addon saw in the group while the raid was on, at least 10 minutes apart (a reserve alone is not enough).
-- **Reserves close** at the raid start or when the first item is put up, whichever comes first. A reserve only pays out to someone still in the group.
-- **Officers are held to the rules.** They can't open an item while someone without an item wants it, or give items to players outside the group. Every item given by hand, win taken back, lock, unlock, spec change, closed roll and delivery, and the raid's start and end, are in the **Officer log** on the History tab.
+- **A reserve as a second item is for regulars.** A regular who wins another item first keeps their reserve: it still pays out when it drops, as their second item. Anyone else uses it up with that win. A free roll never touches it.
+- **Regulars roll first.** A regular was at a raid in at least 75% of the last 8 raids in this instance (3 of every 4). When regulars want an item that suits them, they roll first; if none do, everyone rolls. You count as at a raid if the host's addon saw you in the group and online for 75% of the time it was live. Bench counts as present. A night counts only if 10 or more players were there in person (bench not counted), and raids within 12 hours of the night's first start count as one night. A reserve alone is not attendance.
+- **Reserves close** at the raid start, when the first item is put up, or when the first boss is pulled, whichever comes first. A reserve only pays out to someone still in the group.
+- **Officers are held to the rules.** They can't:
+  - open an item while someone without an item wants it, or give items to players outside the group;
+  - unlock, change a spec or change **Who can roll** while a roll is open;
+  - close a roll in its first 15 seconds (a tie reroll or regulars-first pass may close once every player in it rolled);
+  - give an item by hand, or undo a win, while a roll is open;
+  - call a roll during a boss fight;
+  - change the spec of a player holding a reserve once reserves close.
+- **The officer log keeps the evidence.** Every item given by hand, win taken back, removed item, lock, unlock, bench, spec change, closed or wiped roll and delivery, master loot given to someone other than the winner, and the raid's start and end are in the **Officer log** on the History tab. Gives, take-backs, closes, removals and unlocks are never pushed out by a flood of other entries.
 - **Upgrade size.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the raw stat change. No scores, officers judge.
 
 ## The loot catalogue
@@ -76,17 +98,17 @@ When an item is added, the addon works out which specs it suits:
 
 - **Armor:** only the heaviest type a class wears. Hunters and shamans take mail and warriors and paladins take plate (from level 40 items). Cloaks, rings, necks, trinkets and off-hands have no armor rule.
 - **Weapons:** only specs that use that weapon type. Daggers, for example, are not a hunter weapon.
-- **Stats:** the spec must want the item's stats. A caster staff never goes to a hunter, and agility mail never goes to an elemental shaman.
+- **Stats:** the spec must want the item's stats. A caster staff never goes to a hunter, and agility mail never goes to an elemental shaman. Healing gear goes to healers and spell damage gear to casters ("damage and healing" suits both). Ranged attack power is for hunters, feral attack power for cat and bear. Defense and block make tank gear; dodge or parry alone does not. `Equip:` and `Use:` lines are read, hit and crit included.
 
 The Loot tab shows the result as "Best for". Only those specs can click I want this and roll. If none of them wants the item, it opens to everyone, as with the one-item rule.
 
-Your **loot spec** is the spec you want gear for, not the one you play tonight (dual spec: an off-tank in dps spec still loots as a tank). The addon guesses it from your talents (the tree with the most points) and asks you to **Confirm** it once on the Raid tab, or pick another with **Change loot spec**. It is saved per character. Feral druids pick cat or bear. You must have a loot spec before you can say I want this on an item limited to some specs. You can change it until the raid starts; after that it is locked, and only an officer can change it. Players without the addon are checked by class only.
+Your **loot spec** is the spec you want gear for, not the one you play tonight (dual spec: an off-tank in dps spec still loots as a tank). The addon guesses it from your talents (the tree with the most points) and asks you to **Confirm** it once on the Raid tab, or pick another with **Change loot spec**. It is saved per character. Feral druids pick cat or bear. You must have a loot spec before you can say I want this on an item limited to some specs. You can change it until reserves close; after that it is locked, and only an officer can change it (not while a roll is open, and not for a player holding a reserve). A spec first picked after the raid started is judged by class only on items open to everyone. Players without the addon have no loot spec, so they can roll only on items that suit every spec of their class (an officer can set their spec with **Set spec**).
 
 Officers can:
 
 - change who may roll with **Who can roll** (Suggested, Any spec, or tick specs by hand)
 - set a player's spec with **Set spec**
-- take a mistaken win back with **Undo win**. The item goes back up, the winner is unlocked, and a reserve it used is given back.
+- take a mistaken win back with **Undo win**. The item goes back up, the winner is unlocked (unless they hold a free win they could have asked for normally), and a reserve it used is given back. History keeps the old winner and rolls.
 
 ## Who can roll
 
@@ -94,11 +116,11 @@ Officers can:
 |---|---|
 | For players without an item (default) | Everyone who has not won an item yet |
 | Open to everyone | Everyone, including players who already won |
-| Reserved | Only the players who reserved it and are still in the group |
-| Wanted by someone with no loot last raid | First pass: only those players |
+| Reserved | Only the players who reserved it and are still in the group, those without an item first. A reserver with an item only if they are a regular |
+| Wanted by a regular | First pass: only the regulars who want it |
 | Limited to specs | The above, limited to the specs it suits |
 
-A reserve ignores class limits: reserves are made before anyone knows how the item will be restricted. Any eligible player's `/roll 1-100` counts while rolls are open, even without clicking I want this, so players without the addon can still take part. Rolls from players who left the group don't count. A tie wipes all rolls and only the tied players roll again.
+A reserve is checked against your class and loot spec when you make it, and again when the item comes up. Any eligible player's `/roll 1-100` counts while rolls are open, even without clicking I want this, so players without the addon can still take part. Rolls from players who left the group don't count. A tie wipes all rolls and only the tied players roll again; in a tie or a first pass, a player who already has an item can't win a second.
 
 ## Slash commands
 

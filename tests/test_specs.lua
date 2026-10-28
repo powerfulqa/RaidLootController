@@ -124,6 +124,113 @@ do
     check(Sp.Describe(nil) == "any spec", "no limit reads as any spec")
 end
 
+-- Tooltip lines through the real reader, then the rules. `primary` stands
+-- for GetItemStats keys (strength, intellect and so on).
+local function fromLines(item, primary, lines)
+    local t = {}
+    for i, text in ipairs(lines) do
+        t[i] = { leftText = text }
+    end
+    item.stats = Sp.ItemKinds(primary, t)
+    item.reqLevel = 60
+    return Sp.SuitedSpecs(item), item.stats
+end
+local INT = { ITEM_MOD_INTELLECT_SHORT = 5 }
+local AGI = { ITEM_MOD_AGILITY_SHORT = 5 }
+
+-- S1: no free supersets inside a class.
+do
+    local s = suits({ classID = 4, subclassID = 0, equipLoc = "INVTYPE_FINGER", stats = { "INT", "SP" } })
+    check(not s["PALADIN.PROT"], "spell damage ring: not protection paladins")
+    s = suits({ classID = 4, subclassID = 4, equipLoc = "INVTYPE_CHEST", stats = { "STR", "DEF" } })
+    check(s["PALADIN.PROT"] and s["WARRIOR.PROT"], "defense plate: tanks still")
+    s = suits({ classID = 4, subclassID = 2, equipLoc = "INVTYPE_CHEST", stats = { "DEF" } })
+    check(s["DRUID.BEAR"] and not s["DRUID.CAT"], "defense leather: bear, not cat")
+    s = suits({ classID = 4, subclassID = 2, equipLoc = "INVTYPE_CHEST", stats = { "AP" } })
+    check(s["DRUID.CAT"] and not s["DRUID.BEAR"], "attack power leather: cat, not bear")
+end
+
+-- S2: spell damage and healing apart, "damage and healing" to both.
+do
+    local robe = { classID = 4, subclassID = 1, equipLoc = "INVTYPE_ROBE" }
+    local s, k = fromLines(robe, INT, { "Equip: Increases healing done by spells and effects by up to 44." })
+    check(k.HEAL and not k.SP, "healing line reads as healing only")
+    check(s["PRIEST.HOLY"] and s["PRIEST.DISC"], "healing cloth: holy and discipline priests")
+    check(not s["MAGE.FIRE"] and not s["WARLOCK.AFFLI"] and not s["PRIEST.SHADOW"], "healing cloth: no dps casters")
+    s = fromLines(robe, INT, { "Equip: Increases damage done by Shadow spells and effects by up to 20." })
+    check(s["WARLOCK.AFFLI"] and s["PRIEST.SHADOW"], "shadow damage cloth: warlocks and shadow priests")
+    check(not s["PRIEST.HOLY"], "shadow damage cloth: not holy priests")
+    -- Mana Igniting Cord (Molten Core).
+    s, k = fromLines({ classID = 4, subclassID = 1, equipLoc = "INVTYPE_WAIST" }, INT, {
+        "Equip: Improves your chance to get a critical strike with spells by 1%.",
+        "Equip: Increases damage and healing done by magical spells and effects by up to 25.",
+    })
+    check(k.SP and k.HEAL and not k.AP, "Mana Igniting Cord reads as spell damage and healing")
+    check(s["MAGE.FIRE"] and s["PRIEST.HOLY"] and s["PRIEST.SHADOW"], "Mana Igniting Cord: casters and healers")
+    s, k = fromLines(robe, INT, { "Equip: Improves your chance to get a critical strike with Holy spells by 1%." })
+    check(k.HEAL and not k.SP and not k.AP, "holy spell crit reads as healing")
+    check(s["PRIEST.HOLY"] and not s["MAGE.FIRE"], "holy spell crit cloth: priests, not mages")
+    k = Sp.ItemKinds({ ITEM_MOD_SPELL_POWER_SHORT = 30 }, nil)
+    check(k.SP and k.HEAL, "modern spell power key counts as both")
+end
+
+-- S3: "Use:" lines and hit or crit lines tell too.
+do
+    local trinket = { classID = 4, subclassID = 0, equipLoc = "INVTYPE_TRINKET" }
+    -- Talisman of Ephemeral Power.
+    local s = fromLines(trinket, nil, {
+        "Use: Increases damage and healing done by magical spells and effects by up to 175 for 15 sec.",
+    })
+    check(s["MAGE.ARCANE"] and s["SHAMAN.RESTO"], "Talisman of Ephemeral Power: casters and healers")
+    check(not s["ROGUE.COMBAT"] and not s["WARRIOR.FURY"], "Talisman of Ephemeral Power: not melee")
+    -- Blackhand's Breadth.
+    s = fromLines(trinket, { ITEM_MOD_STAMINA_SHORT = 8 }, {
+        "Equip: Improves your chance to get a critical strike by 2%.",
+    })
+    check(s["ROGUE.COMBAT"] and s["HUNTER.MM"] and s["WARRIOR.ARMS"], "Blackhand's Breadth: melee and hunters")
+    check(not s["MAGE.FROST"] and not s["PRIEST.HOLY"], "Blackhand's Breadth: not casters or healers")
+    s = fromLines({ classID = 4, subclassID = 0, equipLoc = "INVTYPE_NECK" }, nil, {
+        "Equip: Improves your chance to hit with spells by 1%.",
+    })
+    check(s["WARLOCK.DESTRO"] and not s["ROGUE.SUB"] and not s["PRIEST.HOLY"], "spell hit neck: dps casters only")
+    s = fromLines(trinket, nil, { "Use: Restores 375 to 625 mana." })
+    local n = 0
+    for _ in pairs(s) do
+        n = n + 1
+    end
+    check(n == #Sp.LIST, "a use line with no telling phrase leaves every spec")
+end
+
+-- S4: ranged and feral attack power have their own kinds.
+do
+    -- Striker's Mark.
+    local s, k = fromLines({ classID = 2, subclassID = 2, equipLoc = "INVTYPE_RANGED" }, nil, {
+        "Equip: +22 ranged Attack Power.",
+        "Equip: Improves your chance to hit by 1%.",
+    })
+    check(k.RAP and k.AP, "Striker's Mark reads as ranged attack power and hit")
+    check(s["HUNTER.MM"] and not s["ROGUE.COMBAT"] and not s["WARRIOR.ARMS"], "Striker's Mark: hunters only")
+    s, k = fromLines({ classID = 2, subclassID = 10, equipLoc = "INVTYPE_2HWEAPON" }, nil, {
+        "Equip: Increases attack power by 420 in Cat, Bear, and Dire Bear forms only.",
+    })
+    check(k.FAP and not k.AP, "feral attack power is not plain attack power")
+    check(s["DRUID.CAT"] and s["DRUID.BEAR"], "feral staff: cat and bear")
+    check(not s["HUNTER.SV"] and not s["DRUID.BALANCE"], "feral staff: not hunters or caster druids")
+end
+
+-- S5: dodge and parry are not defense.
+do
+    local s, k = fromLines({ classID = 4, subclassID = 2, equipLoc = "INVTYPE_CHEST" }, AGI, {
+        "Equip: Increases your chance to dodge an attack by 1%.",
+    })
+    check(not k.DEF, "dodge does not read as defense")
+    check(s["ROGUE.COMBAT"] and s["DRUID.CAT"] and s["DRUID.BEAR"], "agility dodge leather: rogues and ferals")
+    k = Sp.ItemKinds({ ITEM_MOD_PARRY_RATING_SHORT = 1 }, { { leftText = "Equip: Increased Defense +7." } })
+    check(k.DEF, "the defense line still reads as defense")
+    k = Sp.ItemKinds({ ITEM_MOD_PARRY_RATING_SHORT = 1 }, nil)
+    check(not k.DEF, "parry rating is not defense")
+end
+
 -- Every spec key is well formed for the wire and names a real class.
 do
     local ok = true

@@ -287,33 +287,67 @@ end
 -- GROUP_ROSTER_UPDATE. Class files are also remembered in saved data so
 -- history can colour names of players who have left.
 
--- Raiders present while the raid is live, kept on the session (never
--- sent): Rules.DryFrom reads it. Seen twice at least ATTEND_MIN apart (a
--- roster change, a boss, the raid's end), so dropping in for a minute
--- does not make you roll first next week. ending: the raid just ended.
-local ATTEND_MIN = 600
+-- Attendance, kept on the session (never sent): S.att[name] = seconds this
+-- client saw `name` in the group, connected and named, while the raid was
+-- live; S.attSpan = seconds it saw the raid live at all. Rules.Present and
+-- Rules.RegularsFrom read them. Each call credits the time since the last
+-- one to whoever is here now (a ticker below calls it every minute), so a
+-- 10-minute drop-in counts as 10 minutes, not a whole night. A gap longer
+-- than a tick (logged out, loading screen) counts as not seen.
+-- ponytail: "in the host's instance" is not checked: UnitPosition gives
+-- nothing for other players inside instances on Mainline clients.
+local TICK, TICK_MAX = 60, 90
+local lastTick -- { id = session id, at = server time }
+local lastOn = {} -- name -> true when counted at the last tick
+
+-- The raid instance we are in (GetInstanceInfo's 8th return), or nil.
+local function raidInstance()
+    local _, kind, _, _, _, _, _, id = GetInstanceInfo()
+    return kind == "raid" and NS.CanRead(id) and id or nil
+end
+
 local function markAttendance(ending)
     local S = NS.S()
-    if S and (S.phase == "live" or ending) then
-        local now = GetServerTime()
-        S.att, S.seen = S.att or {}, S.seen or {}
-        for name, r in pairs(roster) do
-            S.seen[name] = not r.stale and (S.seen[name] or now) or S.seen[name]
-            if not r.stale and S.seen[name] and now - S.seen[name] >= ATTEND_MIN then
-                S.att[name] = true
-            end
+    if not S or not (S.phase == "live" or ending) then
+        lastTick = nil
+        return
+    end
+    local now = GetServerTime()
+    local dt = lastTick and lastTick.id == S.id and now - lastTick.at or 0
+    dt = (dt > 0 and dt <= TICK_MAX) and dt or 0
+    lastTick = not ending and { id = S.id, at = now } or nil
+    S.inst = S.inst or (not ending and raidInstance()) or nil
+    S.att, S.seen = S.att or {}, nil
+    S.attSpan = (S.attSpan or 0) + dt
+    if dt == 0 then
+        return
+    end
+    -- During a boss fight names (and maybe UnitIsConnected) are secret and
+    -- roster entries go stale: whoever counted at the last readable tick
+    -- keeps counting, so a long fight does not cost the whole raid time.
+    local wasOn = lastOn
+    lastOn = {}
+    for name, r in pairs(roster) do
+        local on = r.unit and not r.stale and UnitIsConnected(r.unit) -- can be secret
+        if r.stale or not NS.CanRead(on) then
+            on = wasOn[name] == true
+        else
+            on = on == true
         end
-        -- Gone in between: the 10 minutes start again if they come back.
-        for name in pairs(S.seen) do
-            if not roster[name] then
-                S.seen[name] = nil
-            end
+        lastOn[name] = on or nil
+        -- A legacy `true` (whole night) stays as it is.
+        if on and S.att[name] ~= true then
+            S.att[name] = (S.att[name] or 0) + dt
         end
     end
 end
+C_Timer.NewTicker(TICK, function()
+    markAttendance()
+end)
 
 local toldDup = {} -- canonical name -> true once told it is shared
 local interestAt = {} -- session id .. "\t" .. item key -> when it went up (host only)
+local rollingAt = {} -- session id .. "\t" .. item key -> when its roll last opened
 
 function NS.RefreshRoster()
     -- A unit whose name cannot be read now (secret during an encounter)
@@ -504,22 +538,77 @@ local function saveHistory(S)
     end
 end
 
+-- Officer log entries our copy had before a resend of the same session:
+-- the host's copy must never make ours shorter (it may have dropped or
+-- never had them). They stay marked `kept` until the resend brings the
+-- same entry, which then matches the kept one instead of adding a second.
+local function keptEntry(S, op)
+    if not (S and S.log and (op[1] == "LOG" or op[1] == "LOG2")) then
+        return
+    end
+    local t = Rules.Int(op[2], 0, Rules.MAX_ID * 2)
+    for _, e in ipairs(S.log) do
+        if
+            e.kept
+            and e.t == t
+            and e.by == op[3]
+            and e.what == op[4]
+            and (e.name or "") == (op[5] or "")
+            and tostring(e.key or "") == tostring(op[6] or "")
+        then
+            return e
+        end
+    end
+end
+
+-- Oldest first, entries with the same time kept in their order.
+local function sortLog(log)
+    for i, e in ipairs(log) do
+        e.i = i
+    end
+    table.sort(log, function(a, b)
+        if a.t ~= b.t then
+            return (a.t or 0) < (b.t or 0)
+        end
+        return a.i < b.i
+    end)
+    for _, e in ipairs(log) do
+        e.i = nil
+    end
+end
+
 -- Apply ops to our copy. The host also broadcasts them. Returns how many
 -- ops did not fit our copy (a sign we missed some).
 local seenWin = {} -- session id .. item key -> true: that win was news once
 function NS.ApplyOps(ops, broadcast)
     local S = NS.S()
-    local changedHistory, gotNew = false, false
+    local changedHistory, gotNew, logMoved = false, false, false
     local rejected = 0
     for _, op in ipairs(ops) do
         -- An UNDO takes the win back, so the old winner is no longer owed it.
         local undone = op[1] == "UNDO" and S and S.items[op[2]]
         undone = undone and undone.winner and { who = undone.winner, s = undone.itemString }
-        -- A resent NEW of our own session keeps who attended (local only).
+        -- A resent NEW of our own session keeps who attended (local only)
+        -- and every officer log entry we saw.
         local prev = op[1] == "NEW" and S and S.id == op[2] and S
-        local newS, why = Rules.Apply(S, op)
+        local kept = keptEntry(S, op)
+        local newS, why
+        if kept then
+            kept.kept, newS = nil, S -- the resend has it too
+        else
+            newS, why = Rules.Apply(S, op)
+        end
         if newS and prev then
-            newS.att, newS.seen = newS.att or prev.att, newS.seen or prev.seen
+            newS.att, newS.attSpan, newS.inst =
+                newS.att or prev.att, newS.attSpan or prev.attSpan, newS.inst or prev.inst
+            newS.log = newS.log or {}
+            for i = math.max(1, #(prev.log or {}) - Rules.MAX_LOG + 1), #(prev.log or {}) do
+                local e = prev.log[i]
+                newS.log[#newS.log + 1] = { t = e.t, by = e.by, what = e.what, name = e.name, key = e.key, kept = true }
+            end
+            logMoved = true
+        elseif newS and (op[1] == "LOG" or op[1] == "LOG2") then
+            logMoved = true
         end
         local owedList = undone and newS and NS.DB.owed[undone.who]
         if owedList then
@@ -549,7 +638,10 @@ function NS.ApplyOps(ops, broadcast)
             end
             if k == "PHASE" then
                 markAttendance(op[2] == "ended")
-            elseif k == "ITEM" or k == "UNDO" or k == "CANCEL" or k == "AWARD" then
+            elseif k == "REROLL" or k == "VOID" then
+                rollingAt[S.id .. "\t" .. tostring(op[2])] = GetServerTime()
+            end
+            if k == "ITEM" or k == "UNDO" or k == "CANCEL" or k == "AWARD" then
                 -- When each item went up for interest (Rules.Intent CALL and
                 -- OPEN). Kept while it is up; a take-back starts it again.
                 -- A new mode (reserve dropping to normal) starts it again:
@@ -559,6 +651,8 @@ function NS.ApplyOps(ops, broadcast)
                 local was = interestAt[ik]
                 interestAt[ik] = up and (was and was.mode == op[4] and was or { at = GetServerTime(), mode = op[4] })
                     or nil
+                -- Every opening of the roll starts the minimum roll time again.
+                rollingAt[ik] = (k == "ITEM" and op[3] == "rolling") and GetServerTime() or rollingAt[ik]
             end
             local winKey = S.id .. "\t" .. tostring(op[2])
             if k == "UNDO" then
@@ -595,6 +689,9 @@ function NS.ApplyOps(ops, broadcast)
                 end
             end
         end
+    end
+    if logMoved and S and S.log then
+        sortLog(S.log)
     end
     if changedHistory and S then
         saveHistory(S)
@@ -667,10 +764,12 @@ function NS.Announce(text, itemString)
     NS.Net.Queue({ "NOTE", line })
 end
 
--- Players to roll first tonight (see Rules.DryFrom), from saved history.
+-- Players to roll first tonight: the regulars of this raid instance (see
+-- Rules.RegularsFrom), from saved history. Before the instance is known
+-- (started outside), every raid counts.
 function NS.DryLastRaid()
     local S = NS.S()
-    return Rules.DryFrom(NS.DB.history, S and S.id)
+    return Rules.RegularsFrom(NS.DB.history, S and S.id, S and (S.inst or raidInstance()))
 end
 
 local lastSyncFrom, lastErrTo = {}, {}
@@ -702,6 +801,15 @@ function NS.HandleRequest(who, req, quiet)
         since = function(key)
             local up = interestAt[S.id .. "\t" .. key]
             return up and up.at
+        end,
+        rollingSince = function(key)
+            return rollingAt[S.id .. "\t" .. key]
+        end,
+        inEncounter = function()
+            return C_InstanceEncounter.IsEncounterInProgress() == true
+        end,
+        isMasterLooter = function(name)
+            return NS.Loot.IsMasterLooter(name)
         end,
     })
     if not ops then
@@ -868,6 +976,39 @@ end
 NS.On("PLAYER_ENTERING_WORLD", onRoster)
 -- Names hidden during a fight read again after it.
 NS.On("ENCOUNTER_END", onRoster)
+
+-- A boss pull, on the host. Reserves close before the first drop can be
+-- seen, even when nobody clicked Start raid. Rolls made during the fight
+-- may be unreadable (secret chat), so a roll open at the pull is voided
+-- after it and everyone rolls again.
+local rollingAtPull = {} -- item key -> session id, for rolls open at the pull
+NS.On("ENCOUNTER_START", function()
+    wipe(rollingAtPull)
+    local S = NS.S()
+    if not NS.IsHost() or (NS.Demo and NS.Demo.active) then
+        return
+    end
+    for key, item in pairs(S.items) do
+        if item.state == "rolling" then
+            rollingAtPull[key] = S.id
+        end
+    end
+    if S.phase == "reserve" and raidInstance() then
+        NS.Print("A boss was pulled, so the raid has started. Reserves are closed.")
+        NS.Act("PHASE", "live")
+    end
+end)
+NS.On("ENCOUNTER_END", function()
+    local S = NS.S()
+    for key, id in pairs(rollingAtPull) do
+        local item = S and S.id == id and NS.IsHost() and S.items[key]
+        if item and item.state == "rolling" then
+            NS.Print("A boss was pulled during the roll. Everyone rolls again.")
+            NS.Act("VOID", key)
+        end
+    end
+    wipe(rollingAtPull)
+end)
 NS.On("PLAYER_REGEN_ENABLED", onRoster)
 -- The roster event fires in bursts while a raid forms or zones in:
 -- rebuild once per frame, not once per event.
@@ -1044,6 +1185,7 @@ NS.Commands = {
         fn = function(rest)
             local s = NS.ItemStringOf(rest)
             if s then
+                NS.Loot.WarnAdd(s)
                 NS.Act("ADD", s)
             else
                 NS.Print("Usage: /rlc add <shift-click an item>")

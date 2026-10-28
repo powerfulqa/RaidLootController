@@ -23,6 +23,7 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). Update it with any player-facing change. |
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
 | `RLC_UI.lua` | The window (Loot, Raid, History, Stats, Catalogue, Commands, Help tabs; resizable, size saved in `RaidLootControllerDB.window`), the copy window (`NS.ShowCopy`), the spec menus and the minimap button. The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
+| `tools/install/` | One-click installers, release assets: `Install-RaidLootController.bat` (cmd stub; the release build appends `Install-RaidLootController.ps1` below a `#RLCPAYLOAD#` marker, CRLF) and `install-raidlootcontroller.command` (Mac/Linux bash). Both find the Forever folder (`.flavor.info` = `wowf`, else `_forever_`, else `_classic_beta_`), download the latest zip, replace `Interface/AddOns/RaidLootController`, never touch `WTF`. Built and attached by `release.yml`. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
 `Rules.Intent`, applies the ops, and queues them to the group. On anyone
@@ -206,10 +207,57 @@ only from the session host (and `NEW` only from a leader or assistant).
     - `hooksecurefunc("GiveMasterLoot", ...)` fires when the master looter
       gives from Blizzard's own loot menu, with (slot, candidate index), so a
       win given by hand is confirmed only when it reaches its winner.
-    - A v0.6.1 client handed a `LOG2` op says "newer version" once and does
-      not resync (read from v0.6.1 source; not seen in game).
+    - A v0.6.1 client handed a `LOG2` op: **corrected 2026-10-28 from v0.6.1
+      source.** It does resync: `Rules.Apply` reaches `"no item"` (the op's
+      key is no item) before `"unknown op"`, and a rejected op asks for the
+      raid again. From v0.7.0 an op kind a copy does not know reads as
+      `"unknown op"` (a newer host): one "newer version" line, no resync.
+      v0.6.1 clients in a v0.7.0 raid still resync on each `LOG2`.
     - Roster entries carried through an encounter are marked `stale` and
       skipped for trade, whisper and attendance until names read again.
+
+24. New in v0.7.0 (fairness round, 2026-10-28), all unmeasured. Probes:
+    [docs/probes.md](docs/probes.md).
+    - (a) `UnitIsConnected("raidN")` is readable (not secret) for raid units,
+      in and out of encounters, and false for an offline member.
+    - (b) The 60 s attendance ticker (`markAttendance` in `RLC_Core.lua`)
+      runs while live and `S.attSpan` grows by about 60 per minute; a
+      loading screen or logout (gap over 90 s) adds nothing. `S.inst` gets the
+      raid instance ID.
+    - (c) `ENCOUNTER_START` fires on Forever raid bosses: a raid still in
+      reserves goes live on the first pull (inside a raid instance), and a
+      roll open at the pull is voided at `ENCOUNTER_END` (`VOID`).
+    - (d) `GetLootSourceInfo(slot)` and `GetLootSlotLink(slot)` still return
+      the slot's source and link inside the `GiveMasterLoot` post-hook, so a
+      give to a non-winner sends `MLGAVE`.
+    - (e) Same-instance attendance is not checked: `UnitPosition` gives
+      nothing for other players inside instances, so a member online
+      elsewhere counts as present. Measure whether any readable API
+      (`UnitInRange`, `C_Map.GetBestMapForUnit`, `UnitIsVisible`) tells.
+    - (f) The installers on macOS (Gatekeeper on a downloaded `.command`, run
+      with `bash`) and against a real Battle.net WoW install.
+      *Measured 2026-10-28 on a Windows 11 VM (Windows PowerShell 5.1, UK
+      keyboard), fake Forever folder plus registry `InstallPath`:* the
+      single-file `.bat` with a downloaded-file mark shows "Open File -
+      Security Warning" (Run), not SmartScreen; Defender did not flag it;
+      it found `_forever_` from the registry, downloaded the real release,
+      replaced the folder (stale file gone, SavedVariables kept, no temp
+      left). With the game folder not writable it offers to retry as
+      administrator; the relaunch first runs `Unblock-File` (without it the
+      security warning reopens behind the window and the install looks
+      hung), then UAC, then installs into the folder found before.
+    - (g) The `Use:`, hit and crit phrase reading in `Specs.ItemKinds` on
+      real Forever tooltips (English phrases, `ITEM_MOD_*_RATING_SHORT` keys).
+    - (h) Breadcrumbs (`myStep` in `RLC_UI.lua`): exactly one thing glows per
+      player (button, else its tab, else the item's queue row); the "Next:"
+      line fits under the tabs at the minimum window size; Call roll greys
+      during a pull and returns after `ENCOUNTER_END`; a client's Close roll
+      lights after about 16 s and the host accepts it; New raid glows for the
+      leader only (`IsInRaid`, `UnitIsGroupLeader`); the half-alpha reserve
+      glow is visible but soft.
+    - (i) The Bench... flyout ticks stick for a non-host officer.
+    - Forever's flavor folder is now `_forever_` (product `wowf` in
+      `.flavor.info`), not `_classic_beta_`. The installers try both.
 
 ## Dev tooling
 
