@@ -4,7 +4,7 @@ Raid Loot Controller: a no-DKP raid loot addon for **WoW: Forever**
 (interface 16001). Forever is the Mainline 12.1.x client wearing a Classic
 version number: use the `C_*` API surface, never Classic globals.
 
-**Status: v0.6.1, still mostly unmeasured in game.** Most of what sits below the
+**Status: v0.7.0, still mostly unmeasured in game.** Most of what sits below the
 rules layer is unmeasured on the live client. Treat the in-game checklist at
 the end as open until someone ticks it off in a real group.
 
