@@ -7,6 +7,8 @@
 
 Fair raid loot for **WoW: Forever** (interface 16001), without DKP.
 
+Loot rewards the time you give, not points you save up. Everyone gets one item before anyone gets two, and the players who turn up week after week roll first. Why the rules are the way they are, and how they were tested against players trying to game them: [docs/FAIRNESS_AUDIT.md](docs/FAIRNESS_AUDIT.md).
+
 ## Install
 
 **One click (Windows):** download **[Install-RaidLootController.bat](https://github.com/powerfulqa/RaidLootController/releases/latest/download/Install-RaidLootController.bat)** and double-click it. It finds WoW: Forever, installs the addon (or updates it) and keeps your settings and loot history.
@@ -162,5 +164,9 @@ stylua --check *.lua tests/*.lua
 ```
 
 CI runs all of these on every push. Releases: see [CHANGELOG.md](CHANGELOG.md) and the release steps in CLAUDE.md.
+
+- The installers live in [tools/install/](tools/install/); the release build joins the `.bat` and `.ps1` into one file.
+- What is still unmeasured in the game, and the `/dump` probes to check it: the checklist at the end of CLAUDE.md and [docs/probes.md](docs/probes.md).
+- The fairness audit, its simulation numbers and what each finding became: [docs/FAIRNESS_AUDIT.md](docs/FAIRNESS_AUDIT.md).
 
 See [CLAUDE.md](CLAUDE.md) for the code map and the rules for working here.

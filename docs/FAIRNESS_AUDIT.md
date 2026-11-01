@@ -7,8 +7,9 @@ currency.** Wire forging and taint are out of scope (covered by the
 
 ## Status (v0.7.0)
 
-Checked against the v0.7.0 diff (2026-10-28). Still unmeasured in game:
-CLAUDE.md checklist 24.
+Released in v0.7.0 (2026-11-01). Checked against the v0.7.0 diff
+(2026-10-28). Still unmeasured in game: CLAUDE.md checklist 24. Open
+items: A4, A7; partly fixed: F5, A2, A6, O6, O8; declined: S6.
 
 | ID | Status | What landed |
 |---|---|---|

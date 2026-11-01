@@ -298,10 +298,19 @@ Same flow as EbonClearance, driven by `.github/workflows/release.yml`.
 3. Commit and push, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. The workflow writes the version into the `.toc`, re-runs syntax checks
    and tests, zips `RaidLootController/` (every `RLC_*.lua`, the `.toc`,
-   `LICENSE`; it fails if a file the `.toc` loads is missing), commits
-   `Update version to vX.Y.Z [skip ci]` to `main`, and publishes the
-   release with that changelog section. Never bump `## Version:` by hand.
+   `LICENSE`, `Bindings.xml`; it fails if a file the `.toc` loads is
+   missing), builds the one-file `Install-RaidLootController.bat` (stub +
+   `#RLCPAYLOAD#` + `.ps1`, CRLF) and copies `install-raidlootcontroller.command`,
+   commits `Update version to vX.Y.Z [skip ci]` to `main`, and publishes the
+   release with that changelog section and all three files. Never bump
+   `## Version:` by hand.
 5. **Then `git pull --rebase`**: the bot commit leaves local one behind.
+6. Check the release: `gh release download vX.Y.Z` (zip holds only the
+   addon files, `.toc` has the version, the `.bat` has one marker and CRLF).
+   When the installer changed, test it on Windows in the local VM
+   (`sbx4-win`), not on GitHub runners: fake Forever folder plus registry
+   `InstallPath`, download with a `Zone.Identifier`, open via Explorer as a
+   normal user (see checklist 24 (f)).
 
 Download link for players (always the newest):
 https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip
