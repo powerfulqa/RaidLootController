@@ -2704,44 +2704,95 @@ end
 -- it round the minimap edge. /rlc minimap hides or shows it. Same shape as
 -- the WoWClearance button, which is measured working on this client.
 
+-- The standard minimap-button library, when another addon (Leatrix Plus,
+-- a button bag) has loaded it. RLC ships no libraries, but such collectors
+-- wrap any other button with a "custom button" notice in place of our
+-- tooltip. So with the library present the button is registered through
+-- it (the WoWClearance pattern), and the kit button is the fallback.
+local function dbIcon()
+    local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+    local lib = LibStub and LibStub("LibDBIcon-1.0", true)
+    return LDB and lib, LDB
+end
+
+-- The library reads and writes position and hidden state in this table.
+-- It stays empty, so both map onto RLC's own saved fields (and follow the
+-- demo's swapped NS.DB).
+local iconDB = setmetatable({}, {
+    __index = function(_, k)
+        if k == "minimapPos" then
+            return NS.DB.minimapAngle or 145
+        elseif k == "hide" then
+            return NS.DB.minimapButton == false
+        end
+    end,
+    __newindex = function(_, k, v)
+        if k == "minimapPos" and type(v) == "number" then
+            NS.DB.minimapAngle = v
+        elseif k == "hide" then
+            NS.DB.minimapButton = not v
+        end
+    end,
+})
+
+local function onMinimapClick(_, button)
+    if button == "RightButton" then
+        current = "catalog"
+        NS.Show()
+    else
+        NS.Toggle()
+    end
+end
+
+local function onMinimapEnter(self)
+    local lines, S = {}, NS.S()
+    if S then
+        lines[1] = (S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or "")
+        local item = S.active and S.items[S.active]
+        if item then
+            lines[2] = "Up now: " .. NS.LinkOf(item.itemString)
+        end
+    end
+    NS.Kit.MinimapTooltip(
+        self,
+        "Raid Loot Controller",
+        "ff8800",
+        lines,
+        "Left-click: open  |  Right-click: catalogue  |  Drag: move"
+    )
+end
+
 local function createMinimapButton()
     -- Not created at all when hidden: parenting a frame to the minimap is
     -- itself what some minimap replacements react badly to.
     if mmButton or NS.DB.minimapButton == false then
         return
     end
-    mmButton = NS.Kit.MinimapButton({
-        name = "RaidLootControllerMinimapButton",
-        icon = 133639, -- inv_misc_bag_10, same as the .toc icon
-        db = NS.DB,
-        key = "minimapAngle",
-        angle = 145, -- WoWClearance's sits at 190: keep them apart
-        onClick = function(_, button)
-            if button == "RightButton" then
-                current = "catalog"
-                NS.Show()
-            else
-                NS.Toggle()
-            end
-        end,
-        onEnter = function(self)
-            local lines, S = {}, NS.S()
-            if S then
-                lines[1] = (S.title or "") .. " - " .. (PHASE_TEXT[S.phase] or "")
-                local item = S.active and S.items[S.active]
-                if item then
-                    lines[2] = "Up now: " .. NS.LinkOf(item.itemString)
-                end
-            end
-            NS.Kit.MinimapTooltip(
-                self,
-                "Raid Loot Controller",
-                "ff8800",
-                lines,
-                "Left-click: open  |  Right-click: catalogue  |  Drag: move"
-            )
-        end,
-    })
+    local lib, LDB = dbIcon()
+    if lib then
+        local obj = LDB:GetDataObjectByName("RaidLootController")
+            or LDB:NewDataObject("RaidLootController", {
+                type = "launcher",
+                label = "Raid Loot Controller",
+                icon = 133639,
+                OnClick = onMinimapClick,
+                OnEnter = onMinimapEnter,
+                OnLeave = GameTooltip_Hide,
+            })
+        lib:Register("RaidLootController", obj, iconDB)
+        mmButton = lib:GetMinimapButton("RaidLootController")
+    end
+    if not mmButton then
+        mmButton = NS.Kit.MinimapButton({
+            name = "RaidLootControllerMinimapButton",
+            icon = 133639, -- inv_misc_bag_10, same as the .toc icon
+            db = NS.DB,
+            key = "minimapAngle",
+            angle = 145, -- WoWClearance's sits at 190: keep them apart
+            onClick = onMinimapClick,
+            onEnter = onMinimapEnter,
+        })
+    end
     AddGlow(mmButton, "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
     NS.Refresh() -- sets its glow
 end
@@ -2750,11 +2801,16 @@ function NS.SetMinimapButton(show)
     NS.DB.minimapButton = show
     if show then
         createMinimapButton()
-        if mmButton then
-            mmButton:Show()
+    end
+    local lib = dbIcon()
+    if lib and lib:GetMinimapButton("RaidLootController") then
+        if show then
+            lib:Show("RaidLootController")
+        else
+            lib:Hide("RaidLootController")
         end
     elseif mmButton then
-        mmButton:Hide()
+        mmButton:SetShown(show)
     end
 end
 

@@ -260,7 +260,12 @@ function Kit.MinimapButton(opts)
     border:SetPoint("TOPLEFT")
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
+    -- A minimap-button collector (a button tray) may reparent the button.
+    -- Then it is that addon's to place: never pull it back to the minimap.
     function btn.Place()
+        if btn:GetParent() ~= Minimap then
+            return
+        end
         local angle = math.rad(opts.db[opts.key] or opts.angle)
         local mw, mh = Minimap:GetWidth() or 0, Minimap:GetHeight() or 0
         local rx = mw > 0 and mw / 2 + EDGE or 80
@@ -277,6 +282,9 @@ function Kit.MinimapButton(opts)
 
     -- OnUpdate exists only while dragging.
     btn:SetScript("OnDragStart", function(self)
+        if self:GetParent() ~= Minimap then
+            return -- collected: keep the saved angle for when it is not
+        end
         self:SetScript("OnUpdate", function()
             local mx, my = Minimap:GetCenter()
             local scale = Minimap:GetEffectiveScale()
