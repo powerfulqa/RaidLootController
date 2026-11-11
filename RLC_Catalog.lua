@@ -746,7 +746,9 @@ local function attribution(instID, sourceGUID)
     return 0, "Trash", sourceGUID or ("T" .. GetServerTime())
 end
 
-NS.On("LOOT_OPENED", function()
+-- Read on LOOT_READY too: fast-loot addons empty slots before LOOT_OPENED.
+-- Each loot-window entry is recorded once (e.cat), whichever event saw it.
+local function fromLootWindow()
     if NS.Demo and NS.Demo.active then
         return
     end
@@ -757,9 +759,12 @@ NS.On("LOOT_OPENED", function()
     local now = GetServerTime()
     local news = {}
     for _, e in ipairs(NS.Loot.LootSlots()) do
-        local bossKey, bossName, killId = attribution(instID, e.source)
-        if Catalog.Record(cat(), instID, instName, bossKey, bossName, e.itemString, killId, now) then
-            news[#news + 1] = { "CD", instID, instName, bossKey, bossName, e.itemString, killId, now }
+        if not e.cat then
+            e.cat = true
+            local bossKey, bossName, killId = attribution(instID, e.source)
+            if Catalog.Record(cat(), instID, instName, bossKey, bossName, e.itemString, killId, now) then
+                news[#news + 1] = { "CD", instID, instName, bossKey, bossName, e.itemString, killId, now }
+            end
         end
     end
     -- Under group loot the whole raid opens the corpse. Each waits a random
@@ -774,7 +779,9 @@ NS.On("LOOT_OPENED", function()
         end)
     end
     NS.Refresh()
-end)
+end
+NS.On("LOOT_READY", fromLootWindow)
+NS.On("LOOT_OPENED", fromLootWindow)
 
 NS.On("ENCOUNTER_LOOT_RECEIVED", function(encID, _, itemLink)
     if not NS.CanRead(encID, itemLink) then

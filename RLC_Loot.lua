@@ -113,19 +113,28 @@ local added = {}
 
 -- The open loot window's items at or above the quality setting:
 -- { slot, itemString, source (corpse GUID), key }. The catalogue reads it too.
+-- Fast-loot addons (Leatrix Plus, GW2_UI) take slots on LOOT_READY, before
+-- LOOT_OPENED, so every read adds to a snapshot kept until LOOT_CLOSED: a
+-- slot looted away still counts. Keyed by source + slot, so a slot read on
+-- both events is one entry.
+local snap, snapKeys = {}, {}
 function Loot.LootSlots()
-    local out = {}
     for slot = 1, GetNumLootItems() do
         local link = GetLootSlotLink(slot)
         local _, _, _, _, quality = GetLootSlotInfo(slot)
         local s = NS.ItemStringOf(link)
         if s and quality and quality >= NS.DB.minQuality then
             local source = GetLootSourceInfo(slot)
-            out[#out + 1] = { slot = slot, itemString = s, source = source, key = tostring(source) .. ":" .. slot }
+            local key = tostring(source) .. ":" .. slot
+            if not snapKeys[key] then
+                snapKeys[key] = true
+                snap[#snap + 1] = { slot = slot, itemString = s, source = source, key = key }
+            end
         end
     end
-    return out
+    return snap
 end
+NS.On("LOOT_READY", Loot.LootSlots)
 
 function Loot.PendingFromWindow()
     local n = 0
@@ -378,6 +387,7 @@ NS.On("LOOT_OPENED", function()
 end)
 NS.On("LOOT_CLOSED", function()
     Loot.lootOpen = false
+    snap, snapKeys = {}, {}
     for _, t in ipairs({ giving, byHand }) do
         for slot, g in pairs(t) do
             t[slot] = nil
@@ -755,12 +765,48 @@ local function containerFrames()
     return frames
 end
 
+-- BetterBags (MIT) hides those container frames, so there owed items go in
+-- a category of their own instead. Optional: without BetterBags nothing
+-- here runs. Its Categories module is internal (AceAddon), so every piece
+-- is checked and a failure only reaches the error frame.
+local BB_CATEGORY = "RaidLoot: Owed"
+local bbCategories, bbContext, bbFiled
+local function hookBetterBags()
+    local ace = LibStub and LibStub("AceAddon-3.0", true)
+    local bb = ace and ace:GetAddon("BetterBags", true)
+    local cats = bb and bb:GetModule("Categories", true)
+    local ctx = bb and bb:GetModule("Context", true)
+    if not (cats and ctx and cats.RegisterCategoryFunction and cats.WipeCategory and cats.ReprocessAllItems) then
+        return
+    end
+    cats:RegisterCategoryFunction("RaidLootController", function(data)
+        local id = NS.DB and data and data.itemInfo and data.itemInfo.itemID
+        return id and owedMap()[id] and BB_CATEGORY or nil
+    end)
+    bbCategories, bbContext = cats, ctx
+    bbFiled = next(owedMap()) ~= nil
+end
+
+-- BetterBags files an item once and keeps it there, so empty the category
+-- and have it work every item out again. Costly: only when something is or
+-- was owed.
+local function refileBetterBags()
+    local any = next(owedMap()) ~= nil
+    if any or bbFiled then
+        local ctx = bbContext:New("RaidLootController")
+        bbCategories:WipeCategory(ctx, BB_CATEGORY)
+        bbCategories:ReprocessAllItems(ctx)
+    end
+    bbFiled = any
+end
+
 NS.On("PLAYER_LOGIN", function()
     for _, frame in ipairs(containerFrames()) do
         if frame.UpdateItems then
             hooksecurefunc(frame, "UpdateItems", paintFrame)
         end
     end
+    hookBetterBags()
 end)
 
 -- Call after any change to NS.DB.owed: rebuilds the lookup, repaints open
@@ -770,6 +816,12 @@ function Loot.OwedChanged()
     for _, frame in ipairs(containerFrames()) do
         if frame:IsShown() then
             paintFrame(frame)
+        end
+    end
+    if bbCategories then
+        local ok, err = pcall(refileBetterBags)
+        if not ok then
+            geterrorhandler()(err)
         end
     end
     if NS.Refresh then
