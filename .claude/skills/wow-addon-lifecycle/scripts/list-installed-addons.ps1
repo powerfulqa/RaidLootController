@@ -42,7 +42,7 @@ $editionMap = @{
     classic      = '_classic_'
     classic_era  = '_classic_era_'
     anniversary  = '_anniversary_'
-    forever      = '_classic_beta_'  # WoW: Forever beta folder; recheck at launch (2026-11-04)
+    forever      = '_forever_'  # WoW: Forever (was _classic_beta_ during the beta)
 }
 
 $editionDir = $editionMap[$Edition]

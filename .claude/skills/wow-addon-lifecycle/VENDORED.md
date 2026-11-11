@@ -9,7 +9,7 @@ Local changes:
 - `SKILL.md`: renamed `wow-addon-dev` -> `wow-addon-lifecycle` (the name clashes with two
   installed plugins) and added a note pointing at this repo's `CLAUDE.md`.
 - `scripts/install-addon.ps1`, `scripts/list-installed-addons.ps1`: added the `forever`
-  edition (`_classic_beta_`). Recheck the folder name at Forever's launch.
+  edition (`_forever_`; `_classic_beta_` during the beta).
 
 To update: clone the source again, copy `SKILL.md`, `references/`, `scripts/`, `examples/`,
 then reapply the changes above.

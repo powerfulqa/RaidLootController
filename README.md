@@ -23,7 +23,7 @@ Loot rewards the time you give, not points you save up. Everyone gets one item b
 **By hand:**
 
 1. Download **[RaidLootController.zip](https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip)** (latest release).
-2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. That folder is `World of Warcraft\_forever_\Interface\AddOns` (`_classic_beta_` during the beta).
+2. Unzip it into your WoW: Forever `Interface\AddOns` folder, so you get `Interface\AddOns\RaidLootController\RaidLootController.toc`. That folder is `World of Warcraft\_forever_\Interface\AddOns`.
 3. Restart the game (or `/reload`) and type `/rlc`.
 
 **In the raid:** open the window with `/rlc` or the minimap button, read the **Next:** line at the top, and click the glowing button. That is all most raiders need.

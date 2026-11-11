@@ -41,7 +41,7 @@ Re-fetch that page when a fact matters; builds move fast.
 - Secret values: player `UnitHealth`, unit names, `UnitExists` / `UnitCanAttack` results can be secret. Guard with `issecretvalue` (or `canaccessvalue`) before comparing, branching, concatenating or printing. A blocked protected call can fail silently; `pcall` does not clear it.
 - Secure snippets failed to compile on 69913 (likely bug). Use own buttons; never write secure attributes to Blizzard unit frames.
 - SavedVariables: read/create only in `ADDON_LOADED`. Restore on startup was broken before build 70009.
-- Beta path `World of Warcraft\_classic_beta_\Interface\AddOns\`. Launch 2026-11-04. Internal name "Camelot".
+- Path `World of Warcraft\_forever_\Interface\AddOns\` (`_classic_beta_` during the beta). Launch 2026-11-04. Internal name "Camelot".
 - Not covered there (still unverified): master loot, chat/addon-message behaviour, LibStub/Ace3.
 
 ## Critical operating principle
