@@ -62,6 +62,9 @@ only from the session host (and `NEW` only from a leader or assistant).
 - Before committing: every `tests/test_*.lua` (`for t in tests/test_*.lua; do lua5.1 $t; done`; CI does the same; plain `lua` may be 5.5, which refuses the raid sim),
   including `tests/test_raid_sim.lua` (a raid night with chaotic players, plus 8 weeks of fairness numbers),
   `luacheck *.lua tests/*.lua` (0 warnings), `stylua --check *.lua tests/*.lua`.
+  Also `for f in RLC_*.lua; do luac5.1 -p $f; done`: no test loads `RLC_UI.lua`, and
+  only the compiler sees the 200-locals-per-chunk limit that file sits near
+  (new pages go in a `do ... end` block).
 - Two addon-message prefixes: `RLC1` (live session) and `RLCC` (catalogue),
   so a catalogue upload never takes the send budget live rolls need.
 
@@ -311,7 +314,8 @@ Same flow as EbonClearance, driven by `.github/workflows/release.yml`.
 
 1. Run the checks above (tests, luacheck 0, stylua) on a green `main`.
 2. Add a `### vX.Y.Z` section to `CHANGELOG.md` (player-facing, short).
-   Update `README.md` and the Help tab for any player-facing change.
+   Update the Help tab and `docs/GUIDE.md` for any player-facing change
+   (`README.md` is the short overview: touch it only for headline features).
 3. Commit and push, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. The workflow writes the version into the `.toc`, re-runs syntax checks
    and tests, zips `RaidLootController/` (every `RLC_*.lua`, the `.toc`,
