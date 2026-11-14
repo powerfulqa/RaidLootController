@@ -821,6 +821,32 @@ function Catalog.Ask(dest, force)
     NS.Net.QueueCatalog({ "CQE", NS.VERSION }, dest) -- older clients ignore the version
 end
 
+-- Who has the addon (the Versions tab). "CV", version[, "?"] goes to the
+-- group; with the "?" everyone who hears it answers with a plain CV.
+-- v0.7.0 and older ignore CV: they show up once they send anything else.
+local TELL_GAP = 10 -- seconds between our answers, and between our questions
+local lastTell, lastAskV, tellPending = -TELL_GAP, -TELL_GAP, false
+local function tellVersion()
+    if tellPending then
+        return -- the answer on its way reaches every asker
+    end
+    tellPending = true
+    -- Spread out, so a whole raid does not answer in the same second.
+    C_Timer.After(math.max(1 + math.random() * 4, lastTell + TELL_GAP - GetTime()), function()
+        tellPending, lastTell = false, GetTime()
+        NS.Net.QueueCatalog({ "CV", NS.VERSION }, "GROUP")
+    end)
+end
+-- Returns false when there is nobody to ask or we asked a moment ago.
+function Catalog.AskVersions()
+    if not IsInGroup() or GetTime() - lastAskV < TELL_GAP then
+        return false
+    end
+    lastAskV = GetTime()
+    NS.Net.QueueCatalog({ "CV", NS.VERSION, "?" }, "GROUP")
+    return true
+end
+
 local asking = {} -- dest .. sender -> { dest, digest, n } while their request arrives
 local pending = {} -- dest .. instID -> heard answers (Catalog.NoteHeard) while we wait
 local servedSender = {} -- dest .. sender -> GetTime() we last answered them
@@ -893,6 +919,11 @@ function Catalog.OnMessage(ops, dest, sender)
             NS.NoteVersion(sender, op[2])
             answer(dest .. sender, asking[dest .. sender] or { dest = dest, digest = {} })
             asking[dest .. sender] = nil
+        elseif kind == "CV" then
+            NS.NoteVersion(sender, op[2])
+            if op[3] == "?" and dest == "GROUP" and NS.roster[sender] then
+                tellVersion()
+            end
         else
             local instID = int(op[2], 1, 1e9)
             if instID and pending[dest .. instID] then
@@ -943,6 +974,7 @@ NS.On("PLAYER_ENTERING_WORLD", function(isInitialLogin, isReload)
             Catalog.Ask("GUILD")
             if IsInGroup() then
                 Catalog.Ask("GROUP")
+                Catalog.AskVersions()
             end
         end)
     end
@@ -954,6 +986,7 @@ NS.On("GROUP_ROSTER_UPDATE", function()
     if grouped and not wasGrouped then
         C_Timer.After(10, function()
             Catalog.Ask("GROUP")
+            Catalog.AskVersions()
         end)
     end
     wasGrouped = grouped

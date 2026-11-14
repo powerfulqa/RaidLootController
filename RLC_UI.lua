@@ -625,14 +625,15 @@ local TABS = {
     { "history", "History" },
     { "stats", "Stats" },
     { "catalog", "Catalogue" },
+    { "versions", "Versions" },
     { "commands", "Commands" },
     { "help", "Help" },
 }
 for i, def in ipairs(TABS) do
-    local b = Button(f, def[2], 92, function()
+    local b = Button(f, def[2], 84, function()
         showPage(def[1])
     end)
-    b:SetPoint("TOPLEFT", 12 + (i - 1) * 96, -30)
+    b:SetPoint("TOPLEFT", 12 + (i - 1) * 87, -30) -- 8 tabs across the minimum width
     AddGlow(b)
     tabs[def[1]] = b
 end
@@ -2354,6 +2355,130 @@ local function refreshStats()
     end)
 end
 
+-- ---- Versions page --------------------------------------------------------------------
+-- Everyone known to have the addon, with their version: NS.versions (filled
+-- by any addon message a player sends, group or guild, and by the "CV"
+-- answers in RLC_Catalog.lua) plus yourself. Players without it are not
+-- listed. Copy list gives the ones in your group as text, for attendance.
+
+local vp = page("versions")
+local verSummary = Text(vp, "GameFontHighlight")
+verSummary:SetPoint("TOPLEFT", 0, -2)
+verSummary:SetPoint("TOPRIGHT", 0, -2)
+local verHelp = Text(vp, "GameFontDisableSmall")
+verHelp:SetPoint("BOTTOMLEFT", 0, 4)
+verHelp:SetPoint("BOTTOMRIGHT", -214, 4)
+verHelp:SetWordWrap(true)
+verHelp:SetText(
+    "Players with the addon answer when you join the group. Guildmates show once their addon "
+        .. "has sent something. A v0.7.0 or older copy shows only after it sends something."
+)
+local verCheck = Button(vp, "Check again", 100, function()
+    if NS.Catalog.AskVersions() then
+        NS.Print("Asked the group who has the addon. Answers take a few seconds.")
+    end
+end)
+verCheck:SetPoint("BOTTOMRIGHT", 0, 2)
+local verList = List(vp, 696, 340, { 200, 200, 130 }, false, nil, { "Player", "Version", "In your group" })
+verList.frame:SetPoint("TOPLEFT", 4, -42)
+verList.frame:SetPoint("BOTTOMRIGHT", -26, 34)
+
+local VER_TEXT = {
+    same = "%s",
+    unknown = "%s",
+    older = "|cffff8800%s (older than yours)|r",
+    newer = "|cff66ccff%s (newer than yours)|r",
+}
+-- names (sorted), version by name, and where each is: "here", "offline"
+-- (in the group, disconnected) or nil (not in the group).
+local function versionRows()
+    local me = NS.Me()
+    local names, ver, where = {}, {}, {}
+    for name, v in pairs(NS.versions) do
+        ver[name] = v
+    end
+    if me then
+        ver[me] = NS.VERSION
+    end
+    for name in pairs(ver) do
+        names[#names + 1] = name
+        local r = NS.roster[name]
+        if r then
+            local on = r.unit and not r.stale and UnitIsConnected(r.unit) -- can be secret
+            where[name] = (NS.CanRead(on) and on == false) and "offline" or "here"
+        end
+    end
+    table.sort(names)
+    return names, ver, where
+end
+local function verPlain(v)
+    return v == "?" and "version not heard" or v
+end
+local verCopy = Button(vp, "Copy list", 100, function()
+    local names, ver, where = versionRows()
+    local grouped, lines = IsInGroup(), {}
+    for _, name in ipairs(names) do
+        if where[name] or not grouped then
+            lines[#lines + 1] = NS.Short(name)
+                .. "  "
+                .. verPlain(ver[name])
+                .. (where[name] == "offline" and "  (offline)" or "")
+        end
+    end
+    table.insert(
+        lines,
+        1,
+        ("Raid Loot Controller installed, %s: %d %s"):format(
+            date("%Y-%m-%d %H:%M"),
+            #lines,
+            grouped and "in the group" or "players"
+        )
+    )
+    NS.ShowCopy("Players with the addon", table.concat(lines, "\n"))
+end)
+verCopy:SetPoint("RIGHT", verCheck, "LEFT", -4, 0)
+
+local WHERE_TEXT = { here = "|cff66ff66yes|r", offline = "|cff999999offline|r" }
+local function refreshVersions()
+    local names, ver, where = versionRows()
+    local here, older = 0, 0
+    for _, name in ipairs(names) do
+        here = here + (where[name] and 1 or 0)
+        older = older + (Rules.VersionState(ver[name], NS.VERSION) == "older" and 1 or 0)
+    end
+    verList:Sort(names, {
+        NS.Short,
+        function(name)
+            return ver[name]
+        end,
+        function(name)
+            return where[name] or ""
+        end,
+    })
+    verList:Set(#names, function(r, i)
+        local name = names[i]
+        local v = ver[name]
+        r.data = name
+        r.cols[1]:SetText(NS.ColorName(name))
+        r.cols[2]:SetText(
+            v == "?" and "|cff999999not heard yet|r" or VER_TEXT[Rules.VersionState(v, NS.VERSION)]:format(v)
+        )
+        r.cols[3]:SetText(WHERE_TEXT[where[name]] or "")
+    end)
+    verCheck:SetEnabled(IsInGroup())
+    local total = 0
+    for _ in pairs(NS.roster) do
+        total = total + 1
+    end
+    verSummary:SetText(
+        ("%d players with the addon.%s%s"):format(
+            #names,
+            IsInGroup() and ("  %d of the %d in your group."):format(here, total) or "",
+            older > 0 and ("  |cffff8800%d on an older version than you.|r"):format(older) or ""
+        )
+    )
+end
+
 -- ---- refresh -------------------------------------------------------------------------
 
 local pendingRefresh = false
@@ -2667,6 +2792,8 @@ local function refreshNow()
         refreshCommands()
     elseif current == "stats" then
         refreshStats()
+    elseif current == "versions" then
+        refreshVersions()
     else
         refreshHistory()
     end

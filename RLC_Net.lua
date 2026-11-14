@@ -291,6 +291,7 @@ NS.On("CHAT_MSG_ADDON", function(prefix, msg, channel, sender)
     if not sender or sender == me then
         return -- our own broadcast, echoed back
     end
+    NS.NoteAddon(sender)
     if prefix == CAT_PREFIX then
         if channel == "GUILD" or GROUP_CHANNELS[channel] then
             NS.Catalog.OnMessage(Rules.Decode(msg), channel == "GUILD" and "GUILD" or "GROUP", sender)

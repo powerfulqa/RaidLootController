@@ -344,6 +344,21 @@ local ENTRIES = {
         tab = "stats",
     },
     {
+        q = "Who in the raid has the addon?",
+        a = "The Versions tab lists every player known to have the addon, with their version and "
+            .. "whether they are in your group. Players without it are not listed. "
+            .. "Copy list gives the ones in your group as text, to take attendance.\n\n"
+            .. "Players answer when you join the group; Check again asks once more. "
+            .. "A v0.7.0 or older copy shows only after it sends something.",
+        tab = "versions",
+    },
+    {
+        q = "Does it work with DaylightUI?",
+        a = "Yes. With DaylightUI installed (and its Skins module on), the window, the spec menu and the "
+            .. "copy window take DaylightUI's look. /rlc daylight turns that off or on; "
+            .. "switching it off takes a /reload. Without DaylightUI nothing changes.",
+    },
+    {
         q = "What are the RaidLoot lines on item tooltips?",
         a = "What the addon knows about that item: who reserved it tonight, who you still need to "
             .. "trade it to, which boss it drops from (from the Catalogue), and when you last won one. "
@@ -423,6 +438,7 @@ local TAB_NAMES = {
     history = "History",
     stats = "Stats",
     catalog = "Catalogue",
+    versions = "Versions",
     commands = "Commands",
 }
 

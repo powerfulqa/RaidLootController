@@ -30,7 +30,7 @@ NS.CanRead = NS.Kit.CanRead
 -- message every client sends its guild at login and its group on joining.
 -- One chat line per session when someone has a newer one.
 
-NS.versions = {} -- name -> version, this session only
+NS.versions = {} -- name -> version ("?" = has the addon, version not heard), this session only
 local toldNewer = false
 local newerBy -- the first player who reported a newer version
 
@@ -51,11 +51,27 @@ if LinkUtil and LinkUtil.RegisterLinkHandler then
     end
 end
 
+-- Any addon message from a player shows they run the addon, whatever it
+-- says (RLC_Net.lua calls this for every sender).
+function NS.NoteAddon(name)
+    if not NS.versions[name] then
+        NS.versions[name] = "?"
+        if NS.Refresh then
+            NS.Refresh()
+        end
+    end
+end
+
 function NS.NoteVersion(name, v)
     if not Rules.ValidVersion(v) then
         return
     end
-    NS.versions[name] = v
+    if NS.versions[name] ~= v then
+        NS.versions[name] = v
+        if NS.Refresh then
+            NS.Refresh()
+        end
+    end
     if not toldNewer and Rules.VersionNewer(v, NS.VERSION) then
         -- Two players must say so: one could make up any version.
         if not newerBy or newerBy.name == name then

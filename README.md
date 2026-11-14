@@ -49,6 +49,8 @@ Everyone in the raid should install it. Players without it can still roll with `
 - **Loot catalogue.** Every notable item the addon sees drop, filed by instance and boss, with how many kills it dropped in. Search it, shift-click to link, or reserve straight from it. Raiders who missed a raid get the drops from guildmates and groupmates who were there, the next time they log in.
 - **Delivery tracking.** Items still to trade are listed on the Raid tab, with the trade time left on bound items, and glow green in the giver's bags. A master loot give that fails (full bags, unique item, out of range) goes on that list too. Trading the winner takes the item off the list, and History marks it delivered.
 - **Stats.** Every player from your saved raids: attendance, items won, free rolls and their last win, to check that loot is spread fairly.
+- **Versions.** Every player known to have the addon, with their version and whether they are in your group. Copy the list as text to take attendance.
+- **DaylightUI look.** With DaylightUI installed the windows take its look (`/rlc daylight` turns it off).
 - **Copy as text.** Copy a raid's results from the History tab to paste into Discord.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one (`/rlc tooltip` turns them off).
 - **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.

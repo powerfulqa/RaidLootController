@@ -7,6 +7,7 @@
 ## IconTexture: Interface\Icons\INV_Misc_Bag_10
 ## X-Website: https://github.com/powerfulqa/RaidLootController
 ## Category: Raid
+## OptionalDeps: DaylightUI
 ## AddonCompartmentFunc: RaidLootController_OnAddonCompartmentClick
 
 RLC_Kit.lua
@@ -19,3 +20,4 @@ RLC_Specs.lua
 RLC_UI.lua
 RLC_Help.lua
 RLC_Demo.lua
+RLC_Daylight.lua

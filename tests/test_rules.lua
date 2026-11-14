@@ -629,6 +629,12 @@ do
     check(not R.VersionNewer("dev", "v0.3.0"), "a dev copy is never newer")
     check(not R.VersionNewer("v9.9.9|r", "v0.3.0"), "junk version is never newer")
     check(R.ValidVersion("v0.3.0") and not R.ValidVersion(("1."):rep(20)), "version validation")
+    check(R.VersionState(nil, "0.7.0") == nil, "never heard from: no state")
+    check(R.VersionState("?", "0.7.0") == "unknown", "heard without a version: has the addon")
+    check(R.VersionState("0.7.0", "dev") == "unknown", "our own dev copy compares with nothing")
+    check(R.VersionState("0.6.1", "0.7.0") == "older", "older version")
+    check(R.VersionState("0.7.1", "0.7.0") == "newer", "newer version")
+    check(R.VersionState("v0.7.0", "0.7.0") == "same", "same version")
 
     local function raid(created, started, items, specs)
         local order = {}

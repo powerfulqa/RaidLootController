@@ -1579,6 +1579,18 @@ end
 Rules.ValidVersion = function(v)
     return type(v) == "string" and #v <= 16 and versionParts(v) ~= nil
 end
+-- How another player's addon compares with ours (the Versions tab): nil
+-- when we never heard from them, "unknown" when they have the addon but
+-- one of the two versions cannot be read, else "older", "newer" or "same".
+function Rules.VersionState(theirs, mine)
+    if theirs == nil then
+        return nil
+    end
+    if not Rules.ValidVersion(theirs) or not Rules.ValidVersion(mine) then
+        return "unknown"
+    end
+    return Rules.VersionNewer(theirs, mine) and "newer" or Rules.VersionNewer(mine, theirs) and "older" or "same"
+end
 
 -- ---- attendance and regulars ----------------------------------------------
 -- A saved raid's attendance is kept locally, never sent: rec.att[name] =
