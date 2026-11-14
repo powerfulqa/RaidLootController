@@ -4,6 +4,22 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.8.0
+
+**Who has the addon.** A Versions tab, the DaylightUI look, and fixes for fast-loot and bag addons.
+
+New:
+
+- **Versions tab.** Every player known to have the addon, with their version and whether they are in your group. Players answer when you join the group; Check again asks once more. **Copy list** gives the group's as text, to take attendance. Copies on v0.7.0 or older show only after they send something, so it works best once everyone has updated.
+- **DaylightUI look.** With DaylightUI installed, the window, the spec menu and the copy window take its look. `/rlc daylight` turns it off.
+- With BetterBags, items you still owe go in a "RaidLoot: Owed" category in place of the green bag marks.
+- A full guide: [docs/GUIDE.md](docs/GUIDE.md). The README is now a short overview.
+
+Fixed:
+
+- Fast-loot addons (Leatrix Plus) emptying the loot window early no longer hide drops from the raid or the catalogue.
+- Minimap button collectors (Leatrix Plus and others) no longer replace the button's tooltip with a "custom button" notice.
+
 ### v0.7.0
 
 **Turning up counts.** A fairness review: regulars roll first, real attendance, tighter rules for officers, and a one-click installer.

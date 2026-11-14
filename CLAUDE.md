@@ -4,7 +4,7 @@ Raid Loot Controller: a no-DKP raid loot addon for **WoW: Forever**
 (interface 16001). Forever is the Mainline 12.1.x client wearing a Classic
 version number: use the `C_*` API surface, never Classic globals.
 
-**Status: v0.7.0, still mostly unmeasured in game.** Most of what sits below the
+**Status: v0.8.0, still mostly unmeasured in game.** Most of what sits below the
 rules layer is unmeasured on the live client. Treat the in-game checklist at
 the end as open until someone ticks it off in a real group.
 
@@ -265,7 +265,7 @@ only from the session host (and `NEW` only from a leader or assistant).
 
 25. Versions tab (2026-11-14), all unmeasured:
     - A `CV ?` on `RLCC` goes out 10 s after joining a group and from Check
-      again; every v0.7.1+ client answers with a plain `CV` within about 5 s
+      again; every v0.8.0+ client answers with a plain `CV` within about 5 s
       (10 s apart at most), and the tab fills in.
     - v0.7.0 clients ignore `CV` and show only once they send anything.
     - Eight tabs (84 px) fit the minimum window width with readable labels.
