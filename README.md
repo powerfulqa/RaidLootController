@@ -85,3 +85,9 @@ CI runs all of these on every push. Releases: see [CHANGELOG.md](CHANGELOG.md) a
 - The fairness audit, its simulation numbers and what each finding became: [docs/FAIRNESS_AUDIT.md](docs/FAIRNESS_AUDIT.md).
 
 See [CLAUDE.md](CLAUDE.md) for the code map and the rules for working here.
+
+AI coding tools: read [AGENTS.md](AGENTS.md) first.
+
+## Licence
+
+Raid Loot Controller is source-available under its own licence. You may use it, pass on untouched copies (addon packs included) and change your own copy for your own use. You may not share a changed copy, publish a fork or reuse its code in another addon; send fixes and features as pull requests instead. The author credit and the `LICENSE` file must stay intact. Releases up to v0.9.0 stay under the earlier attribution licence. The [LICENSE](LICENSE) file has the full terms.

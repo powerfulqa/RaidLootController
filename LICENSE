@@ -1,65 +1,96 @@
-Raid Loot Controller - Source-Available Attribution License
+Raid Loot Controller - Source-Available Licence, version 2
 Copyright (c) 2026 Serv (https://github.com/powerfulqa/RaidLootController)
 
 Plain-English summary (non-binding, the formal clauses below govern):
 
-  You may use Raid Loot Controller freely, including on private servers
-  and in addon-pack bundles. You may modify it and share your
-  modifications. You may not quietly rebrand it as your own work: the
-  credits, the LICENSE file, and the SavedVariable / slash-command /
-  addon-message identifiers must stay intact. Forking under a new name
-  with full attribution preserved is fine; copying it, renaming it, and
-  presenting it as an original work is not. There is no warranty.
+  You may use Raid Loot Controller freely and pass on untouched copies,
+  including in addon packs. You may change your own copy for your own
+  use. You may not share a changed copy, publish a fork, or reuse its
+  code in another addon. Fixes and features are welcome as pull requests
+  to the official repository. The credits and this LICENSE file must
+  stay intact. There is no warranty.
 
-  This licence follows the same terms as EbonClearance by the same author.
+  Releases up to and including v0.9.0 were published under the earlier
+  attribution licence and stay under it. This licence covers every
+  later release.
 
 Formal terms:
 
-1. Grant of Rights
-   Subject to the conditions in sections 2-3, the copyright holder grants
-   every recipient a worldwide, royalty-free, non-exclusive, irrevocable
-   (except as provided in section 6) licence to use, reproduce, modify,
-   distribute, and redistribute this Software, in source or compiled form,
-   for any lawful purpose.
+1. Definitions
+   "Software" means Raid Loot Controller: every file distributed with
+   it, in whole or in part.
+   "Official Release" means a release published by the copyright holder
+   at the canonical source, https://github.com/powerfulqa/RaidLootController.
+   "Modified" means changed in any way from an Official Release,
+   including adding, removing, renaming or editing any file.
 
-2. Attribution Preservation
-   Any redistribution of the Software, whether modified or unmodified,
-   whether source or compiled, must preserve each of the following without
-   alteration:
+2. Grant of Rights
+   Subject to sections 3-6, the copyright holder grants every recipient
+   a worldwide, royalty-free, non-exclusive licence to:
+
+   (a) use the Software for any lawful purpose;
+   (b) make Modified copies for the recipient's own private use;
+   (c) reproduce and redistribute complete, unmodified copies of an
+       Official Release, free of charge, including as part of an
+       addon-pack distribution.
+
+   All rights not expressly granted are reserved.
+
+3. No Modified Distribution
+   Without the prior written permission of the copyright holder, you may
+   not:
+
+   (a) distribute, publish, upload or otherwise make available to anyone
+       else a Modified copy of the Software, under any name;
+   (b) publish a fork or other derivative work of the Software;
+   (c) copy the Software, or any substantial part of its code, into
+       other software that is distributed to anyone else;
+   (d) distribute an incomplete copy of the Software, such as a single
+       extracted file.
+
+   This section does not prevent a separate addon, written independently
+   and containing none of the Software's code, from working alongside
+   the Software.
+
+4. Contributions
+   You may copy and modify the Software on a code-hosting service solely
+   to prepare and submit a contribution (such as a pull request) to the
+   canonical source. By submitting a contribution you grant the
+   copyright holder a perpetual, worldwide, royalty-free, irrevocable
+   licence to use, modify, distribute and relicense it as part of the
+   Software. A copy made for this purpose may not be offered to others
+   as a way to obtain or install the Software.
+
+5. Attribution Preservation
+   Every copy of the Software, including a privately Modified one, must
+   keep each of the following without alteration:
 
    (a) the "## Author:" line in the addon's .toc manifest;
    (b) the comment block at the top of RLC_Core.lua naming the author and
        the canonical source URL;
-   (c) this LICENSE file, in full, in every distributed copy.
+   (c) this LICENSE file and the AGENTS.md file, in full.
 
    Attribution must be genuine. Replacing the author name or URL with
    placeholder, empty, or misleading content constitutes a breach of this
    section.
 
-3. No Silent Rebrand
-   The following identifiers may not be renamed in any derivative work
-   without the prior written permission of the copyright holder:
+6. No Rebrand
+   You may not present the Software, or any part of it, as your own
+   work. The following identifiers may not be renamed in any copy:
 
    (a) the visible addon name "Raid Loot Controller";
    (b) the slash commands "/rlc" and "/raidloot";
    (c) the SavedVariable table name "RaidLootControllerDB";
    (d) the addon-message prefixes "RLC1" and "RLCC".
 
-   You may fork the Software under a different name provided that
-   sections 2 and 3(a)-(d) are honoured in full, the fork makes its
-   derivative nature explicit, and a link back to the canonical source
-   is preserved alongside the attribution required by section 2. Covertly
-   renaming any of the identifiers in (a)-(d) to obscure the origin of
-   the Software is a breach of this section.
+7. Earlier Releases
+   Releases up to and including v0.9.0 were published under the "Raid
+   Loot Controller - Source-Available Attribution License". Copies of
+   those releases remain under that licence. This licence applies to
+   every later release and to the contents of the canonical source from
+   the date this file was changed.
 
-4. Addon-Pack Bundling
-   Unmodified copies of the Software may be included in private-server
-   addon-pack distributions without seeking individual permission,
-   provided section 2 is honoured in full. Modifications or partial
-   inclusion (e.g. extracting a single file) require the same attribution
-   preservation as any other redistribution.
-
-5. No Warranty
+8. No Warranty
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
@@ -68,12 +99,11 @@ Formal terms:
    TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-6. Termination
-   The rights granted in section 1 terminate automatically upon any
-   breach of section 2 or section 3. Compliance with those sections must
-   be restored within thirty (30) days of notice for the rights to be
-   reinstated.
+9. Termination
+   The rights granted in section 2 terminate automatically upon any
+   breach of sections 3, 5 or 6. Compliance must be restored within
+   thirty (30) days of notice for the rights to be reinstated.
 
-7. Severability
+10. Severability
    If any provision of this licence is found unenforceable, the remaining
    provisions remain in force.

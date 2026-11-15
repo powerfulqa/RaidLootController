@@ -17,6 +17,7 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Core.lua` | Saved data, names, roster, `NS.ApplyOps` / `NS.HandleRequest` / `NS.Act`, events, slash commands. Also who has the addon (`NS.versions`, the `CV` ping: `NS.AskVersions`, `NS.OnVersion`), the shared wins index (`NS.Wins`, from `Rules.Wins`), the per-character wishlist (`NS.Wish`) and `NS.IsOnline`. |
 | `RLC_Net.lua` | Addon-message queue (prefix `RLC1`), throttle, chat lockdown wait, trust checks on receive. |
 | `RLC_Loot.lua` | Roll lines from `CHAT_MSG_SYSTEM`, loot window, master loot, trade delivery, tooltip class line, the "RaidLoot:" tooltip lines and the green marks on owed items in bags. |
+| `AGENTS.md` | Licence notes for AI coding tools, shipped in the release zip so a tool reading an installed copy sees them. Must stay in step with `LICENSE`. |
 | `Bindings.xml` | The open/close key binding (labels and `RaidLootController_Toggle` in `RLC_Core.lua`). Shipped in the release zip. |
 | `RLC_Catalog.lua` | Loot catalogue by instance and boss. Pure data functions on top (`Record`, `CountKill`, `Digest`, `InstanceOps`, `ApplyOp`), event glue and guild/group sync (prefix `RLCC`) below. |
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
@@ -389,7 +390,7 @@ Same flow as EbonClearance, driven by `.github/workflows/release.yml`.
 3. Commit and push, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. The workflow writes the version into the `.toc`, re-runs syntax checks
    and tests, zips `RaidLootController/` (every `RLC_*.lua`, the `.toc`,
-   `LICENSE`, `Bindings.xml`; it fails if a file the `.toc` loads is
+   `LICENSE`, `AGENTS.md`, `Bindings.xml`; it fails if a file the `.toc` loads is
    missing), builds the one-file `Install-RaidLootController.bat` (stub +
    `#RLCPAYLOAD#` + `.ps1`, CRLF) and copies `install-raidlootcontroller.command`,
    commits `Update version to vX.Y.Z [skip ci]` to `main`, and publishes the
