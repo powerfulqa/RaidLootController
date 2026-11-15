@@ -14,16 +14,17 @@ the end as open until someone ticks it off in a real group.
 |---|---|
 | `RLC_Kit.lua` | Serv's shared kit, byte-identical to WoWClearance's `WoWClearance_Kit.lua`: palette, chat printer, `CanRead`, Help `Highlight`, glow, resize grip, copy window, minimap button and tooltip. Edit it here only, then `tools/sync-kit.sh` copies it across (`--check` compares). Loads first. |
 | `RLC_Rules.lua` | The loot rules and session model. Pure Lua, no WoW API. `Apply` (primitive ops), `Intent` (requests -> ops, host only), `Snapshot`, wire codec, roll-line parser. |
-| `RLC_Core.lua` | Saved data, names, roster, `NS.ApplyOps` / `NS.HandleRequest` / `NS.Act`, events, slash commands. |
+| `RLC_Core.lua` | Saved data, names, roster, `NS.ApplyOps` / `NS.HandleRequest` / `NS.Act`, events, slash commands. Also who has the addon (`NS.versions`, the `CV` ping: `NS.AskVersions`, `NS.OnVersion`), the shared wins index (`NS.Wins`, from `Rules.Wins`), the per-character wishlist (`NS.Wish`) and `NS.IsOnline`. |
 | `RLC_Net.lua` | Addon-message queue (prefix `RLC1`), throttle, chat lockdown wait, trust checks on receive. |
 | `RLC_Loot.lua` | Roll lines from `CHAT_MSG_SYSTEM`, loot window, master loot, trade delivery, tooltip class line, the "RaidLoot:" tooltip lines and the green marks on owed items in bags. |
 | `Bindings.xml` | The open/close key binding (labels and `RaidLootController_Toggle` in `RLC_Core.lua`). Shipped in the release zip. |
 | `RLC_Catalog.lua` | Loot catalogue by instance and boss. Pure data functions on top (`Record`, `CountKill`, `Digest`, `InstanceOps`, `ApplyOp`), event glue and guild/group sync (prefix `RLCC`) below. |
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
-| `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). Update it with any player-facing change. |
+| `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). A page like the others (`NS.UI.page`, `UI.refresh.help`). Update it with any player-facing change. |
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
 | `RLC_Daylight.lua` | DaylightUI look, through its public API only (`DaylightUI/API.md` in the game's AddOns folder; `API.major == 1`). Loads last and returns at once without DaylightUI. Skins the window, flyout and copy window (`Kit.Window`, `Kit.Auto` after each `NS.Refresh`), and adds `/rlc daylight` to `NS.Commands` (`RaidLootControllerDB.daylightLook`). Same idea as `WoWClearance_Daylight.lua`. |
-| `RLC_UI.lua` | The window (Loot, Raid, History, Stats, Catalogue, Versions, Commands, Help tabs; resizable, size saved in `RaidLootControllerDB.window`), the copy window (`NS.ShowCopy`), the spec menus and the minimap button. The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
+| `RLC_UI.lua` | The window (resizable, size saved in `RaidLootControllerDB.window`), the shared widgets (`NS.UI`: `Text`, `Button`, `List`, `InputBox`, `ItemTooltip`, `page`, `itemKey`), the redraw dispatch (`UI.refresh[tab](S)`, for every tab including Loot, Raid and Help), the Loot and Raid pages, the next-step glow that ties those two together, the copy window (`NS.ShowCopy`), the spec menus and the minimap button. |
+| `RLC_UI_History.lua`, `RLC_UI_Stats.lua`, `RLC_UI_Catalog.lua`, `RLC_UI_Versions.lua`, `RLC_UI_Commands.lua` | One tab each, loaded after `RLC_UI.lua`. Each builds its page from `NS.UI` and sets `UI.refresh[tab key]` to its redraw. A new tab is a new file like these (plus its line in the `.toc` and in `TABS`). The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
 | `tools/install/` | One-click installers, release assets: `Install-RaidLootController.bat` (cmd stub; the release build appends `Install-RaidLootController.ps1` below a `#RLCPAYLOAD#` marker, CRLF) and `install-raidlootcontroller.command` (Mac/Linux bash). Both find the Forever folder (`.flavor.info` = `wowf`, else `_forever_`, else `_classic_beta_`), download the latest zip, replace `Interface/AddOns/RaidLootController`, never touch `WTF`. Built and attached by `release.yml`. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
@@ -62,9 +63,9 @@ only from the session host (and `NEW` only from a leader or assistant).
 - Before committing: every `tests/test_*.lua` (`for t in tests/test_*.lua; do lua5.1 $t; done`; CI does the same; plain `lua` may be 5.5, which refuses the raid sim),
   including `tests/test_raid_sim.lua` (a raid night with chaotic players, plus 8 weeks of fairness numbers),
   `luacheck *.lua tests/*.lua` (0 warnings), `stylua --check *.lua tests/*.lua`.
-  Also `for f in RLC_*.lua; do luac5.1 -p $f; done`: no test loads `RLC_UI.lua`, and
-  only the compiler sees the 200-locals-per-chunk limit that file sits near
-  (new pages go in a `do ... end` block).
+  Also `for f in RLC_*.lua; do luac5.1 -p $f; done`: `tests/test_load.lua` loads every file the `.toc` lists
+  with the game stubbed and draws every tab, but only the compiler sees the 200-locals-per-chunk limit (`RLC_UI.lua` holds
+  about 130 since the tabs moved to their own files).
 - Two addon-message prefixes: `RLC1` (live session) and `RLCC` (catalogue),
   so a catalogue upload never takes the send budget live rolls need.
 
@@ -278,6 +279,75 @@ only from the session host (and `NEW` only from a leader or assistant).
     copy window are dressed, rows made later are dressed after a redraw,
     the glow still shows on dressed buttons, `/rlc daylight` is on the
     Commands tab, and without DaylightUI nothing changes.
+
+27. Catalogue "Seen by" (2026-11-15), unmeasured: the fourth column fits at
+    the minimum window size (the kills label lost its "in "), names past
+    three collapse to "N players", the item tooltip lists them under "Seen
+    dropping by:", and `/rlc demo` shows all three cases. Names come from
+    the sender of each `CD` / `CE`, so items heard before this version show
+    nobody until someone sends them again.
+28. Guild version ping (2026-11-15), unmeasured: Check again and Ask guild
+    for updates send `CV ?` on `GUILD`; every copy with this change answers
+    with a plain `CV` on `GUILD` (spread over 10 s, at most one answer per
+    60 s in the guild and per 10 s in the group), and guildmates outside the
+    group fill the Versions tab. v0.8.0 answers only in the group. Check
+    again is enabled in a guild without a group. The ping lives in
+    `RLC_Core.lua` and rides the `RLCC` lane.
+29. Split and Catalogue round (2026-11-15), all unmeasured in game
+    (`tests/test_load.lua` covers loading, drawing and the message paths):
+    - Every tab draws after the move to `RLC_UI_*.lua`, in a raid and in
+      `/rlc demo`, and the Commands tab re-lays its rows when the window is
+      resized (its own `OnSizeChanged` now, which must fire while shown).
+    - Catalogue: **My spec** hides items `Specs.SuitsMe` rules out (items
+      not loaded yet stay), **Wish** stars an item for this character
+      (`NS.Wish`), **Wishlist** lists the starred ones across all bosses, a
+      starred item dropping prints one line with the `RAID_WARNING` sound
+      (`/rlc wishsound` turns the sound off), and item tooltips say "On your
+      wishlist". The three buttons fit beside the search box at the minimum
+      width. The tooltip lists "Won by:" (trusted raids only).
+    - Versions: **Whisper link** (leader or assistant) whispers the download
+      link to online group members never heard from, 5 per click, once a
+      day each (`DB.whispered`), to `NS.Short(name)` ("First Surname"), from
+      the Yes click of the confirm box. Measure: a burst of 5 whispers all
+      arrive, and one reaches a groupmate on another underlying realm.
+    - The "Seen dropping by:" and "Won by:" tooltip lines survive an item
+      loading while the tooltip is up (if not, they return on the next hover).
+    - Section headings in the Catalogue tree do not highlight or click
+      (`EnableMouse(false)` on a reused list row, turned back on for others).
+30. Catalogue sections by size (2026-11-15), unmeasured. Probe:
+    `/dump GetInstanceInfo()` inside a dungeon and a raid.
+    - `GetInstanceInfo()`'s 5th return (maxPlayers) is 5 / 10 / 20 / 25 / 40
+      in Forever's dungeons and raids, the new ones included; it is saved as
+      `inst.size` after a kill or a loot window and wins over everything.
+    - `KNOWN_SIZE` in `RLC_Catalog.lua`: sizes by map ID from the client
+      tables of build 1.60.1.70888, via wowforevertalents.com/dungeons (read
+      2026-11-15; its map IDs 2999 and 3039 match this machine's saved
+      catalogue). Blackrock Spire (229) is 10 there. Barrow Deeps and Hyjal
+      Summit (open 2026-12-09) had no map ID yet: add them after a client
+      build that has them.
+    - An instance not in the table is placed by `inst.hs`, the size another
+      player's addon saw inside, sent as the 4th field of `CI` (older
+      versions send and read three fields). It is a last resort and is
+      cleared by Forget heard.
+    - *Seen in game 2026-11-15:* `GetLFGDungeonInfo` gave nothing for the
+      new dungeons, so that lookup was removed.
+31. Bug report (`/rlc report`, 2026-11-15), unmeasured: the new lines
+    print without error in and out of an instance, with and without a
+    session, and in `/rlc demo` (spec, instance id and max players, roster,
+    settings, tabs loaded, catalogue and wishlist counts, versions in the
+    group by name and a count for the rest).
+32. Button tooltips and the open-tab bar (2026-11-15), unmeasured:
+    hovering any action button shows its label and one line on what it does
+    (`Tip` in `RLC_UI.lua`), greyed-out buttons included
+    (`SetMotionScriptsWhileDisabled`, read from `UIButtonTemplate.lua`); the
+    Officer log button keeps its own tooltip. The open tab has a gold bar
+    along its bottom edge, visible with and without DaylightUI.
+33. Class colours for players outside the group (2026-11-15),
+    unmeasured: `CV` and `CQE` carry the sender's class token (`CV version
+    ["?"] class`, `CQE version class`), kept for the session in
+    `NS.classHeard` and used by `NS.ColorName` after the roster and saved
+    classes. Guildmates on this version show class-coloured on the Versions
+    tab once they answer a ping or log in; older copies stay uncoloured.
 
 ## Dev tooling
 

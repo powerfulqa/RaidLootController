@@ -35,4 +35,4 @@ read_globals = {
     "ERR_LOOT_MASTER_INV_FULL", "ERR_LOOT_MASTER_UNIQUE_ITEM", "ERR_LOOT_MASTER_OTHER", "BIND_TRADE_TIME_REMAINING",
     "GetLocale", "LinkUtil", "LinkProcessorResponse", "UnitIsUnit", "UnitIsConnected", "UnitGUID", "IsMouseButtonDown", "IsInInstance", "C_PartyInfo", "TooltipDataProcessor", "ItemRefTooltip", "LibStub",
 }
-files["tests/*.lua"] = { std = "lua51", globals = { "GetServerTime", "CopyTable" } } -- client stubs
+files["tests/*.lua"] = { std = "lua51", globals = { "GetServerTime", "CopyTable" } } -- client stubs -- client stubs

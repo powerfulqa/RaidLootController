@@ -100,7 +100,7 @@ Officers can:
 - **Upgrade info.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the stat change. No scores: officers judge.
 - **Raid history.** Every raid is saved: who got what and how (roll, open roll, reserve, given), every roll, who wanted it, removed items and wins taken back. **Copy as text** pastes a raid's results into Discord. A raid not hosted by the group leader is marked (unverified).
 - **Stats.** Every player from your saved raids: attendance, items won, free rolls and their last win.
-- **Versions.** Every player known to have the addon, with their version and whether they are in your group. **Copy list** gives the group's as text, to take attendance.
+- **Versions.** Every player known to have the addon, with their version and whether they are in your group. **Check again** asks your group and your guild, and every copy from this version on answers. **Copy list** gives the group's as text, to take attendance. **Whisper link** (leader and assistants) whispers the download link to group members without the addon, five per click, each player once a day.
 - **Loot catalogue.** Every notable drop the addon has seen, by instance and boss.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one.
 - **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.
@@ -114,7 +114,11 @@ The **Catalogue** tab is a loot browser built from real drops. Search it, shift-
 - Drops are filed under the boss when the loot window opens within 5 minutes of the kill, otherwise under Trash.
 - Whoever opens a corpse shares its drops with the group, so the whole raid records them. A drop report only counts for the instance you are in.
 - On login the addon asks your guild (and your group) for anything it is missing. One player who knows more answers; everyone listening merges it.
-- Items heard from others are marked (heard), and drop chances use only your own kills. **Forget heard** clears what others sent.
+- Items heard from others are marked (heard): another player's addon saw the drop, yours did not. Drop chances use only your own kills.
+- Instances are grouped by size: 5-man, 10-man, 20-man, 40-man (and 25-man when there is one). The size is what the game says while you are inside, else a built-in list of Forever's dungeons and raids. A new one not on the list is placed once you, or a player whose addon shares with yours, has been inside; until then it sits under "Size not known".
+- **My spec** shows only items that suit your spec. **Wish** stars the picked item; **Wishlist** shows the starred ones from every boss, a starred item dropping gives a chat line and a sound, and its tooltip says "On your wishlist". Each character has its own list.
+- Hover an item for who saw it drop and who won it in your saved raids.
+- **Seen by** names the players whose addon saw the item drop (you, and those who told you). Past three it shows a count; hover the item for the list. **Forget heard** clears what others sent.
 
 ## Slash commands
 
@@ -128,6 +132,7 @@ The **Catalogue** tab is a loot browser built from real drops. Search it, shift-
 | `/rlc announce` | Turn raid chat announcements on or off (host) |
 | `/rlc owed` | Clear the list of items still to trade (host) |
 | `/rlc tooltip` | Show or hide the RaidLoot lines on item tooltips (on by default) |
+| `/rlc wishsound` | Sound when an item on your wishlist drops, on or off |
 | `/rlc minimap` | Hide or show the minimap button |
 | `/rlc daylight` | DaylightUI look on or off (only with DaylightUI installed) |
 | `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |

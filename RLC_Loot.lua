@@ -625,23 +625,14 @@ local function owedMap()
     return owedCache
 end
 
--- itemID -> when I last won one, from saved history; rebuilt when the
--- history changes (NS.historyGen).
-local myWins, myWinsGen
+-- When I last won this item in a saved raid, or nil.
 local function lastWon(id)
-    if myWinsGen ~= NS.historyGen then
-        myWins, myWinsGen = {}, NS.historyGen
-        local me = NS.Me()
-        for _, rec in pairs(NS.DB.history) do
-            for _, it in pairs(rec.items or {}) do
-                local iid = it.winner == me and it.state == "done" and Rules.ItemIDOf(it.itemString or "")
-                if iid then
-                    myWins[iid] = math.max(myWins[iid] or 0, rec.created or 0)
-                end
-            end
+    local me = NS.Me()
+    for _, w in ipairs(NS.Wins().byItem[id] or {}) do -- newest first
+        if w.winner == me then
+            return w.t
         end
     end
-    return myWins[id]
 end
 
 local function annotate(tooltip)
@@ -678,8 +669,7 @@ local function annotate(tooltip)
         -- Own counts (ok, on) when we saw kills ourselves, else what we heard,
         -- dimmed. Saved data without ok/on is all our own (RLC_Catalog.lua).
         local function own(h)
-            local kills = h.boss.ok or (h.boss.w and 0 or h.boss.kills)
-            return h.rec.on or (h.rec.w and 0 or h.rec.n), kills
+            return NS.Catalog.OwnN(h.rec), NS.Catalog.OwnKills(h.boss)
         end
         local h = hits[1]
         for i = 2, #hits do
@@ -708,6 +698,9 @@ local function annotate(tooltip)
                 more
             )
         end
+    end
+    if NS.Wish()[id] then
+        lines[#lines + 1] = "On your wishlist"
     end
     local last = lastWon(id)
     if last then

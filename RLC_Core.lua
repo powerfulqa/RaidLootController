@@ -39,6 +39,7 @@ local newerBy -- the first player who reported a newer version
 -- LinkUtil, never by replacing SetItemRef: replacing it taints, measured by
 -- the WoWClearance and BarWarden ports on Forever.
 local DOWNLOAD_URL = "https://github.com/powerfulqa/RaidLootController/releases/latest/download/RaidLootController.zip"
+NS.DOWNLOAD_URL = DOWNLOAD_URL
 local UPDATE_LINK = "|cff33ff33|Hrlcupdate:latest|h[Click here]|h|r"
 if LinkUtil and LinkUtil.RegisterLinkHandler then
     -- Registering twice asserts. A /reload resets Lua state, so this only
@@ -84,6 +85,78 @@ function NS.NoteVersion(name, v)
     end
 end
 
+-- Asking who has the addon (the Versions tab). "CV", version[, "?"] goes to
+-- the group, or to the guild on a click; with the "?" everyone who hears it
+-- answers there with a plain CV. It rides the catalogue's message lane
+-- (RLC_Net.lua) so it never takes the send budget live rolls need. v0.7.0
+-- and older ignore CV (they show once they send anything else); v0.8.0
+-- answers only in the group.
+local TELL_GAP = 10 -- seconds between our answers in the group, and between our questions
+local GUILD_TELL_GAP = 60 -- in the guild: any guildmate can ask, and every copy answers
+local lastTell, lastAskV, tellPending = {}, -TELL_GAP, {}
+local function tellVersion(dest)
+    if tellPending[dest] then
+        return -- the answer on its way reaches every asker
+    end
+    tellPending[dest] = true
+    -- Spread out, so a whole raid or guild does not answer in the same second.
+    local guild = dest == "GUILD"
+    local gap = guild and GUILD_TELL_GAP or TELL_GAP
+    local wait = math.max(1 + math.random() * (guild and 9 or 4), (lastTell[dest] or -gap) + gap - GetTime())
+    C_Timer.After(wait, function()
+        tellPending[dest], lastTell[dest] = nil, GetTime()
+        NS.Net.QueueCatalog({ "CV", NS.VERSION, "", NS.MyClass() }, dest)
+    end)
+end
+
+-- Ask the group, and with `guild` (a click, never on a timer: every
+-- guildmate's addon answers) the guild too. Returns false when there is
+-- nobody to ask or we asked a moment ago.
+function NS.AskVersions(guild)
+    local group = IsInGroup()
+    guild = guild and IsInGuild()
+    if not (group or guild) or GetTime() - lastAskV < TELL_GAP then
+        return false
+    end
+    lastAskV = GetTime()
+    if group then
+        NS.Net.QueueCatalog({ "CV", NS.VERSION, "?", NS.MyClass() }, "GROUP")
+    end
+    if guild then
+        NS.Net.QueueCatalog({ "CV", NS.VERSION, "?", NS.MyClass() }, "GUILD")
+    end
+    return true
+end
+
+-- The class a player's addon says they are, this session only: it colours
+-- names of players outside the group (guildmates on the Versions tab),
+-- whose class the game does not tell us. Only ever a colour: the roster's
+-- class is used for anything that matters.
+NS.classHeard = {} -- name -> class token
+function NS.NoteClass(name, token)
+    if Rules.CLASS_ID[token] and NS.classHeard[name] ~= token then
+        NS.classHeard[name] = token
+        if NS.Refresh then
+            NS.Refresh()
+        end
+    end
+end
+-- Our own class token, sent with our version.
+function NS.MyClass()
+    return select(2, UnitClass("player")) or ""
+end
+
+-- A CV arrived from `sender` on dest ("GROUP" or "GUILD"): CV version
+-- ["?"] [class]. A question is answered for anyone in the guild, and in the
+-- group only for its members.
+function NS.OnVersion(sender, op, dest)
+    NS.NoteVersion(sender, op[2])
+    NS.NoteClass(sender, op[4])
+    if op[3] == "?" and (dest == "GUILD" or NS.roster[sender]) then
+        tellVersion(dest)
+    end
+end
+
 -- The host sent something this version does not know: say so once, since
 -- this copy of the raid is now missing it.
 function NS.TellOutdated()
@@ -93,9 +166,9 @@ function NS.TellOutdated()
     end
 end
 
--- What a bug report needs: version, client, where you are, the session and
--- the message queues. Names stay in (it is your own raid), nothing else
--- personal.
+-- What a bug report needs: version, client, where you are, the session,
+-- the message queues and what each newer feature leans on. Names of group
+-- members stay in (it is your own raid); guildmates are only counted.
 function NS.BugReport()
     local lines = {}
     local function add(fmt, ...)
@@ -106,6 +179,8 @@ function NS.BugReport()
     add("Raid Loot Controller bug report")
     add("Version %s, client %s (%s), %s, %s", NS.VERSION, build, buildNum, GetLocale(), date("%Y-%m-%d %H:%M"))
     add("Me: %s, %s, role: %s", tostring(NS.Me()), select(2, UnitClass("player")) or "?", NS.RoleName())
+    local spec, picked = NS.Specs.Mine()
+    add("Spec: %s (%s)", tostring(spec), picked and "picked by hand" or "from talents")
     local inInst, instType = IsInInstance()
     local method = C_PartyInfo.GetLootMethod and C_PartyInfo.GetLootMethod()
     for name, v in pairs(Enum.LootMethod or {}) do
@@ -120,7 +195,38 @@ function NS.BugReport()
         inInst and instType or "no",
         tostring(method)
     )
+    if inInst then
+        -- What the Catalogue files drops under, and its size section.
+        local instName, _, _, _, maxPlayers, _, _, instID = GetInstanceInfo()
+        add(
+            "Instance: %s, id %s, max players %s, fight in progress: %s",
+            tostring(instName),
+            tostring(instID),
+            tostring(maxPlayers),
+            tostring(C_InstanceEncounter.IsEncounterInProgress())
+        )
+    end
+    local known, stale = 0, 0
+    for _, r in pairs(NS.roster) do
+        known, stale = known + 1, stale + (r.stale and 1 or 0)
+    end
+    add("Roster: %d known, %d not readable right now", known, stale)
     add("Demo: %s, debug: %s", tostring(NS.Demo and NS.Demo.active or false), tostring(NS.debug or false))
+    add(
+        "Settings: min quality %s, announce %s, tooltip lines %s, DaylightUI %s, look %s",
+        tostring(NS.DB.minQuality),
+        tostring(NS.DB.announce),
+        tostring(NS.DB.tooltip ~= false),
+        C_AddOns.IsAddOnLoaded("DaylightUI") and "loaded" or "not loaded",
+        tostring(RaidLootControllerDB.daylightLook ~= false)
+    )
+    -- A tab missing here is a file that failed to load.
+    local tabs = {}
+    for key in pairs(NS.UI and NS.UI.refresh or {}) do
+        tabs[#tabs + 1] = key
+    end
+    table.sort(tabs)
+    add("Tabs loaded: %s", table.concat(tabs, ", "))
     add("Net: %s", NS.Net.Status())
     add("Chat lockdown: %s", tostring(C_ChatInfo.InChatMessagingLockdown()))
     if S then
@@ -132,14 +238,16 @@ function NS.BugReport()
             officers = officers + 1
         end
         add(
-            "Session: %s, host %s, %s, %d items, active %s, %d officers, seq %d",
+            "Session: %s, host %s, %s, %d items, active %s, %d officers, seq %d, instance %s, %d s live",
             S.id,
             S.host,
             S.phase,
             n,
             tostring(S.active),
             officers,
-            S.seq
+            S.seq,
+            tostring(S.inst),
+            S.attSpan or 0
         )
     else
         add("Session: none")
@@ -152,12 +260,31 @@ function NS.BugReport()
         hist = hist + 1
     end
     add("Owed items: %d, raids in history: %d", owed, hist)
-    local seen = {}
+    local insts, items, wished = 0, 0, 0
+    for _, inst in pairs(NS.DB.catalog) do
+        insts = insts + 1
+        for _, boss in pairs(inst.b) do
+            for _ in pairs(boss.i) do
+                items = items + 1
+            end
+        end
+    end
+    for _ in pairs(NS.Wish()) do
+        wished = wished + 1
+    end
+    add("Catalogue: %d instances, %d items, %d wished", insts, items, wished)
+    -- Group members by name; the guild ping can bring in hundreds more.
+    local seen, others = {}, 0
     for name, v in pairs(NS.versions) do
-        seen[#seen + 1] = NS.Short(name) .. " " .. v
+        if NS.roster[name] then
+            seen[#seen + 1] = NS.Short(name) .. " " .. v
+        else
+            others = others + 1
+        end
     end
     table.sort(seen)
-    add("Versions heard: %s", #seen > 0 and table.concat(seen, ", ") or "none")
+    add("Versions heard in the group: %s", #seen > 0 and table.concat(seen, ", ") or "none")
+    add("Versions heard outside the group: %d players", others)
     add("")
     add("What happened, and what did you expect?")
     return table.concat(lines, "\n")
@@ -343,12 +470,10 @@ local function markAttendance(ending)
     -- keeps counting, so a long fight does not cost the whole raid time.
     local wasOn = lastOn
     lastOn = {}
-    for name, r in pairs(roster) do
-        local on = r.unit and not r.stale and UnitIsConnected(r.unit) -- can be secret
-        if r.stale or not NS.CanRead(on) then
+    for name in pairs(roster) do
+        local on = NS.IsOnline(name)
+        if on == nil then
             on = wasOn[name] == true
-        else
-            on = on == true
         end
         lastOn[name] = on or nil
         -- A legacy `true` (whole night) stays as it is.
@@ -465,11 +590,29 @@ function NS.ClassOf(name)
 end
 
 -- Coloured short name.
-function NS.ColorName(name)
-    local file = (roster[name] and roster[name].classFile) or (NS.DB and NS.DB.classes[name])
+-- Coloured short name; `first`: the first name only, for narrow columns.
+function NS.ColorName(name, first)
+    local file = (roster[name] and roster[name].classFile) or (NS.DB and NS.DB.classes[name]) or NS.classHeard[name]
     local color = file and C_ClassColor.GetClassColor(file)
     local short = NS.Short(name)
+    if first then
+        short = short:match(FIRST_NAME) or short
+    end
     return color and color:WrapTextInColorCode(short) or short
+end
+
+-- Whether a group member is connected: true, false, or nil when it cannot
+-- be told right now (names unreadable in a fight, a secret value, no unit).
+function NS.IsOnline(name)
+    local r = roster[name]
+    if not r or r.stale or not r.unit then
+        return nil
+    end
+    local on = UnitIsConnected(r.unit) -- can be secret
+    if not NS.CanRead(on) then
+        return nil
+    end
+    return on == true
 end
 
 function NS.IsLeadOrAssist(name)
@@ -523,6 +666,23 @@ end
 -- the tooltip's "You won this") rebuild only then.
 NS.historyGen = 0
 NS.opGen = 0
+
+-- This character's wishlist, itemID -> true. Per character, like the spec
+-- it goes with (DB.mySpec): a mage's wishes mean nothing to a warrior.
+function NS.Wish()
+    local me = NS.Me() or "?"
+    NS.DB.wish[me] = NS.DB.wish[me] or {}
+    return NS.DB.wish[me]
+end
+
+-- Who won what in saved raids (Rules.Wins), for every tooltip that says so.
+local wins, winsGen
+function NS.Wins()
+    if winsGen ~= NS.historyGen then
+        wins, winsGen = Rules.Wins(NS.DB.history), NS.historyGen
+    end
+    return wins
+end
 
 -- History holds the live session table itself, not a copy: NEW always
 -- makes a fresh table, so an old raid's entry never changes again.
@@ -919,10 +1079,25 @@ NS.On("ADDON_LOADED", function(name)
     DB.owed = type(DB.owed) == "table" and DB.owed or {}
     DB.catalog = type(DB.catalog) == "table" and DB.catalog or {}
     DB.mySpec = type(DB.mySpec) == "table" and DB.mySpec or {} -- "Name-Realm" -> spec picked by hand
+    -- "Name-Realm" -> itemID -> true: each character's Catalogue wishlist (NS.Wish).
+    DB.wish = type(DB.wish) == "table" and DB.wish or {}
+    for key, list in pairs(DB.wish) do
+        if type(list) ~= "table" then
+            DB.wish[key] = nil -- the first builds kept one list for the whole account
+        end
+    end
     if DB.announce == nil then
         DB.announce = true
     end
     DB.minQuality = tonumber(DB.minQuality) or 3
+    -- "Name-Realm" -> when we whispered them the download link (Versions
+    -- tab), kept a day so a /reload does not whisper them again.
+    DB.whispered = type(DB.whispered) == "table" and DB.whispered or {}
+    for who, at in pairs(DB.whispered) do
+        if type(at) ~= "number" or GetServerTime() - at > 86400 then
+            DB.whispered[who] = nil
+        end
+    end
     if type(DB.session) ~= "table" or DB.session.v ~= 1 then
         DB.session = nil
     elseif type(DB.session.specs) ~= "table" then
@@ -1165,6 +1340,18 @@ NS.Commands = {
         fn = function()
             NS.DB.tooltip = NS.DB.tooltip == false
             NS.Print("RaidLoot lines on item tooltips %s.", NS.DB.tooltip and "on" or "off")
+        end,
+    },
+    {
+        section = "Everyone",
+        cmd = "wishsound",
+        text = "Sound when an item on your wishlist drops",
+        state = function()
+            return NS.DB.wishSound ~= false
+        end,
+        fn = function()
+            NS.DB.wishSound = NS.DB.wishSound == false
+            NS.Print("Wishlist sound %s.", NS.DB.wishSound and "on" or "off")
         end,
     },
     {

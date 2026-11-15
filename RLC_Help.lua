@@ -307,8 +307,29 @@ local ENTRIES = {
         a = "A loot list built from real drops: every rare or better item the addon has seen, filed under "
             .. "the boss that dropped it, with how many kills it dropped in. Search it, shift-click to link, "
             .. "or reserve from it.\n\n"
-            .. "Items you heard about from others show (heard). Drop chances use only your own kills. "
+            .. "Items you heard about from others show (heard): another player's addon saw the drop, "
+            .. "yours did not. Seen by names who saw it; hover the item for the full list. "
+            .. "Drop chances use only your own kills. "
             .. "Click Forget heard to clear what others sent. A drop only counts for the instance you are in.",
+        tab = "catalog",
+    },
+    {
+        q = "How does the Catalogue know a 5-man from a 40-man?",
+        a = "Inside an instance the game says how many players it is for, and the addon keeps that. "
+            .. "For places you have not been, it has a list of Forever's dungeons and raids. "
+            .. "A new instance not on the list is placed once you, or a player whose addon shares "
+            .. "with yours, has been inside. Until then it sits under Size not known.",
+        tab = "catalog",
+    },
+    {
+        q = "How do I keep a wishlist?",
+        a = "On the Catalogue tab, pick an item and click Wish. It gets a star. Wishlist shows your starred "
+            .. "items from every boss, and when one drops you get a chat line and a sound "
+            .. "(/rlc wishsound turns the sound off). Item tooltips say On your wishlist. "
+            .. "Each character has its own list. "
+            .. "While reserves are open, pick it there and click Reserve this.\n\n"
+            .. "My spec shows only the items that suit your spec. "
+            .. "Hover an item to see who saw it drop and who won it in your saved raids.",
         tab = "catalog",
     },
     {
@@ -344,12 +365,16 @@ local ENTRIES = {
         tab = "stats",
     },
     {
-        q = "Who in the raid has the addon?",
+        q = "Who in the raid or guild has the addon?",
         a = "The Versions tab lists every player known to have the addon, with their version and "
             .. "whether they are in your group. Players without it are not listed. "
             .. "Copy list gives the ones in your group as text, to take attendance.\n\n"
-            .. "Players answer when you join the group; Check again asks once more. "
-            .. "A v0.7.0 or older copy shows only after it sends something.",
+            .. "Players answer when you join the group. Check again asks your group and your guild, "
+            .. "and so does Ask guild for updates on the Catalogue tab. "
+            .. "A v0.8.0 or older copy in the guild shows only after it sends something.\n\n"
+            .. "Whisper link (leader and assistants) whispers the download link to group members "
+            .. "without the addon: five per click, each player once a day.\n\n"
+            .. "Guild answers are spread out, so the list can take up to a minute to fill.",
         tab = "versions",
     },
     {
@@ -444,7 +469,7 @@ local TAB_NAMES = {
 
 -- ---- page ---------------------------------------------------------------------
 
-local p = NS.helpPage
+local p = NS.UI.page("help")
 local K = NS.Kit
 -- Open or closed per section, saved (NS.DB.helpCollapsed: section ->
 -- true/false). A section never touched starts closed, except the first.
@@ -456,8 +481,9 @@ local function isCollapsed(section)
     return saved
 end
 
-local search = NS.InputBox(p, 230, "Search help", function()
-    NS.RefreshHelp()
+local refreshHelp
+local search = NS.UI.InputBox(p, 230, "Search help", function()
+    refreshHelp()
 end)
 search:SetPoint("TOPLEFT", 8, -2)
 
@@ -483,7 +509,7 @@ sf:SetScript("OnSizeChanged", function(_, width)
         end
     end
     if p:IsShown() then
-        NS.RefreshHelp()
+        refreshHelp()
     end
 end)
 
@@ -513,7 +539,7 @@ local function build()
             b:SetScript("OnClick", function()
                 NS.DB.helpCollapsed = NS.DB.helpCollapsed or {}
                 NS.DB.helpCollapsed[e.section] = not isCollapsed(e.section)
-                NS.RefreshHelp()
+                refreshHelp()
                 PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
             end)
             e.header = b
@@ -543,7 +569,7 @@ end
 
 -- Lay the entries out top to bottom. While searching, only matching
 -- entries show, and their sections open.
-function NS.RefreshHelp()
+function refreshHelp()
     if not built then
         build()
     end
@@ -600,3 +626,4 @@ function NS.RefreshHelp()
     noResults:SetShown(not any)
     child:SetHeight(math.max(1, -y))
 end
+NS.UI.refresh.help = refreshHelp

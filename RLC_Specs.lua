@@ -388,6 +388,29 @@ function Specs.DescribeItem(itemString)
     return mask, Rules.SetToCSV(suited)
 end
 
+-- Whether an item suits the player's own spec (the Catalogue filter). True
+-- for an item with no spec limit, and while the spec or the item is not
+-- known yet. The suited specs are kept per item once the game has loaded
+-- both its info and its tooltip: a half-loaded item would be kept wrong.
+local suitedCSV = {}
+function Specs.SuitsMe(itemString)
+    local mine = Specs.Mine()
+    if not mine then
+        return true
+    end
+    if
+        not suitedCSV[itemString] and not (C_Item.GetItemInfo(itemString) and C_TooltipInfo.GetHyperlink(itemString))
+    then
+        return true
+    end
+    local csv = suitedCSV[itemString]
+    if not csv then
+        csv = select(2, Specs.DescribeItem(itemString))
+        suitedCSV[itemString] = csv
+    end
+    return csv == "" or ("," .. csv .. ","):find("," .. mine .. ",", 1, true) ~= nil
+end
+
 -- ---- the player's own spec -------------------------------------------------
 
 -- The talent tab with the most points, read the way the talent window reads

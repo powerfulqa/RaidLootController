@@ -1,6 +1,7 @@
 -- RLC_UI.lua
--- The window: Loot (the live item), Raid (session, reserves, players) and
--- History. Plain frames from stock templates, redrawn from state on every
+-- The window, its shared widgets, the Loot and Raid pages, the next-step
+-- glow that ties them together, and the minimap button. The other tabs are
+-- in RLC_UI_*.lua. Plain frames from stock templates, redrawn from state on every
 -- NS.Refresh(); nothing here changes state except through NS.Act.
 local _, NS = ...
 local Rules = NS.Rules
@@ -36,6 +37,20 @@ local function Button(parent, text, w, onClick)
     b:SetText(text)
     b:SetScript("OnClick", onClick)
     return b
+end
+
+-- What a button does, shown when the mouse is over it: its label as the
+-- title, then `text`. Shown on a greyed-out button too, which is when a
+-- player most wants to know.
+local function Tip(button, text)
+    button:SetMotionScriptsWhileDisabled(true)
+    button:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(self:GetText())
+        GameTooltip:AddLine(text, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", GameTooltip_Hide)
 end
 
 local AddGlow, ResizeGrip = NS.Kit.AddGlow, NS.Kit.ResizeGrip
@@ -210,7 +225,7 @@ end
 
 -- A one-line input box with a grey hint while it is empty. onChange(box)
 -- runs after every change. Escape empties it.
-function NS.InputBox(parent, w, hintText, onChange)
+local function InputBox(parent, w, hintText, onChange)
     local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
     box:SetSize(w, 20)
     box:SetAutoFocus(false)
@@ -545,13 +560,6 @@ end
 
 local pages, tabs = {}, {}
 local current = "loot"
--- Only the Commands page sizes its rows when it draws; the lists re-lay
--- themselves and Help has its own OnSizeChanged.
-f:SetScript("OnSizeChanged", function()
-    if current == "commands" and NS.Refresh then -- not yet while this file loads
-        NS.Refresh()
-    end
-end)
 f:SetScript("OnDragStart", f.StartMoving)
 f:SetScript("OnDragStop", saveWindow)
 
@@ -615,6 +623,7 @@ local function showPage(key)
         else
             b:UnlockHighlight()
         end
+        b.mark:SetShown(k == key)
     end
     NS.Refresh()
 end
@@ -635,6 +644,14 @@ for i, def in ipairs(TABS) do
     end)
     b:SetPoint("TOPLEFT", 12 + (i - 1) * 87, -30) -- 8 tabs across the minimum width
     AddGlow(b)
+    -- A gold bar under the open tab: the locked highlight alone is too
+    -- faint to tell, and a skin (DaylightUI) can flatten it away.
+    b.mark = b:CreateTexture(nil, "OVERLAY")
+    b.mark:SetColorTexture(1, 0.82, 0, 1)
+    b.mark:SetHeight(3)
+    b.mark:SetPoint("BOTTOMLEFT", 3, 0)
+    b.mark:SetPoint("BOTTOMRIGHT", -3, 0)
+    b.mark:Hide()
     tabs[def[1]] = b
 end
 
@@ -647,8 +664,35 @@ NS.ShowPage = function(key)
     NS.Show()
 end
 
--- RLC_Help.lua fills this page.
-NS.helpPage = page("help")
+-- Sort key for an item: its name once the client has it, else its ID.
+local function itemKey(itemString)
+    return C_Item.GetItemInfo(itemString) or itemString
+end
+
+-- What every page builds with, in this file or its own (RLC_UI_*.lua,
+-- RLC_Help.lua). Each page sets UI.refresh[its tab key] to its redraw,
+-- which gets the session (or nil).
+local UI = {
+    Text = Text,
+    Button = Button,
+    Tip = Tip,
+    List = List,
+    InputBox = InputBox,
+    ItemTooltip = ItemTooltip,
+    page = page,
+    itemKey = itemKey,
+    HOW_TEXT = HOW_TEXT,
+    refresh = {},
+}
+NS.UI = UI
+
+-- Called on GET_ITEM_INFO_RECEIVED: lists that skip a rebuild redraw. True
+-- when a page was waiting for that item (UI.itemArrived, set by the
+-- Catalogue for its search).
+function NS.ItemInfoArrived(itemID)
+    itemInfoGen = itemInfoGen + 1
+    return UI.itemArrived ~= nil and UI.itemArrived(itemID) or false
+end
 
 -- ---- Loot page ----------------------------------------------------------------------
 
@@ -800,17 +844,23 @@ local undoBtn = adminButton("Undo win", BW, BX * 3, 0, onSel("UNDO"))
 AddGlow(startBtn)
 AddGlow(callBtn)
 AddGlow(closeBtn)
+Tip(addLootBtn, "Put the items in the open loot window up for rolls.")
+Tip(wantBtn, "Say you want this item. Click again to take it back.")
+Tip(rollBtn, "Roll for the item being rolled for. The same as typing /roll.")
+Tip(startBtn, "Put this item up, so players can say they want it.")
+Tip(callBtn, "Ask the players who want it to roll.")
+Tip(closeBtn, "End the roll. The highest roll wins.")
+Tip(openBtn, "Open this item to everyone, players who already won an item included.")
+Tip(specBtn, "Choose which specs may roll for this item.")
+Tip(awardBtn, "Give this item to the player picked in the list, without a roll.")
+Tip(cancelBtn, "Take this item off the list. Nobody wins it.")
+Tip(undoBtn, "Take the win back, so the item can be given again.")
 
 -- Class-coloured, localized class name for a class token.
 local function classLabel(token)
     local name = GetClassInfo(Rules.CLASS_ID[token] or 0) or token
     local color = C_ClassColor.GetClassColor(token)
     return color and color:WrapTextInColorCode(name) or name
-end
-
--- Sort key for an item: its name once the client has it, else its ID.
-local function itemKey(itemString)
-    return C_Item.GetItemInfo(itemString) or itemString
 end
 
 local function specName(key)
@@ -1244,7 +1294,7 @@ end
 local rpg = page("raid")
 local raidSel
 
-local titleBox = NS.InputBox(rpg, 180, "Raid name (optional)")
+local titleBox = InputBox(rpg, 180, "Raid name (optional)")
 titleBox:SetPoint("TOPLEFT", 8, -2)
 titleBox:SetMaxLetters(40)
 local newBtn = Button(rpg, "New raid", 90, function()
@@ -1289,7 +1339,7 @@ raidHelp:SetWordWrap(true)
 local resLabel = Text(rpg, "GameFontNormal")
 resLabel:SetPoint("TOPLEFT", 0, -62)
 resLabel:SetWidth(400)
-local resBox = NS.InputBox(rpg, 220, "Shift-click an item, or type its ID")
+local resBox = InputBox(rpg, 220, "Shift-click an item, or type its ID")
 resBox:SetPoint("TOPLEFT", 8, -84)
 local function doReserve()
     local text = resBox:GetText() or ""
@@ -1472,6 +1522,20 @@ end)
 owedClearBtn:SetPoint("BOTTOMRIGHT", 0, 0)
 owedText:SetWordWrap(true)
 owedText:SetMaxLines(2)
+Tip(newBtn, "Start a new raid and open it for reserves. For the group leader and assistants.")
+Tip(beginBtn, "Close reserves and start handing out loot.")
+Tip(endBtn, "End the raid. It stays in History.")
+Tip(syncBtn, "Ask the host for the raid again, if your window looks out of date.")
+Tip(announceBtn, "Announce items, rolls and winners in raid chat.")
+Tip(resBtn, "Reserve the item in the box.")
+Tip(unresBtn, "Take your reserve back.")
+Tip(mySpecBtn, "Pick the spec you want loot for.")
+Tip(confirmSpecBtn, "Confirm the spec read from your talents as your loot spec.")
+Tip(lockBtn, "A player who won an item is locked out of normal rolls. This sets or lifts that for the picked player.")
+Tip(offBtn, "Let the picked player run loot with you, or take that back.")
+Tip(setSpecBtn, "Set the picked player's loot spec for them.")
+Tip(benchBtn, "Mark players as on the bench. They count as there for attendance.")
+Tip(owedClearBtn, "Empty the list of items still to trade.")
 rpg:SetScript("OnSizeChanged", function(_, width)
     owedText:SetWidth(width - 70)
 end)
@@ -1662,938 +1726,10 @@ local function refreshRaid(S)
     players.frame:SetPoint("BOTTOMRIGHT", rpg, "BOTTOMRIGHT", -26, listY)
 end
 
--- ---- History page ---------------------------------------------------------------------
-
-local hp = page("history")
-local histSel
-
--- Officer actions (manual awards, take-backs, locks, spec changes) so the
--- raid can see who did what.
-local LOG_TEXT = {
-    award = "gave an item to %s",
-    undo = "took back %s's win",
-    lock = "locked %s",
-    unlock = "unlocked %s",
-    spec = "set %s's spec",
-    open = "opened an item to everyone",
-    cancel = "cancelled an item",
-    specs = "changed an item's specs",
-    officer = "made %s an officer",
-    unofficer = "removed %s as officer",
-    close = "closed a roll, won by %s",
-    deliv = "marked %s's item delivered",
-    live = "started the raid",
-    ended = "ended the raid",
-    bench = "put %s on the bench",
-    unbench = "took %s off the bench",
-}
--- rec: the raid the entry belongs to, for the item it names.
-local function logLine(e, rec)
-    local item = e.key and rec and rec.items and rec.items[e.key]
-    local link = item and NS.LinkOf(item.itemString) or "an item"
-    local who = e.name and NS.ColorName(e.name) or "?"
-    local text
-    if e.what == "mlgive" then
-        text = "gave " .. link .. " to " .. who .. " from the loot window"
-    elseif e.what == "void" then
-        text = "wiped the rolls on " .. link .. " (a boss was pulled): everyone rolls again"
-    else
-        text = (LOG_TEXT[e.what] or "%s"):format(e.name and NS.Short(e.name) or "")
-    end
-    return date("%H:%M", e.t)
-        .. "  "
-        .. NS.ColorName(e.by)
-        .. " "
-        .. text
-        .. (e.kept and " |cff999999(only on your copy)|r" or "")
-end
-
-local raidsList = List(hp, 230, 380, { 70, 130 }, false, function(id)
-    histSel = id
-    NS.Refresh()
-end, { "Date", "Raid" })
-raidsList.frame:SetPoint("TOPLEFT", 4, -20)
-raidsList.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 4, 4)
-
-local histItems = List(hp, 436, 350, { 160, 100, 130 }, true, nil, { "Item", "Winner", "How" })
-histItems.frame:SetPoint("TOPLEFT", 250, -20)
-histItems.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 250, 34)
-histItems.frame:SetPoint("BOTTOMRIGHT", hp, "BOTTOMRIGHT", -26, 34)
-histItems.onEnter = function(row, item)
-    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-    GameTooltip:SetHyperlink(item.itemString)
-    local lines = {}
-    for name, n in pairs(item.rolls) do
-        lines[#lines + 1] = { name = name, n = n }
-    end
-    table.sort(lines, function(a, b)
-        return a.n > b.n
-    end)
-    if #lines > 0 then
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Rolls")
-        for _, l in ipairs(lines) do
-            GameTooltip:AddDoubleLine(NS.ColorName(l.name), l.n, 1, 1, 1, 1, 1, 1)
-        end
-    end
-    local wants = {}
-    for name in pairs(item.wants) do
-        wants[#wants + 1] = NS.ColorName(name)
-    end
-    if #wants > 0 then
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Wanted by: " .. table.concat(wants, ", "), 1, 1, 1, true)
-    end
-    -- A win taken back: who had it, how, and the rolls then.
-    local u = item.undone
-    if u then
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine(
-            "Taken back from " .. NS.ColorName(u.winner) .. " (" .. (HOW_TEXT[u.how] or "given") .. ")",
-            1,
-            0.5,
-            0.25,
-            true
-        )
-        local old = {}
-        for name, n in pairs(u.rolls or {}) do
-            old[#old + 1] = { name = name, n = n }
-        end
-        table.sort(old, function(a, b)
-            return a.n > b.n
-        end)
-        for _, l in ipairs(old) do
-            GameTooltip:AddDoubleLine(NS.ColorName(l.name), l.n, 1, 1, 1, 0.6, 0.6, 0.6)
-        end
-    end
-    local rec = histSel and NS.DB.history[histSel]
-    for _, e in ipairs(rec and rec.log or {}) do
-        if e.key == item.key then
-            GameTooltip:AddLine(logLine(e, rec), 1, 0.8, 0.2, true)
-        end
-    end
-    GameTooltip:Show()
-end
-
-local logBtn = Button(hp, "Officer log", 100, function()
-    local rec = histSel and NS.DB.history[histSel]
-    local lines = {}
-    for _, e in ipairs(rec and rec.log or {}) do
-        lines[#lines + 1] = logLine(e, rec)
-    end
-    NS.ShowCopy("Officer log", #lines > 0 and table.concat(lines, "\n") or "None in this raid.")
-end)
-logBtn:SetScript("OnEnter", function(self)
-    local rec = histSel and NS.DB.history[histSel]
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:AddLine("Officer actions")
-    local log = rec and rec.log or {}
-    if #log == 0 then
-        GameTooltip:AddLine("None in this raid.", 0.6, 0.6, 0.6)
-    end
-    for i = math.max(1, #log - 29), #log do
-        GameTooltip:AddLine(logLine(log[i], rec), 1, 1, 1)
-    end
-    GameTooltip:Show()
-end)
-logBtn:SetScript("OnLeave", GameTooltip_Hide)
-
-local delBtn = Button(hp, "Delete raid", 100, function()
-    local id = histSel
-    if id then
-        NS.Confirm("Delete this raid from history? Stats change too.", function()
-            NS.DB.history[id] = nil
-            histSel = nil
-            NS.historyGen = NS.historyGen + 1
-            NS.Refresh()
-        end)
-    end
-end)
-delBtn:SetPoint("BOTTOMLEFT", 246, 0)
-logBtn:SetPoint("LEFT", delBtn, "RIGHT", 6, 0)
-local copyBtn = Button(hp, "Copy as text", 110, function()
-    local rec = histSel and NS.DB.history[histSel]
-    if rec then
-        local text = Rules.HistoryText(rec, date("%d %b %Y", rec.created or 0), function(s)
-            return C_Item.GetItemInfo(s) or ("item " .. (Rules.ItemIDOf(s) or "?"))
-        end, NS.Short)
-        NS.ShowCopy("Raid results", text)
-    end
-end)
-copyBtn:SetPoint("LEFT", logBtn, "RIGHT", 6, 0)
-
-local function refreshHistory()
-    local hist = NS.DB.history
-    local ids = {}
-    for id in pairs(hist) do
-        ids[#ids + 1] = id
-    end
-    table.sort(ids, function(a, b)
-        return (hist[a].created or 0) > (hist[b].created or 0)
-    end)
-    if not histSel or not hist[histSel] then
-        histSel = ids[1]
-    end
-    raidsList:Sort(ids, {
-        function(id)
-            return hist[id].created or 0
-        end,
-        function(id)
-            return hist[id].title or ""
-        end,
-    })
-    raidsList:Set(#ids, function(r, i)
-        local rec = hist[ids[i]]
-        r.data = ids[i]
-        r.cols[1]:SetText(date("%d %b %y", rec.created or 0))
-        -- Hosted by someone who was not the group leader: not proof of who won.
-        r.cols[2]:SetText((rec.title or "?") .. (rec.untrusted and " |cff808080(unverified)|r" or ""))
-        return ids[i] == histSel
-    end)
-    local rec = histSel and hist[histSel]
-    local shown = {}
-    if rec then
-        for _, key in ipairs(rec.order) do
-            local item = rec.items[key]
-            -- Won, removed, or a win taken back (and not given again).
-            if item.state == "done" or item.state == "cancelled" or item.undone then
-                shown[#shown + 1] = item
-            end
-        end
-    end
-    -- What the How column says: removed and taken-back items too.
-    local function howText(item)
-        if item.state == "cancelled" then
-            return "|cff999999removed|r"
-        elseif item.state ~= "done" then
-            return "|cffff8800taken back|r"
-        end
-        return (HOW_TEXT[item.how] or "")
-            .. (item.undone and " |cffff8800(re-given)|r" or "")
-            .. (item.delivered and " |cff00ff00delivered|r" or "")
-    end
-    histItems:Sort(shown, {
-        function(item)
-            return itemKey(item.itemString)
-        end,
-        function(item)
-            return item.winner and NS.Short(item.winner) or ""
-        end,
-        function(item)
-            return item.state == "done" and HOW_TEXT[item.how] or item.state
-        end,
-    })
-    histItems:Set(#shown, function(r, i)
-        local item = shown[i]
-        r.data = item
-        r.icon:SetTexture(NS.IconOf(item.itemString))
-        r.cols[1]:SetText(NS.LinkOf(item.itemString))
-        r.cols[2]:SetText(item.winner and NS.ColorName(item.winner) or "|cff999999-|r")
-        r.cols[3]:SetText(howText(item))
-    end)
-    delBtn:SetEnabled(rec ~= nil)
-    logBtn:SetEnabled(rec ~= nil)
-    copyBtn:SetEnabled(rec ~= nil)
-end
-
--- ---- Catalogue page ---------------------------------------------------------------------
--- Every item seen drop, by instance and boss. Pick an item and Reserve it
--- while the raid is taking reserves, or shift-click it to link it in chat.
-
-local cp = page("catalog")
-local Catalog = NS.Catalog
-local catBoss -- { instID, bossKey } of the selected boss
-local catItem -- itemString of the selected item
-local expanded = {} -- instID -> true when its bosses are listed
-
--- A search scans the whole catalogue, so it waits until typing pauses.
-local searchTimer
-local search = NS.InputBox(cp, 230, "Search all items", function()
-    if searchTimer then
-        searchTimer:Cancel()
-    end
-    searchTimer = C_Timer.NewTimer(0.25, NS.Refresh)
-end)
-search:SetPoint("TOPLEFT", 8, -2)
-local CAT_SHOWN_MAX = 200
-local catMore = Text(cp, "GameFontDisableSmall")
-catMore:SetPoint("LEFT", search, "RIGHT", 10, 0)
-catMore:SetText("Showing the first " .. CAT_SHOWN_MAX .. " matches. Type more to narrow it.")
-catMore:Hide()
-
--- itemID -> lower-case name, kept once the game knows it: a search reads
--- every record, so it should not ask the item API for each again. A miss is
--- kept as false until the game loads that item (NS.ItemInfoArrived).
-local lowerNames = {}
-local function lowerName(s)
-    local id = Rules.ItemIDOf(s)
-    if not id then
-        return false
-    end
-    local name = lowerNames[id]
-    if name == nil then
-        name = C_Item.GetItemInfo(s)
-        name = name and name:lower() or false
-        lowerNames[id] = name
-    end
-    return name
-end
-
--- The last search: its matches stay until the query, the selected boss,
--- the catalogue or a missing name changes. catRev counts catalogue writes.
-local catRev, catSearchKey, catSearchHits, catSearchMore = 0, nil, nil, false
-for _, fn in ipairs({ "Record", "ApplyOp", "Forget", "ForgetHeard" }) do
-    local orig = Catalog[fn]
-    if orig then
-        Catalog[fn] = function(...)
-            catRev = catRev + 1
-            return orig(...)
-        end
-    end
-end
-
--- Called on GET_ITEM_INFO_RECEIVED. True when the UI was waiting for that
--- item's name (a search may now find it).
-function NS.ItemInfoArrived(itemID)
-    itemInfoGen = itemInfoGen + 1
-    if lowerNames[itemID] == false then
-        lowerNames[itemID] = nil
-        catRev = catRev + 1
-        return true
-    end
-    return false
-end
-
-local tree = List(cp, 260, 330, { 220 }, false, function(row)
-    if row.bossKey == nil then
-        expanded[row.instID] = not expanded[row.instID] or nil
-    else
-        catBoss, catItem = row, nil
-        search:SetText("")
-    end
-    NS.Refresh()
-end, { "Instance and boss" })
-tree.frame:SetPoint("TOPLEFT", 4, -46)
-tree.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 4, 4)
-
-local catItems = List(cp, 420, 330, { 165, 135, 58 }, true, function(rec)
-    if IsModifiedClick() then
-        -- Only a real link: an uncached item is a "[item 123]" placeholder.
-        local link = NS.LinkOf(rec.s) -- also asks the game for it
-        if NS.ItemStringOf(link) then
-            HandleModifiedItemClick(link)
-        end
-        return
-    end
-    catItem = rec.s
-    NS.Refresh()
-end, { "Item", "Dropped", "Last seen" })
-catItems.frame:SetPoint("TOPLEFT", 270, -46)
-catItems.frame:SetPoint("BOTTOMLEFT", cp, "BOTTOMLEFT", 270, 58)
-catItems.frame:SetPoint("BOTTOMRIGHT", cp, "BOTTOMRIGHT", -26, 58)
-catItems.onEnter = function(row, rec)
-    ItemTooltip(row, rec.s)
-end
-
-local catReserve = Button(cp, "Reserve this", 110, function()
-    local id = catItem and Rules.ItemIDOf(catItem)
-    if id then
-        NS.Act("RES", id)
-    end
-end)
-catReserve:SetPoint("BOTTOMLEFT", 266, 22)
-local catAsk = Button(cp, "Ask guild for updates", 150, function()
-    Catalog.Ask("GUILD", true)
-    if IsInGroup() then
-        Catalog.Ask("GROUP", true)
-    end
-    NS.Print("Asked your guild and group for loot they have seen.")
-end)
-catAsk:SetPoint("LEFT", catReserve, "RIGHT", 6, 0)
-local catForget = Button(cp, "Forget boss", 100, function()
-    local boss = catBoss
-    local inst = boss and NS.DB.catalog[boss.instID]
-    if inst then
-        NS.Confirm("Forget every drop seen for this boss?", function()
-            inst.b[boss.bossKey] = nil
-            if not next(inst.b) then
-                NS.DB.catalog[boss.instID] = nil
-            end
-            Catalog.Forget(NS.DB.catalog)
-            catBoss, catItem = nil, nil
-            NS.Refresh()
-        end)
-    end
-end)
-catForget:SetPoint("LEFT", catAsk, "RIGHT", 6, 0)
--- Heard counts come from other players' addons; this keeps only what you saw.
-local catForgetHeard = Button(cp, "Forget heard", 100, function()
-    if Catalog.ForgetHeard then
-        NS.Confirm("Forget all loot heard from other players?", function()
-            local dropped = Catalog.ForgetHeard(NS.DB.catalog) or 0
-            catBoss, catItem = nil, nil
-            NS.Print("Kept only loot you saw yourself. Dropped " .. dropped .. " heard items.")
-            NS.Refresh()
-        end)
-    end
-end)
-catForgetHeard:SetPoint("TOPRIGHT", -26, -2)
-catForgetHeard:SetShown(Catalog.ForgetHeard ~= nil)
-catMore:SetPoint("RIGHT", catForgetHeard, "LEFT", -6, 0)
-catMore:SetWordWrap(false)
-local catHelp = Text(cp, "GameFontDisableSmall")
-catHelp:SetPoint("BOTTOMLEFT", 270, 4)
-catHelp:SetPoint("BOTTOMRIGHT", 0, 4)
-catHelp:SetWordWrap(true)
-catHelp:SetText("Filled in by everyone's addon as bosses die. Shift-click an item to link it.")
-
-local function sortedBosses(inst)
-    local keys = {}
-    for key in pairs(inst.b) do
-        keys[#keys + 1] = key
-    end
-    table.sort(keys, function(a, b)
-        if (a == 0) ~= (b == 0) then
-            return b == 0 -- trash last
-        end
-        return (inst.b[a].f or 0) < (inst.b[b].f or 0)
-    end)
-    return keys
-end
-
-local function refreshCatalog()
-    local cat = NS.DB.catalog
-    local insts = {}
-    for instID in pairs(cat) do
-        insts[#insts + 1] = instID
-    end
-    table.sort(insts, function(a, b)
-        return cat[a].name < cat[b].name
-    end)
-    local rows = {}
-    for _, instID in ipairs(insts) do
-        rows[#rows + 1] = { instID = instID }
-        if expanded[instID] then
-            for _, key in ipairs(sortedBosses(cat[instID])) do
-                rows[#rows + 1] = { instID = instID, bossKey = key }
-            end
-        end
-    end
-    tree:Set(#rows, function(r, i)
-        local row = rows[i]
-        r.data = row
-        local inst = cat[row.instID]
-        if row.bossKey == nil then
-            r.cols[1]:SetText((expanded[row.instID] and "- " or "+ ") .. "|cffffd100" .. inst.name .. "|r")
-            return false
-        end
-        local boss = inst.b[row.bossKey]
-        r.cols[1]:SetText("     " .. boss.name .. " |cff999999(" .. boss.kills .. " kills)|r")
-        return catBoss ~= nil and catBoss.instID == row.instID and catBoss.bossKey == row.bossKey
-    end)
-
-    -- Right side: the selected boss's items, or every match for the search.
-    local query = (search:GetText() or ""):lower()
-    local shown = {}
-    catMore:Hide()
-    if query ~= "" then
-        local key = query .. "\0" .. tostring(cat) .. "\0" .. catRev
-        if key ~= catSearchKey then
-            catSearchKey, catSearchHits, catSearchMore = key, {}, false
-            for _, inst in pairs(cat) do
-                for _, boss in pairs(inst.b) do
-                    for _, rec in pairs(boss.i) do
-                        local name = lowerName(rec.s)
-                        if name and name:find(query, 1, true) then
-                            if #catSearchHits >= CAT_SHOWN_MAX then
-                                catSearchMore = true -- one row frame per match: keep it bounded
-                            else
-                                catSearchHits[#catSearchHits + 1] = { rec = rec, label = boss.name }
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        catMore:SetShown(catSearchMore)
-        for i, e in ipairs(catSearchHits) do
-            shown[i] = e
-        end
-    elseif catBoss then
-        local boss = cat[catBoss.instID] and cat[catBoss.instID].b[catBoss.bossKey]
-        if boss then
-            -- Our own counts when we have them; numbers only heard from
-            -- others are shown dimmed and marked.
-            local ok = boss.ok or (boss.w and 0 or boss.kills)
-            for _, rec in pairs(boss.i) do
-                local on = rec.on or (rec.w and 0 or rec.n)
-                local label
-                if on == 0 then
-                    label = catBoss.bossKey == 0 and ("seen " .. rec.n .. "x")
-                        or string.format("in %d of %d kills", rec.n, boss.kills)
-                    label = "|cff808080" .. label .. " (heard)|r"
-                elseif catBoss.bossKey == 0 then
-                    label = "seen " .. on .. "x"
-                else
-                    label = string.format(
-                        "in %d of %d kills (%d%%)",
-                        on,
-                        math.max(ok, on),
-                        math.floor(on / math.max(ok, on, 1) * 100 + 0.5)
-                    )
-                end
-                shown[#shown + 1] = { rec = rec, label = label }
-            end
-        end
-    end
-    table.sort(shown, function(a, b)
-        if a.rec.n ~= b.rec.n then
-            return a.rec.n > b.rec.n
-        end
-        return a.rec.s < b.rec.s
-    end)
-    catItems:Sort(shown, {
-        function(e)
-            return itemKey(e.rec.s)
-        end,
-        function(e)
-            return e.rec.n
-        end,
-        function(e)
-            return e.rec.t
-        end,
-    })
-    catItems:Set(#shown, function(r, i)
-        local e = shown[i]
-        r.data = e.rec
-        r.icon:SetTexture(NS.IconOf(e.rec.s))
-        r.cols[1]:SetText(NS.LinkOf(e.rec.s))
-        r.cols[2]:SetText(e.label)
-        r.cols[3]:SetText(e.rec.t > 0 and date("%d %b %y", e.rec.t) or "")
-        return e.rec.s == catItem
-    end)
-
-    local S = NS.S()
-    catReserve:SetShown(S ~= nil and S.phase == "reserve")
-    catReserve:SetEnabled(catItem ~= nil and S ~= nil and next(S.items) == nil) -- closed at the first item
-    catForget:SetEnabled(catBoss ~= nil)
-end
-
--- ---- Stats page ----------------------------------------------------------------------
--- Who has had what, over every saved raid: the check that loot is spread
--- fairly. Free rolls are counted apart, as leftovers nobody needed.
-
-local sp = page("stats")
-local statsHelp = Text(sp, "GameFontDisableSmall")
-statsHelp:SetPoint("BOTTOMLEFT", 0, 4)
-statsHelp:SetPoint("BOTTOMRIGHT", 0, 4)
-statsHelp:SetWordWrap(true)
-statsHelp:SetText(
-    "Raids: raids a player was there for (most of the raid, or on the bench), out of raids with "
-        .. Rules.MIN_ATTEND
-        .. " or more players. Regulars came to most recent raids and roll first. "
-        .. "Items leaves out free rolls. Hover a player to see what they won."
-)
-local statsList = List(sp, 696, 360, { 140, 45, 45, 60, 45, 60, 55, 90 }, false, nil, {
-    "Player",
-    "Raids",
-    "Att %",
-    "Regular",
-    "Items",
-    "Free rolls",
-    "Per raid",
-    "Last item",
-})
-
--- Attendance over saved raids: name -> raids present (Rules.Present, bench
--- counts), and how many raids count at all (started, trusted, MIN_ATTEND
--- present in person). The live raid counts once it has started.
-local function attendance(history)
-    local att, counting = {}, 0
-    for _, rec in pairs(history or {}) do
-        if rec.started and not rec.untrusted then
-            local cand = Rules.SeenIn(rec)
-            for _, set in ipairs({ rec.att or {}, rec.bench or {} }) do
-                for name in pairs(set) do
-                    cand[name] = true
-                end
-            end
-            local here, n = {}, 0
-            for name in pairs(cand) do
-                if Rules.Present(rec, name) then
-                    -- The bench counts as present, but not toward MIN_ATTEND.
-                    here[#here + 1] = name
-                    n = n + ((rec.bench and rec.bench[name]) and 0 or 1)
-                end
-            end
-            if n >= Rules.MIN_ATTEND then
-                counting = counting + 1
-                for _, name in ipairs(here) do
-                    att[name] = (att[name] or 0) + 1
-                end
-            end
-        end
-    end
-    return att, counting
-end
-statsList.frame:SetPoint("TOPLEFT", 4, -20)
-statsList.frame:SetPoint("BOTTOMRIGHT", -26, 30)
--- name -> wins, newest first; built once per history change, not per hover.
-local winsBy, winsGen = {}, nil
-statsList.onEnter = function(row, name)
-    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-    GameTooltip:AddLine(NS.ColorName(name))
-    if winsGen ~= NS.historyGen then
-        winsBy, winsGen = {}, NS.historyGen
-        for _, rec in pairs(NS.DB.history) do
-            for _, it in pairs(rec.items or {}) do
-                if it.state == "done" and it.winner then
-                    local list = winsBy[it.winner] or {}
-                    winsBy[it.winner] = list
-                    list[#list + 1] = { t = rec.created or 0, s = it.itemString, how = it.how }
-                end
-            end
-        end
-        for _, list in pairs(winsBy) do
-            table.sort(list, function(a, b)
-                return a.t > b.t
-            end)
-        end
-    end
-    local wins = winsBy[name] or {}
-    for i = 1, math.min(#wins, 20) do
-        local w = wins[i]
-        GameTooltip:AddDoubleLine(
-            NS.LinkOf(w.s) .. (w.how == "open" and " |cff999999(free)|r" or ""),
-            date("%d %b", w.t),
-            1,
-            1,
-            1,
-            0.6,
-            0.6,
-            0.6
-        )
-    end
-    if #wins == 0 then
-        GameTooltip:AddLine("Nothing won yet.", 0.6, 0.6, 0.6)
-    end
-    GameTooltip:Show()
-end
-
--- Worked out again only when history changes, not on every redraw (a
--- window resize redraws every frame).
--- Wants and rolls in the live raid count too, but those arrive many times a
--- second during a roll: they redo the stats at most every 3 s.
-local statsCache, statsGen, statsOp, statsAt, statsLater
-local attCache, attRaids, regulars = {}, 0, {}
-local function refreshStats()
-    local stale = statsOp ~= NS.opGen
-    if statsGen ~= NS.historyGen or (stale and GetTime() - statsAt >= 3) then
-        statsCache, statsGen, statsOp, statsAt = Rules.PlayerStats(NS.DB.history), NS.historyGen, NS.opGen, GetTime()
-        attCache, attRaids = attendance(NS.DB.history)
-        regulars = {}
-        for _, name in ipairs(NS.DryLastRaid()) do
-            regulars[name] = true
-        end
-        for name in pairs(attCache) do
-            statsCache[name] = statsCache[name] or { raids = 0, won = 0, free = 0, last = 0 }
-        end
-    elseif stale and not statsLater then
-        statsLater = true
-        C_Timer.After(3, function()
-            statsLater = false
-            NS.Refresh()
-        end)
-    end
-    local stats = statsCache
-    local names = {}
-    for name in pairs(stats) do
-        names[#names + 1] = name
-    end
-    table.sort(names)
-    -- Items per raid: over raids attended, or raids seen in when that is
-    -- more (wins in small raids that do not count for attendance).
-    local function raids(name)
-        return attCache[name] or 0
-    end
-    local function perRaid(name)
-        local n = math.max(raids(name), stats[name].raids)
-        return n > 0 and stats[name].won / n or 0
-    end
-    local function attPct(name)
-        return attRaids > 0 and math.floor(raids(name) / attRaids * 100 + 0.5) or 0
-    end
-    statsList:Sort(names, {
-        NS.Short,
-        raids,
-        attPct,
-        function(name)
-            return regulars[name] and 1 or 0
-        end,
-        function(name)
-            return stats[name].won
-        end,
-        function(name)
-            return stats[name].free
-        end,
-        perRaid,
-        function(name)
-            return stats[name].last
-        end,
-    })
-    statsList:Set(#names, function(r, i)
-        local name, e = names[i], stats[names[i]]
-        r.data = name
-        r.cols[1]:SetText(NS.ColorName(name))
-        r.cols[2]:SetText(raids(name))
-        r.cols[3]:SetText(attRaids > 0 and (attPct(name) .. "%") or "")
-        r.cols[4]:SetText(regulars[name] and "|cff66ff66yes|r" or "")
-        r.cols[5]:SetText(e.won)
-        r.cols[6]:SetText(e.free > 0 and e.free or "")
-        r.cols[7]:SetText(string.format("%.2f", perRaid(name)))
-        r.cols[8]:SetText(e.last > 0 and date("%d %b %Y", e.last) or "|cff999999never|r")
-    end)
-end
-
--- ---- Versions page --------------------------------------------------------------------
--- Everyone known to have the addon, with their version: NS.versions (filled
--- by any addon message a player sends, group or guild, and by the "CV"
--- answers in RLC_Catalog.lua) plus yourself. Players without it are not
--- listed. Copy list gives the ones in your group as text, for attendance.
-
--- In a block of its own: a Lua chunk holds 200 locals at most, and this
--- file is near that.
-local refreshVersions
-do
-    local vp = page("versions")
-    local verSummary = Text(vp, "GameFontHighlight")
-    verSummary:SetPoint("TOPLEFT", 0, -2)
-    verSummary:SetPoint("TOPRIGHT", 0, -2)
-    local verHelp = Text(vp, "GameFontDisableSmall")
-    verHelp:SetPoint("BOTTOMLEFT", 0, 4)
-    verHelp:SetPoint("BOTTOMRIGHT", -214, 4)
-    verHelp:SetWordWrap(true)
-    verHelp:SetText(
-        "Players with the addon answer when you join the group. Guildmates show once their addon "
-            .. "has sent something. A v0.7.0 or older copy shows only after it sends something."
-    )
-    local verCheck = Button(vp, "Check again", 100, function()
-        if NS.Catalog.AskVersions() then
-            NS.Print("Asked the group who has the addon. Answers take a few seconds.")
-        end
-    end)
-    verCheck:SetPoint("BOTTOMRIGHT", 0, 2)
-    local verList = List(vp, 696, 340, { 200, 200, 130 }, false, nil, { "Player", "Version", "In your group" })
-    verList.frame:SetPoint("TOPLEFT", 4, -42)
-    verList.frame:SetPoint("BOTTOMRIGHT", -26, 34)
-
-    local VER_TEXT = {
-        same = "%s",
-        unknown = "%s",
-        older = "|cffff8800%s (older than yours)|r",
-        newer = "|cff66ccff%s (newer than yours)|r",
-    }
-    -- names (sorted), version by name, and where each is: "here", "offline"
-    -- (in the group, disconnected) or nil (not in the group).
-    local function versionRows()
-        local me = NS.Me()
-        local names, ver, where = {}, {}, {}
-        for name, v in pairs(NS.versions) do
-            ver[name] = v
-        end
-        if me then
-            ver[me] = NS.VERSION
-        end
-        for name in pairs(ver) do
-            names[#names + 1] = name
-            local r = NS.roster[name]
-            if r then
-                local on = r.unit and not r.stale and UnitIsConnected(r.unit) -- can be secret
-                where[name] = (NS.CanRead(on) and on == false) and "offline" or "here"
-            end
-        end
-        table.sort(names)
-        return names, ver, where
-    end
-    local function verPlain(v)
-        return v == "?" and "version not heard" or v
-    end
-    local verCopy = Button(vp, "Copy list", 100, function()
-        local names, ver, where = versionRows()
-        local grouped, lines = IsInGroup(), {}
-        for _, name in ipairs(names) do
-            if where[name] or not grouped then
-                lines[#lines + 1] = NS.Short(name)
-                    .. "  "
-                    .. verPlain(ver[name])
-                    .. (where[name] == "offline" and "  (offline)" or "")
-            end
-        end
-        table.insert(
-            lines,
-            1,
-            ("Raid Loot Controller installed, %s: %d %s"):format(
-                date("%Y-%m-%d %H:%M"),
-                #lines,
-                grouped and "in the group" or "players"
-            )
-        )
-        NS.ShowCopy("Players with the addon", table.concat(lines, "\n"))
-    end)
-    verCopy:SetPoint("RIGHT", verCheck, "LEFT", -4, 0)
-
-    local WHERE_TEXT = { here = "|cff66ff66yes|r", offline = "|cff999999offline|r" }
-    function refreshVersions()
-        local names, ver, where = versionRows()
-        local here, older = 0, 0
-        for _, name in ipairs(names) do
-            here = here + (where[name] and 1 or 0)
-            older = older + (Rules.VersionState(ver[name], NS.VERSION) == "older" and 1 or 0)
-        end
-        verList:Sort(names, {
-            NS.Short,
-            function(name)
-                return ver[name]
-            end,
-            function(name)
-                return where[name] or ""
-            end,
-        })
-        verList:Set(#names, function(r, i)
-            local name = names[i]
-            local v = ver[name]
-            r.data = name
-            r.cols[1]:SetText(NS.ColorName(name))
-            r.cols[2]:SetText(
-                v == "?" and "|cff999999not heard yet|r" or VER_TEXT[Rules.VersionState(v, NS.VERSION)]:format(v)
-            )
-            r.cols[3]:SetText(WHERE_TEXT[where[name]] or "")
-        end)
-        verCheck:SetEnabled(IsInGroup())
-        local total = 0
-        for _ in pairs(NS.roster) do
-            total = total + 1
-        end
-        verSummary:SetText(
-            ("%d players with the addon.%s%s"):format(
-                #names,
-                IsInGroup() and ("  %d of the %d in your group."):format(here, total) or "",
-                older > 0 and ("  |cffff8800%d on an older version than you.|r"):format(older) or ""
-            )
-        )
-    end
-end
-
 -- ---- refresh -------------------------------------------------------------------------
 
 local pendingRefresh = false
 local lastActive
-
--- ---- Commands page --------------------------------------------------------------------
--- Every /rlc command with its own button, as WoWClearance does. Only the
--- commands that can do something for you right now are listed, so the page
--- follows your role in the raid. The list lives in NS.Commands (Core).
-
-local cmdPage = page("commands")
-local cmdScroll = CreateFrame("ScrollFrame", nil, cmdPage, "UIPanelScrollFrameTemplate")
-cmdScroll:SetPoint("TOPLEFT", 0, 0)
-cmdScroll:SetPoint("BOTTOMRIGHT", -26, 0)
-local cmdChild = CreateFrame("Frame", nil, cmdScroll)
-cmdChild:SetSize(600, 1)
-cmdScroll:SetScrollChild(cmdChild)
-
-local cmdHeader = Text(cmdChild, "GameFontNormal")
-cmdHeader:SetPoint("TOPLEFT", 0, -4)
-cmdHeader:SetWordWrap(true)
-
--- WoWClearance's layout: a gold rule and heading per section, then rows
--- with the Run button in a column on the left and the text wrapping to
--- the right of it.
-local SECTIONS = { "Everyone", "Officers", "Raid host", "Troubleshooting" }
-local LABEL_X = 72
-local cmdRows, cmdHeads = {}, {}
-
-local function runCommand(c)
-    if c.args then
-        -- Needs an item. Opening chat from addon code would taint the chat
-        -- box (and secure commands typed in it later), so just say how.
-        NS.Print("Type /rlc %s in chat, then shift-click an item (or type its item ID) and press Enter.", c.cmd)
-    else
-        c.fn("")
-        NS.Refresh()
-    end
-    PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-end
-
-local function refreshCommands()
-    local width = cmdScroll:GetWidth()
-    cmdChild:SetWidth(width)
-    cmdHeader:SetWidth(width)
-    cmdHeader:SetText(
-        "You are: "
-            .. NS.Kit.COLOR.section
-            .. NS.RoleName()
-            .. "|r. These are the commands you can use right now. "
-            .. "Run does it; How tells you what to type for commands that need an item."
-    )
-    local y = -4 - cmdHeader:GetStringHeight() - 6
-    for _, section in ipairs(SECTIONS) do
-        local head = cmdHeads[section]
-        if not head then
-            head = {
-                rule = cmdChild:CreateTexture(nil, "ARTWORK"),
-                text = Text(cmdChild, "GameFontNormal"),
-            }
-            head.rule:SetColorTexture(unpack(NS.Kit.DIVIDER))
-            head.rule:SetHeight(1)
-            head.text:SetText(NS.Kit.COLOR.section .. section .. "|r")
-            cmdHeads[section] = head
-        end
-        local any = false
-        for i, c in ipairs(NS.Commands) do
-            local row = cmdRows[i]
-            if not row then
-                row = {
-                    btn = Button(cmdChild, "Run", 64, function()
-                        runCommand(c)
-                    end),
-                    label = Text(cmdChild),
-                }
-                row.btn:SetHeight(20)
-                row.label:SetWordWrap(true)
-                row.label:SetSpacing(2)
-                cmdRows[i] = row
-            end
-            local show = c.section == section and NS.CommandAvailable(c)
-            if show then
-                if not any then
-                    y = y - 12
-                    head.rule:SetPoint("TOPLEFT", 0, y)
-                    head.rule:SetWidth(width - 16)
-                    head.text:SetPoint("TOPLEFT", LABEL_X, y - 6)
-                    y = y - 6 - head.text:GetStringHeight() - 8
-                    any = true
-                end
-                local state = c.state and (c.state() and " |cff00ff00(on)|r" or " |cff999999(off)|r") or ""
-                row.label:SetWidth(width - LABEL_X - 16)
-                row.label:SetText(
-                    "|cffffff00/rlc " .. c.cmd .. (c.args and (" " .. c.args) or "") .. "|r  " .. c.text .. state
-                )
-                row.label:SetPoint("TOPLEFT", LABEL_X, y - 4)
-                row.btn:SetText(c.args and "How" or "Run")
-                row.btn:SetPoint("TOPLEFT", 0, y)
-                y = y - math.max(20, row.label:GetStringHeight() + 4) - 8
-            end
-            if c.section == section then
-                row.btn:SetShown(show)
-                row.label:SetShown(show)
-            end
-        end
-        head.rule:SetShown(any)
-        head.text:SetShown(any)
-    end
-    cmdChild:SetHeight(-y + 8)
-end
 
 -- ---- next step (breadcrumbs) ------------------------------------------------------------
 -- Exactly one thing glows per player: the click the raid is waiting on from
@@ -2738,6 +1874,8 @@ local function glowOnly(target)
 end
 
 local mmButton
+UI.refresh.loot, UI.refresh.raid = refreshLoot, refreshRaid
+
 local function refreshNow()
     pendingRefresh = false
     if not NS.DB then
@@ -2785,22 +1923,9 @@ local function refreshNow()
     else
         f:SetTitle("Raid Loot Controller")
     end
-    if current == "loot" then
-        refreshLoot(S)
-    elseif current == "raid" then
-        refreshRaid(S)
-    elseif current == "catalog" then
-        refreshCatalog()
-    elseif current == "help" then
-        NS.RefreshHelp()
-    elseif current == "commands" then
-        refreshCommands()
-    elseif current == "stats" then
-        refreshStats()
-    elseif current == "versions" then
-        refreshVersions()
-    else
-        refreshHistory()
+    local draw = UI.refresh[current]
+    if draw then -- nil only if that page's file failed to load, which has thrown its own error
+        draw(S)
     end
     flyoutSync()
 end

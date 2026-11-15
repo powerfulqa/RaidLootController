@@ -216,8 +216,15 @@ local function buildCatalog(now)
                 local killId = "demo" .. key .. ":" .. k .. ":" .. it[1]
                 C.Record(cat, inst, instName, key, name, "item:" .. it[1], killId, now - k * 7 * 86400)
             end
+            -- Seen by 0 to 5 other raiders, so the column shows names and a count.
+            local by = {}
+            for i = 1, (order + it[1]) % 6 do
+                by[i] = full(RAIDERS[i][1])
+            end
+            cat[inst].b[key].i[it[1]].by = by[1] and by or nil
         end
     end
+    cat[BARROW].size, cat[HYJAL].size = 20, 40 -- one section each on the Catalogue tab
     return cat
 end
 
@@ -240,6 +247,7 @@ function Demo.Toggle()
         history = {},
         classes = {},
         owed = { [full("Shade")] = { "item:16453" } },
+        wish = {},
         catalog = {},
         mySpec = CopyTable(real.mySpec or {}), -- your spec choice; a demo pick is not saved
         announce = false,

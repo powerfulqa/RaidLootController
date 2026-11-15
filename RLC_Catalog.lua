@@ -45,6 +45,7 @@ Catalog.MAX_ITEMS = 150
 Catalog.MAX_COUNT = 9999
 Catalog.MAX_RECORDS = 20000 -- items across the whole catalogue
 Catalog.KILL_MEMORY = 4 -- recent kill ids remembered per item and boss
+Catalog.MAX_BY = 5 -- other players remembered per item as having seen it drop (saved per record)
 
 -- ---- data (pure) -----------------------------------------------------------
 
@@ -126,6 +127,7 @@ end
 local function ownN(rec)
     return rec.on or (rec.w and 0 or rec.n)
 end
+Catalog.OwnKills, Catalog.OwnN = ownKills, ownN
 
 -- Whether an instance, boss or item record holds only heard data.
 local function heardOnly(e)
@@ -227,9 +229,30 @@ local function remember(holder, field, killId)
     return true
 end
 
+-- Note that `by` saw this item drop: the sender of a CD or CE that names
+-- it (a CE carries only the sender's own sightings). rec.by is a list of
+-- names, ours never in it. True when the name is new.
+local function sawIt(rec, by)
+    if not by then
+        return false
+    end
+    rec.by = rec.by or {}
+    for _, name in ipairs(rec.by) do
+        if name == by then
+            return false
+        end
+    end
+    if #rec.by >= Catalog.MAX_BY then
+        return false
+    end
+    rec.by[#rec.by + 1] = by
+    return true
+end
+
 -- Names from bare CI ops: a CI alone never makes an instance (300 of them
 -- would fill the cap), it only names one a later CB or CE makes.
-local heardNames, heardNameCount = {}, 0
+-- The group size a CI carries is kept the same way (heardSizes).
+local heardNames, heardSizes, heardNameCount = {}, {}, 0
 
 -- Find or create an instance, respecting the cap for wire data.
 function Catalog.Instance(cat, instID, instName, wire)
@@ -238,7 +261,7 @@ function Catalog.Instance(cat, instID, instName, wire)
         if wire and count(cat) >= Catalog.MAX_INSTANCES and not evict(cat, cat) then
             return nil
         end
-        inst = { name = instName or heardNames[instID] or ("Instance " .. instID), b = {} }
+        inst = { name = instName or heardNames[instID] or ("Instance " .. instID), hs = heardSizes[instID], b = {} }
         cat[instID] = inst
     elseif instName and not wire then
         inst.name = instName -- what we saw ourselves beats a heard name
@@ -275,6 +298,80 @@ function Catalog.Boss(cat, instID, instName, bossKey, bossName, t, wire)
     return boss
 end
 
+-- Group size by instance ID, for when the game has not told us (see
+-- Catalog.SizeOf: what the game says while we are inside comes first). From the Forever client's
+-- own tables, build 1.60.1.70888, as listed per instance on
+-- wowforevertalents.com/dungeons (read 2026-11-15). Barrow Deeps and Hyjal
+-- Summit were not in that build: an instance missing here is placed once
+-- you, or a player who shares their catalogue with you, has been inside.
+local KNOWN_SIZE = {
+    [33] = 5, -- Shadowfang Keep
+    [34] = 5, -- Stormwind Stockade
+    [36] = 5, -- Deadmines
+    [43] = 5, -- Wailing Caverns
+    [47] = 5, -- Razorfen Kraul
+    [48] = 5, -- Blackfathom Deeps
+    [70] = 5, -- Uldaman
+    [90] = 5, -- Gnomeregan
+    [109] = 5, -- Sunken Temple
+    [129] = 5, -- Razorfen Downs
+    [189] = 5, -- Scarlet Monastery
+    [209] = 5, -- Zul'Farrak
+    [230] = 5, -- Blackrock Depths
+    [289] = 5, -- Scholomance
+    [329] = 5, -- Stratholme
+    [349] = 5, -- Maraudon
+    [389] = 5, -- Ragefire Chasm
+    [429] = 5, -- Dire Maul
+    [2784] = 5, -- Demon Fall Canyon
+    [2875] = 5, -- Karazhan Crypts
+    -- New in Forever.
+    [2959] = 5, -- City of Dalaran
+    [2970] = 5, -- The Drowned City
+    [2974] = 5, -- Blackmaw Hold
+    [2994] = 5, -- Alcaz Prison
+    [2998] = 5, -- Excavation Site: Wetlands
+    [2999] = 5, -- Ruins of Lordaeron
+    [3001] = 5, -- The Shaper's Terrace
+    [3065] = 5, -- The Hall of Thanes
+    [3109] = 5, -- Manor Mistmantle
+    [3039] = 10, -- Krol'dok Stronghold
+    [229] = 10, -- Blackrock Spire
+    [309] = 20, -- Zul'Gurub
+    [509] = 20, -- Ruins of Ahn'Qiraj
+    [2832] = 25, -- Nightmare Grove
+    [249] = 40, -- Onyxia's Lair
+    [409] = 40, -- Molten Core
+    [469] = 40, -- Blackwing Lair
+    [531] = 40, -- Temple of Ahn'Qiraj
+    [533] = 40, -- Naxxramas
+    [2789] = 40, -- The Tainted Scar
+    [2791] = 40, -- Storm Cliffs
+    [2804] = 40, -- The Crystal Vale
+    [2856] = 40, -- Scarlet Enclave
+}
+
+-- The Catalogue's sections, by group size. A section shows only when an
+-- instance is in it.
+Catalog.SIZES = { 5, 10, 20, 25, 40 }
+
+-- Which section an instance goes in: one of SIZES, or nil when its size is
+-- not known. In order: inst.size (what the game said while we were inside),
+-- the table above, then inst.hs (what another player's addon said: only a
+-- last resort, it cannot be checked).
+function Catalog.SizeOf(inst, instID)
+    local n = inst.size or KNOWN_SIZE[instID] or inst.hs
+    if type(n) ~= "number" or n < 1 then
+        return nil
+    end
+    for _, size in ipairs(Catalog.SIZES) do
+        if n <= size then
+            return size
+        end
+    end
+    return Catalog.SIZES[#Catalog.SIZES]
+end
+
 -- Drop everything we only heard: shown counts fall back to our own, and
 -- items, bosses and instances with nothing of our own go. Undoes a
 -- poisoned merge. Returns how many item records were dropped.
@@ -287,6 +384,7 @@ function Catalog.ForgetHeard(cat)
             for id, rec in pairs(boss.i) do
                 rec.on = ownN(rec)
                 rec.n = rec.on
+                rec.by = nil
                 if rec.n == 0 then
                     boss.i[id], dropped = nil, dropped + 1
                 end
@@ -295,6 +393,7 @@ function Catalog.ForgetHeard(cat)
                 inst.b[key] = nil
             end
         end
+        inst.hs = nil
         if next(inst.b) == nil then
             cat[instID] = nil
         end
@@ -467,7 +566,7 @@ end
 -- Only our own observations (Served): never re-serve what we only heard.
 function Catalog.InstanceOps(cat, instID)
     local inst = cat[instID]
-    local ops = { { "CI", instID, inst.name } }
+    local ops = { { "CI", instID, inst.name, inst.size or 0 } } -- only a size we saw ourselves
     for _, b in ipairs(Catalog.Served(inst)) do
         ops[#ops + 1] = { "CB", instID, b.key, b.boss.name, b.kills, b.boss.f }
         for _, rec in ipairs(b.recs) do
@@ -595,8 +694,9 @@ end
 
 -- Merge one received data op. Untrusted: every field is checked, counts are
 -- capped, times end at now + 1 hour, and a merge only ever raises the shown
--- counts, never our own (ok, on). Returns true if anything changed.
-function Catalog.ApplyOp(cat, op, now)
+-- counts, never our own (ok, on). `by`: the sender, noted on the item as
+-- having seen it drop. Returns true if anything changed.
+function Catalog.ApplyOp(cat, op, now, by)
     local kind = op[1]
     local instID = int(op[2], 1, 1e9)
     if not instID then
@@ -611,22 +711,28 @@ function Catalog.ApplyOp(cat, op, now)
         if not name then
             return false
         end
+        -- CI instID name [size]: the group size the sender saw inside (0 or
+        -- missing from an older version: not known).
+        local size = int(op[4], 1, 40)
         local inst = cat[instID]
         if not inst then
             -- Only remembered: the instance is made by a CB or CE for it.
             if heardNameCount >= Catalog.MAX_INSTANCES then
-                heardNames, heardNameCount = {}, 0
+                heardNames, heardSizes, heardNameCount = {}, {}, 0
             end
             heardNameCount = heardNameCount + (heardNames[instID] and 0 or 1)
-            heardNames[instID] = name
+            heardNames[instID], heardSizes[instID] = name, size
             return false
         end
+        local changed = false
         -- A placeholder name (made by a CB/CE that arrived first) gives way.
         if inst.name ~= name and inst.name:find("^Instance %d") then
-            inst.name = name
-            return true
+            inst.name, changed = name, true
         end
-        return false
+        if size and inst.hs ~= size then
+            inst.hs, changed = size, true
+        end
+        return changed
     elseif kind == "CD" then
         -- A live drop broadcast by a raider who opened the corpse:
         -- CD instID instName bossKey bossName itemString killId time
@@ -635,7 +741,11 @@ function Catalog.ApplyOp(cat, op, now)
         if not bossKey or not killId or not t then
             return false
         end
-        return Catalog.Record(cat, instID, cleanName(op[3]), bossKey, cleanName(op[5]), op[6], killId, t, true)
+        local changed = Catalog.Record(cat, instID, cleanName(op[3]), bossKey, cleanName(op[5]), op[6], killId, t, true)
+        -- Also when the kill was already counted: the sender still saw it.
+        local boss = cat[instID] and cat[instID].b[bossKey]
+        local rec = boss and validItem(op[6]) and boss.i[Rules.ItemIDOf(op[6])]
+        return rec and sawIt(rec, by) or changed
     end
     local bossKey = int(op[3], 0, 1e9)
     if not bossKey then
@@ -668,7 +778,7 @@ function Catalog.ApplyOp(cat, op, now)
         end
         local changed = n > rec.n or t > rec.t
         rec.on, rec.n, rec.t = ownN(rec), math.max(rec.n, n), math.max(rec.t, t)
-        return changed
+        return sawIt(rec, by) or changed
     end
     return false
 end
@@ -686,10 +796,19 @@ local function cat()
     return NS.DB.catalog
 end
 
+-- The instance we are in: its ID, name and group size.
 local function where()
-    local name, instanceType, _, _, _, _, _, instID = GetInstanceInfo()
+    local name, instanceType, _, _, maxPlayers, _, _, instID = GetInstanceInfo()
     if (instanceType == "raid" or instanceType == "party") and instID then
-        return instID, name
+        return instID, name, maxPlayers
+    end
+end
+
+-- Keep the group size the game gave for the instance we recorded in.
+local function sized(instID, size)
+    local inst = cat()[instID]
+    if inst and type(size) == "number" and size > 0 then
+        inst.size = size
     end
 end
 
@@ -718,7 +837,7 @@ NS.On("ENCOUNTER_END", function(encID, encName, _, _, success)
     if not NS.CanRead(encID, encName, success) or success ~= 1 then
         return
     end
-    local instID, instName = where()
+    local instID, instName, size = where()
     if not instID then
         return
     end
@@ -735,6 +854,7 @@ NS.On("ENCOUNTER_END", function(encID, encName, _, _, success)
         end
     end
     Catalog.CountKill(cat(), instID, instName, encID, encName, lastKill.key, GetServerTime())
+    sized(instID, size)
     NS.Refresh()
 end)
 
@@ -752,7 +872,7 @@ local function fromLootWindow()
     if NS.Demo and NS.Demo.active then
         return
     end
-    local instID, instName = where()
+    local instID, instName, size = where()
     if not instID then
         return
     end
@@ -778,6 +898,7 @@ local function fromLootWindow()
             end
         end)
     end
+    sized(instID, size)
     NS.Refresh()
 end
 NS.On("LOOT_READY", fromLootWindow)
@@ -803,6 +924,27 @@ NS.On("ENCOUNTER_LOOT_RECEIVED", function(encID, _, itemLink)
     NS.Refresh()
 end)
 
+-- A wished item dropped (the Catalogue wishlist): one chat line and a
+-- sound. Record is true once per kill and item, whether we opened the
+-- corpse or a raider's CD told us, so this never repeats.
+local record = Catalog.Record
+function Catalog.Record(c, instID, instName, bossKey, bossName, itemString, ...)
+    local new = record(c, instID, instName, bossKey, bossName, itemString, ...)
+    if new and c == NS.DB.catalog and NS.Wish()[Rules.ItemIDOf(itemString)] then
+        local S = NS.S()
+        NS.Print(
+            "On your wishlist: %s dropped from %s.%s",
+            NS.LinkOf(itemString),
+            bossName or "this boss",
+            S and S.phase == "live" and " Click I want this when it comes up." or ""
+        )
+        if NS.DB.wishSound ~= false then -- /rlc wishsound
+            PlaySound(SOUNDKIT.RAID_WARNING)
+        end
+    end
+    return new
+end
+
 -- ---- sharing ---------------------------------------------------------------
 
 local lastAsk = {}
@@ -818,33 +960,8 @@ function Catalog.Ask(dest, force)
     for instID, d in pairs(Catalog.Digest(cat())) do
         NS.Net.QueueCatalog({ "CQ", instID, d.e, d.n, d.k }, dest)
     end
-    NS.Net.QueueCatalog({ "CQE", NS.VERSION }, dest) -- older clients ignore the version
-end
-
--- Who has the addon (the Versions tab). "CV", version[, "?"] goes to the
--- group; with the "?" everyone who hears it answers with a plain CV.
--- v0.7.0 and older ignore CV: they show up once they send anything else.
-local TELL_GAP = 10 -- seconds between our answers, and between our questions
-local lastTell, lastAskV, tellPending = -TELL_GAP, -TELL_GAP, false
-local function tellVersion()
-    if tellPending then
-        return -- the answer on its way reaches every asker
-    end
-    tellPending = true
-    -- Spread out, so a whole raid does not answer in the same second.
-    C_Timer.After(math.max(1 + math.random() * 4, lastTell + TELL_GAP - GetTime()), function()
-        tellPending, lastTell = false, GetTime()
-        NS.Net.QueueCatalog({ "CV", NS.VERSION }, "GROUP")
-    end)
-end
--- Returns false when there is nobody to ask or we asked a moment ago.
-function Catalog.AskVersions()
-    if not IsInGroup() or GetTime() - lastAskV < TELL_GAP then
-        return false
-    end
-    lastAskV = GetTime()
-    NS.Net.QueueCatalog({ "CV", NS.VERSION, "?" }, "GROUP")
-    return true
+    -- Our version and class ride along (older clients ignore them).
+    NS.Net.QueueCatalog({ "CQE", NS.VERSION, NS.MyClass() }, dest)
 end
 
 local asking = {} -- dest .. sender -> { dest, digest, n } while their request arrives
@@ -917,13 +1034,11 @@ function Catalog.OnMessage(ops, dest, sender)
             end
         elseif kind == "CQE" then
             NS.NoteVersion(sender, op[2])
+            NS.NoteClass(sender, op[3])
             answer(dest .. sender, asking[dest .. sender] or { dest = dest, digest = {} })
             asking[dest .. sender] = nil
         elseif kind == "CV" then
-            NS.NoteVersion(sender, op[2])
-            if op[3] == "?" and dest == "GROUP" and NS.roster[sender] then
-                tellVersion()
-            end
+            NS.OnVersion(sender, op, dest) -- who has the addon: RLC_Core.lua
         else
             local instID = int(op[2], 1, 1e9)
             if instID and pending[dest .. instID] then
@@ -953,7 +1068,7 @@ function Catalog.OnMessage(ops, dest, sender)
                     addedBy[sender] = (addedBy[sender] or 0) + 1
                 end
             end
-            changed = op ~= nil and Catalog.ApplyOp(cat(), op, GetServerTime()) or changed
+            changed = op ~= nil and Catalog.ApplyOp(cat(), op, GetServerTime(), sender) or changed
             -- Only a valid, recorded drop silences our own broadcast of it.
             if op and kind == "CD" and Catalog.HasDrop(cat(), op) then
                 heardDrop[dropKey(op)] = true
@@ -974,7 +1089,7 @@ NS.On("PLAYER_ENTERING_WORLD", function(isInitialLogin, isReload)
             Catalog.Ask("GUILD")
             if IsInGroup() then
                 Catalog.Ask("GROUP")
-                Catalog.AskVersions()
+                NS.AskVersions()
             end
         end)
     end
@@ -986,7 +1101,7 @@ NS.On("GROUP_ROSTER_UPDATE", function()
     if grouped and not wasGrouped then
         C_Timer.After(10, function()
             Catalog.Ask("GROUP")
-            Catalog.AskVersions()
+            NS.AskVersions()
         end)
     end
     wasGrouped = grouped

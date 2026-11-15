@@ -1532,6 +1532,40 @@ function Rules.PlayerStats(history)
     return out
 end
 
+-- Every item won across saved raids, newest first, two ways:
+-- byItem[itemID] and byPlayer[name] list the same entries
+-- { t = raid time, winner, s = itemString, how }. Like PlayerStats it leaves
+-- out raids hosted by someone who was not the leader: those are not proof
+-- of who won.
+function Rules.Wins(history)
+    local all = {}
+    for _, rec in pairs(history or {}) do
+        if not rec.untrusted then
+            for _, it in pairs(rec.items or {}) do
+                local id = it.state == "done"
+                    and it.winner
+                    and type(it.itemString) == "string"
+                    and Rules.ItemIDOf(it.itemString)
+                if id then
+                    all[#all + 1] =
+                        { t = rec.created or 0, winner = it.winner, s = it.itemString, how = it.how, id = id }
+                end
+            end
+        end
+    end
+    table.sort(all, function(a, b)
+        return a.t > b.t or a.t == b.t and a.s < b.s
+    end)
+    local out = { byItem = {}, byPlayer = {} }
+    for _, w in ipairs(all) do
+        out.byItem[w.id] = out.byItem[w.id] or {}
+        table.insert(out.byItem[w.id], w)
+        out.byPlayer[w.winner] = out.byPlayer[w.winner] or {}
+        table.insert(out.byPlayer[w.winner], w)
+    end
+    return out
+end
+
 -- A saved raid as plain text, one line per item given, for pasting into
 -- Discord or a forum. itemName(itemString) and short(name) come from the
 -- caller (the client knows item names); when is the raid's date as text.

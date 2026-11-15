@@ -481,5 +481,55 @@ do -- names: no control bytes; what we saw ourselves beats a heard name
     check(cat[409].name == "Molten Core" and cat[409].b[663].name == "Lucifron", "own kill renames heard names")
 end
 
+do -- sections: the game's word first, then the built-in table, then a heard size
+    check(C.SizeOf({ size = 20 }, 3039) == 20, "the size seen inside wins")
+    check(
+        C.SizeOf({ hs = 40 }, 3039) == 10 and C.SizeOf({}, 2999) == 5,
+        "then the table: Krol'dok 10, Ruins of Lordaeron 5"
+    )
+    check(C.SizeOf({ hs = 20 }, 8888) == 20, "then a size heard from another player")
+    check(C.SizeOf({}, 8888) == nil and C.SizeOf({ size = 0 }, 8888) == nil, "unknown stays unknown")
+    check(C.SizeOf({ size = 3 }, 1) == 5 and C.SizeOf({ size = 15 }, 1) == 20, "sizes round up to a section")
+    check(C.SizeOf({}, 2832) == 25 and C.SizeOf({ size = 30 }, 1) == 40, "25 has its own section")
+    -- The size travels in the CI: ours goes out, a heard one is kept apart and forgotten with the rest.
+    local cat = {}
+    C.CountKill(cat, 8888, "New Raid", 1, "Boss", "k1", 1)
+    cat[8888].size = 10
+    check(C.InstanceOps(cat, 8888)[1][4] == 10, "our own size is sent")
+    local theirs = {}
+    for _, op in ipairs(C.InstanceOps(cat, 8888)) do
+        apply(theirs, { op[1], tostring(op[2]), tostring(op[3]), tostring(op[4]), tostring(op[5]), tostring(op[6]) })
+    end
+    check(theirs[8888].hs == 10 and theirs[8888].size == nil, "a CI before its instance still brings the size")
+    apply(theirs, { "CI", "8888", "New Raid", "99" })
+    apply(theirs, { "CI", "8888", "New Raid", "0" })
+    check(theirs[8888].hs == 10, "a size out of range or unknown changes nothing")
+    apply(theirs, { "CI", "8888", "New Raid", "20" })
+    check(theirs[8888].hs == 20 and C.SizeOf(theirs[8888], 8888) == 20, "a later answer replaces a heard size")
+    C.CountKill(theirs, 8888, "New Raid", 1, "Boss", "k9", 1)
+    C.ForgetHeard(theirs)
+    check(theirs[8888] and theirs[8888].hs == nil, "Forget heard drops the heard size")
+end
+
+do -- seen by: the senders of a CD or CE, once each, capped, gone with Forget heard
+    local cat = {}
+    C.CountKill(cat, MC, "Molten Core", LUC, "Lucifron", "E663:1", 100)
+    C.Record(cat, MC, "Molten Core", LUC, "Lucifron", "item:16800", "E663:1", 100)
+    local rec = cat[MC].b[LUC].i[16800]
+    local cd = { "CD", tostring(MC), "Molten Core", tostring(LUC), "Lucifron", "item:16800", "E663:1", "100" }
+    check(C.ApplyOp(cat, cd, NOW, "Ann") and rec.n == 1, "a CD for a kill we counted still names its sender")
+    check(not C.ApplyOp(cat, cd, NOW, "Ann") and #rec.by == 1, "a sender is listed once")
+    C.ApplyOp(cat, { "CE", tostring(MC), tostring(LUC), "item:16800", "1", "100" }, NOW, "Bob")
+    check(rec.by[2] == "Bob", "a CE names its sender")
+    C.ApplyOp(cat, { "CE", tostring(MC), tostring(LUC), "item:16800", "5", "100" }, NOW, "Liar")
+    check(#rec.by == 2, "a refused CE names nobody")
+    for i = 1, C.MAX_BY + 5 do
+        C.ApplyOp(cat, cd, NOW, "P" .. i)
+    end
+    check(#rec.by == C.MAX_BY, "names per item are capped")
+    C.ForgetHeard(cat)
+    check(rec.by == nil and rec.n == 1, "Forget heard drops the names, keeps our own drop")
+end
+
 print(string.format("test_catalog: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

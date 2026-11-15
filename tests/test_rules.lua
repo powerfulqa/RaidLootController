@@ -1713,5 +1713,28 @@ do
     R.CLASS_SPECS.WARRIOR = nil
 end
 
+do -- wins: one index for the tooltips; untrusted raids and unfinished items are left out
+    local w = R.Wins({
+        a = { created = 100, items = { x = { itemString = "item:1", state = "done", winner = "A-R", how = "roll" } } },
+        b = {
+            created = 300,
+            items = {
+                x = { itemString = "item:1", state = "done", winner = "B-R", how = "open" },
+                y = { itemString = "item:2", state = "cancelled", winner = "B-R" },
+                z = { state = "done", winner = "B-R" }, -- old data with no item
+            },
+        },
+        c = {
+            created = 200,
+            untrusted = true,
+            items = { x = { itemString = "item:1", state = "done", winner = "C-R" } },
+        },
+    })
+    check(#w.byItem[1] == 2 and w.byItem[1][1].winner == "B-R" and w.byItem[1][2].t == 100, "by item, newest first")
+    check(#w.byPlayer["B-R"] == 1 and w.byPlayer["B-R"][1].how == "open", "by player: only items that were won")
+    check(w.byPlayer["C-R"] == nil and w.byItem[2] == nil, "unverified raids and removed items are left out")
+    check(next(R.Wins(nil).byItem) == nil, "no history, no wins")
+end
+
 print(string.format("test_rules: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)
