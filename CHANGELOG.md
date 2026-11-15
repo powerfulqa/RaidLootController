@@ -4,6 +4,28 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.9.0
+
+**Know your Catalogue.** Who saw each drop, a wishlist, sections by raid size, and who in the guild has the addon.
+
+New:
+
+- **Catalogue: Seen by.** Each item shows who saw it drop: you, and the players whose addon told yours. Past three names it shows a count; hover the item for the list. Names fill in from now on, as drops and guild answers arrive.
+- **Catalogue: sections by size.** Instances are listed under 5-man, 10-man, 20-man and 40-man (and 25-man when there is one). The size is what the game says while you are inside, else a built-in list of every dungeon and raid in the Forever client. A new instance not on the list is placed once you or a guildmate with the addon has been inside.
+- **Catalogue: wishlist.** Pick an item and click Wish to star it. Wishlist shows your starred items from every boss, you get a chat line and a sound when one drops (`/rlc wishsound` turns the sound off), and item tooltips say "On your wishlist". Each character has its own list.
+- **Catalogue: My spec.** Shows only the items that suit your spec.
+- **Catalogue: Won by.** Hover an item to see who won it in your saved raids.
+- **Who has the addon in the guild.** Check again on the Versions tab now asks your guild as well as your group, and so does Ask guild for updates. Every copy from this version on answers, spread out over up to a minute; older copies in the guild still show only once they send something. Guildmates on this version are shown in their class colour.
+- **Versions: Whisper link.** The leader and assistants can whisper the download link to group members who do not have the addon. Five per click, and nobody is whispered twice in a day.
+- **Button tooltips.** Hover any button to see what it does, greyed-out ones included.
+- The open tab now has a gold bar under it.
+- `/rlc report` lists more: your spec, the instance and its size, which tabs loaded, and catalogue counts. Guildmates' names are counted, not listed.
+
+Changed:
+
+- Raids hosted by someone who was not the group leader are left out of the "You won this" and Stats tooltips, as they already were from the Stats numbers.
+- The kills column reads "2 of 5 kills", without the "in".
+
 ### v0.8.0
 
 **Who has the addon.** A Versions tab, the DaylightUI look, and fixes for fast-loot and bag addons.
