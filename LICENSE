@@ -1,4 +1,4 @@
-Raid Loot Controller - Source-Available Licence, version 2
+Raid Loot Controller - Source-Available Licence, version 3
 Copyright (c) 2026 Serv (https://github.com/powerfulqa/RaidLootController)
 
 Plain-English summary (non-binding, the formal clauses below govern):
@@ -10,9 +10,14 @@ Plain-English summary (non-binding, the formal clauses below govern):
   to the official repository. The credits and this LICENSE file must
   stay intact. There is no warranty.
 
+  No one may use it to train or feed an AI model, or have an AI agent
+  copy or port its code elsewhere. AI help with using or debugging your
+  own copy, or with a pull request, is fine.
+
   Releases up to and including v0.9.0 were published under the earlier
   attribution licence and stay under it. This licence covers every
-  later release.
+  later release. Copies obtained under version 2 of this licence
+  stay under version 2.
 
 Formal terms:
 
@@ -83,14 +88,39 @@ Formal terms:
    (c) the SavedVariable table name "RaidLootControllerDB";
    (d) the addon-message prefixes "RLC1" and "RLCC".
 
-7. Earlier Releases
+7. Artificial Intelligence and Automated Agents
+   Without the prior written permission of the copyright holder, you
+   may not use the Software, or any part of it, or allow anyone else to
+   use it:
+
+   (a) to train, fine-tune or evaluate any machine-learning model or
+       other artificial-intelligence system, or to build or add to a
+       dataset intended for one;
+   (b) as input to an AI agent, code assistant or other automated tool
+       for the purpose of copying, adapting, translating or porting its
+       code, design or documentation into other software;
+   (c) in a retrieval, search or indexing system that supplies it to
+       such a model, agent or tool.
+
+   This section does not stop an AI tool from helping a person use,
+   configure or debug their own copy, or prepare a contribution under
+   section 4, provided no part of the Software is kept or reused beyond
+   that task. It does not apply to the copyright holder or anyone
+   acting on their behalf.
+
+   The copyright holder expressly reserves all rights of text and data
+   mining in the Software, including for the purposes of Article 4(3)
+   of Directive (EU) 2019/790 and any equivalent law.
+
+8. Earlier Releases
    Releases up to and including v0.9.0 were published under the "Raid
    Loot Controller - Source-Available Attribution License". Copies of
    those releases remain under that licence. This licence applies to
    every later release and to the contents of the canonical source from
-   the date this file was changed.
+   the date this file was changed. Copies obtained while version 2 of
+   this licence was in force remain under version 2.
 
-8. No Warranty
+9. No Warranty
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
@@ -99,11 +129,11 @@ Formal terms:
    TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-9. Termination
+10. Termination
    The rights granted in section 2 terminate automatically upon any
-   breach of sections 3, 5 or 6. Compliance must be restored within
+   breach of sections 3, 5, 6 or 7. Compliance must be restored within
    thirty (30) days of notice for the rights to be reinstated.
 
-10. Severability
+11. Severability
    If any provision of this licence is found unenforceable, the remaining
    provisions remain in force.
