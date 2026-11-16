@@ -4,6 +4,13 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.9.1
+
+**New licence.** No change to the addon itself.
+
+- Raid Loot Controller now ships under licence version 2 (see `LICENSE`). You may still use it freely, pass on untouched copies, include it in addon packs and change your own copy for your own use. Sharing a changed copy, publishing a fork, or copying its code into another addon now needs the author's written permission. Fixes and ideas are welcome as pull requests.
+- Releases up to and including v0.9.0 stay under the earlier licence.
+
 ### v0.9.0
 
 **Know your Catalogue.** Who saw each drop, a wishlist, sections by raid size, and who in the guild has the addon.
