@@ -300,10 +300,20 @@ end
 -- or without realm) to their one canonical name. Measured 2026-10-09: a
 -- roll line "Serv Aszune rolls 2 (1-100)" did not match "Serv-Realm".
 
-local myRealm
+-- Since 2026-11-20 the client returns an empty realm name (a Blizzard change
+-- that may be permanent). So the last realm seen is kept in the saved data
+-- (DB.realm) and used when the game gives none; see savedRealm below.
+local myRealm, savedRealm
 local function realm()
     if not myRealm then
         local r = (GetNormalizedRealmName() or ""):gsub("[%s%-]", "")
+        if r ~= "" then
+            if type(RaidLootControllerDB) == "table" then
+                RaidLootControllerDB.realm = r
+            end
+        else
+            r = savedRealm() or ""
+        end
         myRealm = r ~= "" and r or nil -- empty before login: ask again later
     end
     return myRealm or ""
@@ -327,7 +337,8 @@ local SEP = Constants
 -- Canonical name and first name of a unit, or nil.
 local FIRST_NAME = "^([^" .. SEP:gsub("%p", "%%%0") .. "]+)"
 
-local function unitIdentity(unit)
+-- A unit's name as the group sees it ("First Surname"), or nil.
+local function unitDisplay(unit)
     local first, second = UnitName(unit)
     -- Unit names can be secret on this client: comparing one throws.
     if not NS.CanRead(first, second) then
@@ -336,14 +347,54 @@ local function unitIdentity(unit)
     if type(first) ~= "string" or first == "" then
         return nil
     end
+    local surnames = RegionalUniqueNamesEnabled and RegionalUniqueNamesEnabled()
+    if surnames and type(second) == "string" and second ~= "" and not first:find(SEP, 1, true) then
+        return first .. SEP .. second, second
+    end
+    return first, second
+end
+
+-- The realm from before the game stopped giving it: DB.realm, or, in a save
+-- older than that field, the realm in this character's own keys ("First
+-- Surname-Realm" in mySpec and wish). Nil when unknown or when this name has
+-- keys on two realms (no guessing).
+savedRealm = function()
+    local db = RaidLootControllerDB
+    if type(db) ~= "table" then
+        return nil
+    end
+    if type(db.realm) == "string" and db.realm ~= "" then
+        return db.realm
+    end
+    local display = unitDisplay("player")
+    if not display then
+        return nil
+    end
+    local prefix = (display .. "-"):lower()
+    local found
+    for _, t in ipairs({ db.mySpec, db.wish }) do
+        for key in pairs(type(t) == "table" and t or {}) do
+            if type(key) == "string" and #key > #prefix and key:sub(1, #prefix):lower() == prefix then
+                local r = key:sub(#prefix + 1)
+                if found and found ~= r then
+                    return nil
+                end
+                found = r
+            end
+        end
+    end
+    db.realm = found
+    return found
+end
+
+local function unitIdentity(unit)
+    local display, second = unitDisplay(unit)
+    if not display then
+        return nil
+    end
     local _, unitRealm = UnitFullName(unit)
     if not NS.CanRead(unitRealm) then
         unitRealm = nil
-    end
-    local surnames = RegionalUniqueNamesEnabled and RegionalUniqueNamesEnabled()
-    local display = first
-    if surnames and type(second) == "string" and second ~= "" and not first:find(SEP, 1, true) then
-        display = first .. SEP .. second
     end
     unitRealm = (type(unitRealm) == "string" and unitRealm ~= "" and unitRealm ~= second) and unitRealm or realm()
     unitRealm = unitRealm:gsub("[%s%-]", "")

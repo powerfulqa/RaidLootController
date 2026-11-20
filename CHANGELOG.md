@@ -15,6 +15,10 @@ Removed:
 
 - The built-in DaylightUI look and `/rlc daylight`. To dress the window, the spec menu and the copy window, use DaylightAddonSkins' Auto Skinner.
 
+Fixed:
+
+- Since 2026-11-20 the game no longer gives addons the realm name, so Raid Loot Controller saw you as "Name-" with no realm and could no longer match you to your saved spec and wishlist or to your name in the group. It now remembers the last realm it saw, and on a save from before the change it finds the realm in your own saved spec and wishlist keys. Nothing saved is lost.
+
 ### v0.9.1
 
 **New licence.** No change to the addon itself.

@@ -244,8 +244,10 @@ local G = {
     GetLocale = function()
         return "enUS"
     end,
+    -- Empty, as on the live client since 2026-11-20: the realm comes from
+    -- the save below (this character's own mySpec key).
     GetNormalizedRealmName = function()
-        return "Realm"
+        return ""
     end,
     RegionalUniqueNamesEnabled = function()
         return true
@@ -453,6 +455,8 @@ setmetatable(_G, {
 -- Every event handler goes through one frame's OnEvent in the addon; find
 -- how files register (NS.On) once Core has loaded.
 local NS = {}
+-- A save from before the client stopped giving the realm name.
+RaidLootControllerDB = { mySpec = { ["Tester Stub-Realm"] = "ROGUE.COMBAT" } }
 local files = {}
 for line in io.lines("RaidLootController.toc") do
     if line:find("%.lua%s*$") then
@@ -521,6 +525,7 @@ try("logs in", function()
     runTimers()
 end)
 check(NS.DB ~= nil and NS.Me() == "Tester Stub-Realm", "saved data is set up and we know who we are")
+check(NS.DB.realm == "Realm", "with no realm from the game, the saved one is used and kept")
 
 local TABS = { "loot", "raid", "history", "stats", "catalog", "versions", "commands", "help" }
 for _, tab in ipairs(TABS) do
