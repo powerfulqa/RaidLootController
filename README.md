@@ -55,7 +55,6 @@ The **Versions** tab shows who has the addon; **Copy list** gives that as text t
 - **Catalogue:** every drop the addon has seen, by instance and boss.
 - **Item tooltips:** who reserved an item, which boss drops it, when you last won one.
 - **Help** tab with search, and a **Commands** tab with a Run button for each command.
-- Takes the **DaylightUI** look when DaylightUI is installed.
 
 ## More
 

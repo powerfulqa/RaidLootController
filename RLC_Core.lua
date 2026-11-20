@@ -213,12 +213,10 @@ function NS.BugReport()
     add("Roster: %d known, %d not readable right now", known, stale)
     add("Demo: %s, debug: %s", tostring(NS.Demo and NS.Demo.active or false), tostring(NS.debug or false))
     add(
-        "Settings: min quality %s, announce %s, tooltip lines %s, DaylightUI %s, look %s",
+        "Settings: min quality %s, announce %s, tooltip lines %s",
         tostring(NS.DB.minQuality),
         tostring(NS.DB.announce),
-        tostring(NS.DB.tooltip ~= false),
-        C_AddOns.IsAddOnLoaded("DaylightUI") and "loaded" or "not loaded",
-        tostring(RaidLootControllerDB.daylightLook ~= false)
+        tostring(NS.DB.tooltip ~= false)
     )
     -- A tab missing here is a file that failed to load.
     local tabs = {}

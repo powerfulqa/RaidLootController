@@ -6,10 +6,14 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ### Unreleased
 
-**Licence version 3.** No change to the addon itself.
+**Licence version 3, and the DaylightUI look is removed.**
 
 - The licence now forbids using the addon to train, fine-tune or evaluate AI models, adding it to AI datasets or indexes, and having AI agents copy or port its code into other software, without the author's written permission. AI help with using or debugging your own copy, or with a pull request, is still fine.
 - Copies obtained under licence version 2 stay under version 2.
+
+Removed:
+
+- The built-in DaylightUI look and `/rlc daylight`. To dress the window, the spec menu and the copy window, use DaylightAddonSkins' Auto Skinner.
 
 ### v0.9.1
 

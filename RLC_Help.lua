@@ -378,12 +378,6 @@ local ENTRIES = {
         tab = "versions",
     },
     {
-        q = "Does it work with DaylightUI?",
-        a = "Yes. With DaylightUI installed (and its Skins module on), the window, the spec menu and the "
-            .. "copy window take DaylightUI's look. /rlc daylight turns that off or on; "
-            .. "switching it off takes a /reload. Without DaylightUI nothing changes.",
-    },
-    {
         q = "What are the RaidLoot lines on item tooltips?",
         a = "What the addon knows about that item: who reserved it tonight, who you still need to "
             .. "trade it to, which boss it drops from (from the Catalogue), and when you last won one. "

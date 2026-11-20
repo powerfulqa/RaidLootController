@@ -104,7 +104,6 @@ Officers can:
 - **Loot catalogue.** Every notable drop the addon has seen, by instance and boss.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one.
 - **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.
-- **DaylightUI look.** With DaylightUI installed, the windows take its look.
 
 ## The loot catalogue
 
@@ -134,7 +133,6 @@ The **Catalogue** tab is a loot browser built from real drops. Search it, shift-
 | `/rlc tooltip` | Show or hide the RaidLoot lines on item tooltips (on by default) |
 | `/rlc wishsound` | Sound when an item on your wishlist drops, on or off |
 | `/rlc minimap` | Hide or show the minimap button |
-| `/rlc daylight` | DaylightUI look on or off (only with DaylightUI installed) |
 | `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |
 | `/rlc report` | Make a bug report to copy and paste |
 | `/rlc debug` | Debug output in chat on or off |

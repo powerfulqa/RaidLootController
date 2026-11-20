@@ -23,7 +23,6 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Specs.lua` | Which specs an item suits (armor, weapon and stat-group rules; pure `SuitedSpecs`, tested) and the player's own spec from talents (`C_Traits`, tab with the most points) or picked by hand. Own rules, not stat weights: weights cannot tell a hunter from a rogue. |
 | `RLC_Help.lua` | The Help tab: Q&A entries in collapsible sections with search (the WoWClearance help pattern). A page like the others (`NS.UI.page`, `UI.refresh.help`). Update it with any player-facing change. |
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
-| `RLC_Daylight.lua` | DaylightUI look, through its public API only (`DaylightUI/API.md` in the game's AddOns folder; `API.major == 1`). Loads last and returns at once without DaylightUI. Skins the window, flyout and copy window (`Kit.Window`, `Kit.Auto` after each `NS.Refresh`), and adds `/rlc daylight` to `NS.Commands` (`RaidLootControllerDB.daylightLook`). Same idea as `WoWClearance_Daylight.lua`. |
 | `RLC_UI.lua` | The window (resizable, size saved in `RaidLootControllerDB.window`), the shared widgets (`NS.UI`: `Text`, `Button`, `List`, `InputBox`, `ItemTooltip`, `page`, `itemKey`), the redraw dispatch (`UI.refresh[tab](S)`, for every tab including Loot, Raid and Help), the Loot and Raid pages, the next-step glow that ties those two together, the copy window (`NS.ShowCopy`), the spec menus and the minimap button. |
 | `RLC_UI_History.lua`, `RLC_UI_Stats.lua`, `RLC_UI_Catalog.lua`, `RLC_UI_Versions.lua`, `RLC_UI_Commands.lua` | One tab each, loaded after `RLC_UI.lua`. Each builds its page from `NS.UI` and sets `UI.refresh[tab key]` to its redraw. A new tab is a new file like these (plus its line in the `.toc` and in `TABS`). The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
 | `tools/install/` | One-click installers, release assets: `Install-RaidLootController.bat` (cmd stub; the release build appends `Install-RaidLootController.ps1` below a `#RLCPAYLOAD#` marker, CRLF) and `install-raidlootcontroller.command` (Mac/Linux bash). Both find the Forever folder (`.flavor.info` = `wowf`, else `_forever_`, else `_classic_beta_`), download the latest zip, replace `Interface/AddOns/RaidLootController`, never touch `WTF`. Built and attached by `release.yml`. |
@@ -275,11 +274,10 @@ only from the session host (and `NEW` only from a leader or assistant).
     - The list holds only players heard from (group or guild); Copy list
       gives the ones in the group as text.
 
-26. DaylightUI look (`RLC_Daylight.lua`, 2026-11-14), unmeasured from this
-    repo's copy: with DaylightUI 1.7.3 the window, tabs, lists, flyout and
-    copy window are dressed, rows made later are dressed after a redraw,
-    the glow still shows on dressed buttons, `/rlc daylight` is on the
-    Commands tab, and without DaylightUI nothing changes.
+26. ~~DaylightUI look (`RLC_Daylight.lua`, 2026-11-14)~~ Removed after
+    v0.9.1: DaylightAddonSkins' Auto Skinner dresses the windows instead.
+    Old saved `RaidLootControllerDB.daylightLook` values are left alone and
+    read by nothing.
 
 27. Catalogue "Seen by" (2026-11-15), unmeasured: the fourth column fits at
     the minimum window size (the kills label lost its "in "), names past
