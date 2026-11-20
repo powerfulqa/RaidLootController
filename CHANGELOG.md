@@ -4,7 +4,7 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
-### Unreleased
+### v0.9.2
 
 **Licence version 3, and the DaylightUI look is removed.**
 
