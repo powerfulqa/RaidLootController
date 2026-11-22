@@ -4,6 +4,15 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.9.4
+
+**The roll card.** A small card pops up for each item up for rolls.
+
+New:
+
+- **Roll card.** When an item goes up, a card opens, with the main window closed too. It shows the item, a bar counting down the wait before rolls can be called or closed, how many have rolled, and everyone in the roll with the best roll first. The winner is lit in gold, and the card closes a few seconds later. I want this and Roll work on the card. Drag it to move it; the X hides it for that item until rolls are called. `/rlc card` turns it off.
+- **Catalogue: fold the size sections.** Click a heading (5-man, 10-man, 20-man, 40-man) to fold that section away, and again to open it. It stays folded after a reload.
+
 ### v0.9.3
 
 **Lighter on the game.** No new features: the addon does less work during rolls, roster changes and redraws.
