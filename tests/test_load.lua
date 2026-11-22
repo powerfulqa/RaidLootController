@@ -577,6 +577,16 @@ try("ADD and CANCEL keep the wins cache", function()
     NS.ApplyOps({ { "PHASE", S.phase == "live" and "ended" or "live" } })
     check(NS.historyGen == gen + 1, "a PHASE still renews them")
 end)
+try("roll card", function()
+    NS.Refresh()
+    runTimers()
+    check(NS.UI.cardFrame.shown, "the roll card shows the demo's roll")
+    NS.DB.rollCard = false
+    NS.Refresh()
+    runTimers()
+    check(not NS.UI.cardFrame.shown, "/rlc card off hides it")
+    NS.DB.rollCard = nil
+end)
 drawAll("demo raid")
 try("bug report", function()
     assert(#NS.BugReport() > 100)
@@ -729,14 +739,36 @@ try("catalogue messages", function()
     -- and Won by tooltip lines.
     NS.ShowPage("catalog")
     runTimers()
-    clickRows()
-    runTimers()
-    for i = 1, #frames do
-        local f = frames[i]
-        local row = f.shown and rawget(f, "sel") and rawget(f, "data")
-        if type(row) == "table" and row.bossKey then
-            f.scripts.OnClick(f)
+    -- Tree rows of one kind: "size" headings, "inst" rows or "boss" rows.
+    local function treeRows(kind)
+        local out = {}
+        for i = 1, #frames do
+            local f = frames[i]
+            local row = f.shown and rawget(f, "sel") and rawget(f, "data")
+            if type(row) == "table" and (row.size or row.instID) then
+                local k = row.size and "size" or (row.bossKey == nil and "inst" or "boss")
+                if k == kind then
+                    out[#out + 1] = f
+                end
+            end
         end
+        return out
+    end
+    -- A size heading folds its section away and opens it again.
+    local heading = treeRows("size")[1]
+    check(heading and #treeRows("inst") == 1, "the 40-man heading and Molten Core are listed")
+    heading.scripts.OnClick(heading)
+    runTimers()
+    check(#treeRows("inst") == 0 and NS.DB.catSizesClosed[40], "clicking the heading folds the section")
+    heading.scripts.OnClick(heading)
+    runTimers()
+    check(#treeRows("inst") == 1 and not NS.DB.catSizesClosed[40], "clicking it again opens it")
+    for _, f in ipairs(treeRows("inst")) do
+        f.scripts.OnClick(f)
+    end
+    runTimers()
+    for _, f in ipairs(treeRows("boss")) do
+        f.scripts.OnClick(f)
     end
     runTimers()
     local items = 0

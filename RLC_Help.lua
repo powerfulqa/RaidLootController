@@ -77,6 +77,16 @@ local ENTRIES = {
         tab = "loot",
     },
     {
+        q = "What is the small card that pops up?",
+        a = "The roll card. It opens when an item goes up, with the window closed too, and closes a few "
+            .. "seconds after someone wins it. It shows the item, a bar counting down the wait before rolls "
+            .. "can be called or closed, how many have rolled, and everyone in the roll with the best roll "
+            .. "first. The winner is lit in gold.\n\n"
+            .. "I want this and Roll work there too. Drag it to move it. The X hides it for that item until "
+            .. "rolls are called. /rlc card turns it off for good.",
+        tab = "loot",
+    },
+    {
         q = 'Why is a button glowing? What is the "Next:" line?',
         a = "A glowing button is the next thing you can click. For raiders that is I want this, then Roll. "
             .. "Officers and the raid host get a glowing button too: New raid, Start raid, Add from loot, "
@@ -318,7 +328,8 @@ local ENTRIES = {
         a = "Inside an instance the game says how many players it is for, and the addon keeps that. "
             .. "For places you have not been, it has a list of Forever's dungeons and raids. "
             .. "A new instance not on the list is placed once you, or a player whose addon shares "
-            .. "with yours, has been inside. Until then it sits under Size not known.",
+            .. "with yours, has been inside. Until then it sits under Size not known.\n\n"
+            .. "Click a size heading to fold that section away, and again to open it.",
         tab = "catalog",
     },
     {

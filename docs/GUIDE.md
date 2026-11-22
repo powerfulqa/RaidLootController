@@ -114,7 +114,7 @@ The **Catalogue** tab is a loot browser built from real drops. Search it, shift-
 - Whoever opens a corpse shares its drops with the group, so the whole raid records them. A drop report only counts for the instance you are in.
 - On login the addon asks your guild (and your group) for anything it is missing. One player who knows more answers; everyone listening merges it.
 - Items heard from others are marked (heard): another player's addon saw the drop, yours did not. Drop chances use only your own kills.
-- Instances are grouped by size: 5-man, 10-man, 20-man, 40-man (and 25-man when there is one). The size is what the game says while you are inside, else a built-in list of Forever's dungeons and raids. A new one not on the list is placed once you, or a player whose addon shares with yours, has been inside; until then it sits under "Size not known".
+- Instances are grouped by size: 5-man, 10-man, 20-man, 40-man (and 25-man when there is one). The size is what the game says while you are inside, else a built-in list of Forever's dungeons and raids. A new one not on the list is placed once you, or a player whose addon shares with yours, has been inside; until then it sits under "Size not known". Click a size heading to fold its section away; it stays folded until you click it again.
 - **My spec** shows only items that suit your spec. **Wish** stars the picked item; **Wishlist** shows the starred ones from every boss, a starred item dropping gives a chat line and a sound, and its tooltip says "On your wishlist". Each character has its own list.
 - Hover an item for who saw it drop and who won it in your saved raids.
 - **Seen by** names the players whose addon saw the item drop (you, and those who told you). Past three it shows a count; hover the item for the list. **Forget heard** clears what others sent.
@@ -132,6 +132,7 @@ The **Catalogue** tab is a loot browser built from real drops. Search it, shift-
 | `/rlc owed` | Clear the list of items still to trade (host) |
 | `/rlc tooltip` | Show or hide the RaidLoot lines on item tooltips (on by default) |
 | `/rlc wishsound` | Sound when an item on your wishlist drops, on or off |
+| `/rlc card` | Show or hide the roll card that pops up when an item goes up (on by default) |
 | `/rlc minimap` | Hide or show the minimap button |
 | `/rlc demo` | Fill the window with a made-up raid to look around (nothing is sent or saved) |
 | `/rlc report` | Make a bug report to copy and paste |

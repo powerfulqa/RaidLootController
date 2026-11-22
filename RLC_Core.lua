@@ -1425,6 +1425,19 @@ NS.Commands = {
     },
     {
         section = "Everyone",
+        cmd = "card",
+        text = "Show or hide the roll card that pops up when an item goes up",
+        state = function()
+            return NS.DB.rollCard ~= false
+        end,
+        fn = function()
+            NS.DB.rollCard = NS.DB.rollCard == false
+            NS.Print("Roll card %s.", NS.DB.rollCard and "on" or "off")
+            NS.Refresh()
+        end,
+    },
+    {
+        section = "Everyone",
         cmd = "minimap",
         text = "Hide or show the minimap button",
         state = function()

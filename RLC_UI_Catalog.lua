@@ -15,6 +15,14 @@ local catBoss -- { instID, bossKey } of the selected boss
 local catItem -- itemString of the selected item
 local expanded = {} -- instID -> true when its bosses are listed
 local expandRev = 0 -- counts expand and collapse clicks (refreshCatalog's skip)
+-- Size sections (5-man, 10-man...) closed by a click, saved per account:
+-- NS.DB.catSizesClosed[size] = true. All open until clicked.
+local function sizesClosed()
+    if type(NS.DB.catSizesClosed) ~= "table" then
+        NS.DB.catSizesClosed = {}
+    end
+    return NS.DB.catSizesClosed
+end
 local catSpec, catWish = false, false -- filters: only items for my spec, only my wishlist
 local wishRev = 0 -- counts wishlist changes, for the cached scan below
 
@@ -98,7 +106,9 @@ end
 
 local tree = List(cp, 260, 330, { 220 }, false, function(row)
     if row.size then
-        return -- a section header
+        local closed = sizesClosed()
+        closed[row.size] = not closed[row.size] or nil
+        expandRev = expandRev + 1
     elseif row.bossKey == nil then
         expanded[row.instID] = not expanded[row.instID] or nil
         expandRev = expandRev + 1
@@ -264,7 +274,7 @@ local function drawLists()
         if bySize[size] then
             rows[#rows + 1] = { size = size }
         end
-        for _, instID in ipairs(bySize[size] or {}) do
+        for _, instID in ipairs(not sizesClosed()[size] and bySize[size] or {}) do
             rows[#rows + 1] = { instID = instID }
             if expanded[instID] then
                 for _, key in ipairs(sortedBosses(cat[instID])) do
@@ -277,11 +287,14 @@ local function drawLists()
         local row = rows[i]
         r.data = row
         if row.size then
-            r.cols[1]:SetText("|cff66ccff" .. (row.size > 0 and row.size .. "-man" or "Size not known") .. "|r")
-            r:EnableMouse(false) -- a heading, not a row to click
+            r.cols[1]:SetText(
+                (sizesClosed()[row.size] and "+ " or "- ")
+                    .. "|cff66ccff"
+                    .. (row.size > 0 and row.size .. "-man" or "Size not known")
+                    .. "|r"
+            )
             return false
         end
-        r:EnableMouse(true)
         local inst = cat[row.instID]
         if row.bossKey == nil then
             r.cols[1]:SetText("  " .. (expanded[row.instID] and "- " or "+ ") .. "|cffffd100" .. inst.name .. "|r")

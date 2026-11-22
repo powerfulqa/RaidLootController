@@ -25,6 +25,7 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
 | `RLC_UI.lua` | The window (resizable, size saved in `RaidLootControllerDB.window`), the shared widgets (`NS.UI`: `Text`, `Button`, `List`, `InputBox`, `ItemTooltip`, `page`, `itemKey`), the redraw dispatch (`UI.refresh[tab](S)`, for every tab including Loot, Raid and Help), the Loot and Raid pages, the next-step glow that ties those two together, the copy window (`NS.ShowCopy`), the spec menus and the minimap button. |
 | `RLC_UI_History.lua`, `RLC_UI_Stats.lua`, `RLC_UI_Catalog.lua`, `RLC_UI_Versions.lua`, `RLC_UI_Commands.lua` | One tab each, loaded after `RLC_UI.lua`. Each builds its page from `NS.UI` and sets `UI.refresh[tab key]` to its redraw. A new tab is a new file like these (plus its line in the `.toc` and in `TABS`). The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
+| `RLC_UI_Card.lua` | The roll card: a small movable window that pops up when an item goes up (window closed too) and stays 8 s after the win. Item, a timer bar for `Rules.INTEREST_MIN` / `ROLL_MIN` (from `UI.upFor`), a summary line, the players best roll first with roll bars, the winner lit, I want this and Roll. `RLC_UI.lua`'s `refreshNow` calls `UI.card(S)` before its hidden-window return. `/rlc card` (`DB.rollCard`) turns it off. Our own design: DaylightUI's roll cards may not be copied without the author's written permission (asked 2026-11-22). |
 | `tools/install/` | One-click installers, release assets: `Install-RaidLootController.bat` (cmd stub; the release build appends `Install-RaidLootController.ps1` below a `#RLCPAYLOAD#` marker, CRLF) and `install-raidlootcontroller.command` (Mac/Linux bash). Both find the Forever folder (`.flavor.info` = `wowf`, else `_forever_`, else `_classic_beta_`), download the latest zip, replace `Interface/AddOns/RaidLootController`, never touch `WTF`. Built and attached by `release.yml`. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
@@ -311,8 +312,8 @@ only from the session host (and `NEW` only from a leader or assistant).
       arrive, and one reaches a groupmate on another underlying realm.
     - The "Seen dropping by:" and "Won by:" tooltip lines survive an item
       loading while the tooltip is up (if not, they return on the next hover).
-    - Section headings in the Catalogue tree do not highlight or click
-      (`EnableMouse(false)` on a reused list row, turned back on for others).
+    - ~~Section headings do not click~~ Changed 2026-11-22: a size heading
+      click folds its section (`DB.catSizesClosed`), shown as "+ "/"- ".
 30. Catalogue sections by size (2026-11-15), unmeasured. Probe:
     `/dump GetInstanceInfo()` inside a dungeon and a raid.
     - `GetInstanceInfo()`'s 5th return (maxPlayers) is 5 / 10 / 20 / 25 / 40
@@ -347,6 +348,16 @@ only from the session host (and `NEW` only from a leader or assistant).
     `NS.classHeard` and used by `NS.ColorName` after the roster and saved
     classes. Guildmates on this version show class-coloured on the Versions
     tab once they answer a ping or log in; older copies stay uncoloured.
+
+34. Roll card (2026-11-22), unmeasured: it pops up for the item up for
+    interest or rolls with the main window closed, in and out of combat;
+    the timer bar drains smoothly (its `OnUpdate` runs only while shown) and
+    its text switches when the wait ends; the list reorders as rolls arrive
+    and the winner row lights; it hides 8 s after the win; the X keeps it
+    hidden until rolls are called; the dragged spot survives a reload
+    (`RaidLootControllerDB.card`); I want this and Roll on the card work like
+    the Loot tab's; DaylightAddonSkins' Auto Skinner dresses it or leaves it
+    readable.
 
 ## Dev tooling
 

@@ -682,6 +682,8 @@ local UI = {
     page = page,
     itemKey = itemKey,
     HOW_TEXT = HOW_TEXT,
+    upFor = upFor,
+    needSpec = needSpec,
     refresh = {},
 }
 NS.UI = UI
@@ -1899,6 +1901,9 @@ local function refreshNow()
         selKey = S.active or S.order[#S.order]
     end
     trackUp(S)
+    if UI.card then
+        UI.card(S) -- the roll card (RLC_UI_Card.lua): shown with the window closed too
+    end
     local step = myStep(S)
     if mmButton then
         mmButton.SetGlow(step ~= nil and not step.soft)
