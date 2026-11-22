@@ -4,6 +4,15 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.9.3
+
+**Lighter on the game.** No new features: the addon does less work during rolls, roster changes and redraws.
+
+- Rolls, snapshots and messages to the raid take less work to build and send.
+- Items loading in your bags, the auction house or other addons no longer redraw the Loot tab.
+- The Catalogue tab updates at once when you click or type. Drops and names heard in the background now show within a second, not instantly.
+- The Help tab and the My spec filter do less work each time the window redraws.
+
 ### v0.9.2
 
 **Licence version 3, and the DaylightUI look is removed.**
