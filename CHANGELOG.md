@@ -4,6 +4,12 @@ Per-release notes. For what the addon does, see the [README](README.md).
 
 ---
 
+### v0.9.5
+
+**Updated guide.** No change to how the addon plays.
+
+- The README and the [full guide](docs/GUIDE.md) now cover the roll card, the foldable Catalogue sections, the wishlist and the Versions tab.
+
 ### v0.9.4
 
 **The roll card.** A small card pops up for each item up for rolls.
