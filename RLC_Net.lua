@@ -123,10 +123,11 @@ local function serve(lane)
     if lane.prefix == CAT_PREFIX and (InCombatLockdown() or C_InstanceEncounter.IsEncounterInProgress()) then
         return
     end
-    local last = math.min(#queue, lane.head + 300) -- more than one message holds
-    local msg = Rules.Pack({ unpack(queue, lane.head, last) }, LIMIT, 1)[1]
+    -- A window of 301 ops holds more than one message.
+    local msgs, nextHead = Rules.Pack(queue, LIMIT, 1, lane.head, math.min(#queue, lane.head + 300))
+    local msg = msgs[1]
     if not msg then
-        lane.head = last + 1 -- nothing packable here: every op was oversize
+        lane.head = nextHead -- nothing packable here: every op was oversize
         return
     end
     local result = C_ChatInfo.SendAddonMessage(lane.prefix, msg, ch)
@@ -135,15 +136,7 @@ local function serve(lane)
         return
     end
     tokens[lane.prefix] = tokens[lane.prefix] - 1
-    -- Drop the ops that went out: as many as the message holds, plus any
-    -- oversize op Pack skipped on the way.
-    local sent = select(2, msg:gsub("%^", "")) + 1
-    while sent > 0 and queue[lane.head] do
-        if #queue[lane.head] <= LIMIT then
-            sent = sent - 1
-        end
-        lane.head = lane.head + 1
-    end
+    lane.head = nextHead -- drop the ops that went out, and oversize ones skipped
     if lane.head > #queue then
         wipe(queue) -- empty: start over at 1
         lane.head = 1
@@ -206,16 +199,21 @@ C_Timer.NewTicker(0.25, function()
             -- ones that fit a message), so a client that did not ask can
             -- skip exactly those. The queue was empty, so they go out first
             -- and in one run.
+            -- Encoded once: a full raid is over a thousand ops.
             local ops = Rules.Snapshot(S)
-            local n = 0
-            for _, op in ipairs(ops) do
-                if #Rules.EncodeOp(op) <= LIMIT then
+            local enc, n = {}, 0
+            for i, op in ipairs(ops) do
+                enc[i] = Rules.EncodeOp(op)
+                if #enc[i] <= LIMIT then
                     n = n + 1
                 end
             end
             ops[1][6] = n
-            for _, op in ipairs(ops) do
-                Net.Queue(op)
+            enc[1] = Rules.EncodeOp(ops[1])
+            if not demo() then
+                for _, s in ipairs(enc) do
+                    LIVE.queue[#LIVE.queue + 1] = s
+                end
             end
         end
     end

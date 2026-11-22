@@ -412,19 +412,22 @@ local fullAliases = {}
 local roster = {}
 NS.roster = roster
 
+local function addAlias(t, k, canon)
+    if t[k] == nil or t[k] == canon then
+        t[k] = canon
+    else
+        t[k] = false -- two players share this spelling
+    end
+end
 local function addAliases(canon, first)
     local display = canon:match("^(.+)%-[^%-]+$") or canon
     local r = canon:match("%-([^%-]+)$") or ""
-    for i, a in ipairs({ canon, display, first, first .. "-" .. r }) do
-        local k = a:lower()
-        for _, t in ipairs(i <= 2 and { aliases, fullAliases } or { aliases }) do
-            if t[k] == nil or t[k] == canon then
-                t[k] = canon
-            else
-                t[k] = false -- two players share this spelling
-            end
-        end
+    for _, k in ipairs({ canon:lower(), display:lower() }) do
+        addAlias(aliases, k, canon)
+        addAlias(fullAliases, k, canon)
     end
+    addAlias(aliases, first:lower(), canon)
+    addAlias(aliases, (first .. "-" .. r):lower(), canon)
 end
 
 -- Any spelling of a player's name -> the canonical name. `strict` (roll
@@ -509,7 +512,7 @@ local function markAttendance(ending)
     dt = (dt > 0 and dt <= TICK_MAX) and dt or 0
     lastTick = not ending and { id = S.id, at = now } or nil
     S.inst = S.inst or (not ending and raidInstance()) or nil
-    S.att, S.seen = S.att or {}, nil
+    S.att = S.att or {}
     S.attSpan = (S.attSpan or 0) + dt
     if dt == 0 then
         return
@@ -675,6 +678,11 @@ function NS.ItemStringOf(link)
     return type(link) == "string" and link:match("|H(item:[%d:%-]+)|h") or nil
 end
 
+-- An item ID from typed text: a bare number or a pasted item link.
+function NS.ItemIDFrom(text)
+    return tonumber(text) or Rules.ItemIDOf(NS.ItemStringOf(text) or "")
+end
+
 -- A display link for an itemString, or a placeholder while the client
 -- fetches the item; GET_ITEM_INFO_RECEIVED refreshes the window.
 local requested = {} -- itemID -> true once asked for
@@ -807,7 +815,7 @@ end
 local seenWin = {} -- session id .. item key -> true: that win was news once
 function NS.ApplyOps(ops, broadcast)
     local S = NS.S()
-    local changedHistory, gotNew, logMoved = false, false, false
+    local changedHistory, gotNew, logMoved, winsChanged = false, false, false, false
     local rejected = 0
     for _, op in ipairs(ops) do
         -- An UNDO takes the win back, so the old winner is no longer owed it.
@@ -833,7 +841,9 @@ function NS.ApplyOps(ops, broadcast)
             end
             logMoved = true
         elseif newS and (op[1] == "LOG" or op[1] == "LOG2") then
-            logMoved = true
+            -- Entries arrive in time order: sort only when one does not.
+            local log, n = newS.log, newS.log and #newS.log or 0
+            logMoved = logMoved or (n > 1 and (log[n].t or 0) < (log[n - 1].t or 0))
         end
         local owedList = undone and newS and NS.DB.owed[undone.who]
         if owedList then
@@ -860,6 +870,8 @@ function NS.ApplyOps(ops, broadcast)
             S.untrusted = S.untrusted or (k == "NEW" and op.untrusted) or nil
             if k == "NEW" or k == "PHASE" or k == "AWARD" or k == "CANCEL" or k == "ADD" or k == "UNDO" then
                 changedHistory = true
+                -- Wins and Stats read only raids, phases and done items.
+                winsChanged = winsChanged or (k ~= "CANCEL" and k ~= "ADD")
             end
             if k == "PHASE" then
                 markAttendance(op[2] == "ended")
@@ -879,7 +891,7 @@ function NS.ApplyOps(ops, broadcast)
                 -- Every opening of the roll starts the minimum roll time again.
                 rollingAt[ik] = (k == "ITEM" and op[3] == "rolling") and GetServerTime() or rollingAt[ik]
             end
-            local winKey = S.id .. "\t" .. tostring(op[2])
+            local winKey = (k == "UNDO" or k == "AWARD") and S.id .. "\t" .. tostring(op[2])
             if k == "UNDO" then
                 seenWin[winKey] = nil -- a later win of this item is news again
             elseif k == "AWARD" and not seenWin[winKey] then
@@ -920,7 +932,9 @@ function NS.ApplyOps(ops, broadcast)
     end
     if changedHistory and S then
         saveHistory(S)
-        NS.historyGen = NS.historyGen + 1 -- who won what, or which raids exist
+        if winsChanged then
+            NS.historyGen = NS.historyGen + 1 -- who won what, or which raids exist
+        end
     end
     -- History holds the live session, so any op (a want, a roll) changes
     -- it a little. Views that show those (Stats) also watch this.
@@ -1002,6 +1016,28 @@ local lastSyncFrom, lastErrTo = {}, {}
 -- The host runs a request. `who` is the requester's full name. Returns
 -- true when it went through, else nil and the reason (if any). `quiet`:
 -- the caller tells the player itself (they have no addon to hear it).
+-- Rules.Intent's view of the game, built once (a request comes per roll).
+local intentCtx = {
+    classOf = NS.ClassOf,
+    describe = function(itemString) -- RLC_Specs.lua loads after this file
+        return NS.Specs.DescribeItem(itemString)
+    end,
+    dry = NS.DryLastRaid,
+    since = function(key)
+        local up = interestAt[NS.S().id .. "\t" .. key]
+        return up and up.at
+    end,
+    rollingSince = function(key)
+        return rollingAt[NS.S().id .. "\t" .. key]
+    end,
+    inEncounter = function()
+        return C_InstanceEncounter.IsEncounterInProgress() == true
+    end,
+    isMasterLooter = function(name)
+        return NS.Loot.IsMasterLooter(name)
+    end,
+}
+
 function NS.HandleRequest(who, req, quiet)
     local S = NS.S()
     if not NS.IsHost() then
@@ -1018,25 +1054,8 @@ function NS.HandleRequest(who, req, quiet)
         NS.Net.SendSnapshot(req[2] == "1", who) -- "1": the asker has no session
         return
     end
-    local ops, note = Rules.Intent(S, who, req, {
-        classOf = NS.ClassOf,
-        now = GetServerTime(),
-        describe = NS.Specs.DescribeItem,
-        dry = NS.DryLastRaid,
-        since = function(key)
-            local up = interestAt[S.id .. "\t" .. key]
-            return up and up.at
-        end,
-        rollingSince = function(key)
-            return rollingAt[S.id .. "\t" .. key]
-        end,
-        inEncounter = function()
-            return C_InstanceEncounter.IsEncounterInProgress() == true
-        end,
-        isMasterLooter = function(name)
-            return NS.Loot.IsMasterLooter(name)
-        end,
-    })
+    intentCtx.now = GetServerTime()
+    local ops, note = Rules.Intent(S, who, req, intentCtx)
     if not ops then
         -- A refused roll is told to the player who rolled, not the host. Only
         -- the host's own ROLLSEEN names someone else; from anyone else the
@@ -1170,6 +1189,7 @@ NS.On("ADDON_LOADED", function(name)
     -- lists, and class colours of players in no saved raid.
     local keep = {}
     for _, rec in pairs(DB.history) do
+        rec.seen = nil -- attendance before v0.7.0, now rec.att
         for _, it in pairs(rec.items or {}) do
             if it.state == "done" or it.state == "cancelled" then
                 it.worn = nil
@@ -1278,7 +1298,7 @@ NS.On("GET_ITEM_INFO_RECEIVED", function(itemID, success)
         return -- a failed load brings no new name: redrawing would only ask again
     end
     -- Every item load in the game lands here: redraw only for ones we show.
-    local cared = NS.ItemInfoArrived and itemID and NS.ItemInfoArrived(itemID)
+    local cared = NS.ItemInfoArrived and itemID and NS.ItemInfoArrived(itemID, requested[itemID])
     if (cared or (itemID and requested[itemID])) and not itemInfoPending then
         itemInfoPending = true
         C_Timer.After(0.25, function()
@@ -1312,7 +1332,7 @@ NS.On("CHAT_MSG_WHISPER", function(text, sender, _, _, _, _, _, _, _, _, _, guid
     end
     lastWhisperTo[who] = GetTime()
     local reply
-    local id = tonumber(arg) or Rules.ItemIDOf(NS.ItemStringOf(arg) or "")
+    local id = NS.ItemIDFrom(arg)
     if cmd:lower() == "reserve" and id then
         local ok, note = NS.HandleRequest(who, { "RES", id }, true)
         reply = ok and ("Reserved " .. NS.LinkOf("item:" .. id) .. ".") or note
@@ -1356,7 +1376,7 @@ NS.Commands = {
             return S ~= nil and S.phase == "reserve"
         end,
         fn = function(rest)
-            local id = tonumber(rest) or Rules.ItemIDOf(NS.ItemStringOf(rest) or "")
+            local id = NS.ItemIDFrom(rest)
             if id then
                 NS.Act("RES", id)
             else

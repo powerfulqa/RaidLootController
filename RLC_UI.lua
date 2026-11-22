@@ -686,12 +686,16 @@ local UI = {
 }
 NS.UI = UI
 
--- Called on GET_ITEM_INFO_RECEIVED: lists that skip a rebuild redraw. True
--- when a page was waiting for that item (UI.itemArrived, set by the
--- Catalogue for its search).
-function NS.ItemInfoArrived(itemID)
-    itemInfoGen = itemInfoGen + 1
-    return UI.itemArrived ~= nil and UI.itemArrived(itemID) or false
+-- Called on GET_ITEM_INFO_RECEIVED. True when a page was waiting for that
+-- item (UI.itemArrived, set by the Catalogue for its search). Lists that skip
+-- a rebuild redraw only for items shown or asked for (asked: NS.LinkOf),
+-- not for every item load in the game.
+function NS.ItemInfoArrived(itemID, asked)
+    local cared = UI.itemArrived ~= nil and UI.itemArrived(itemID) or false
+    if cared or asked then
+        itemInfoGen = itemInfoGen + 1
+    end
+    return cared
 end
 
 -- ---- Loot page ----------------------------------------------------------------------
@@ -871,9 +875,6 @@ end
 local queueSig -- what the queue list was last built from
 local function refreshLoot(S)
     local order = S and S.order or {}
-    if S and (not selKey or not S.items[selKey]) then
-        selKey = S.active or order[#order]
-    end
     -- The queue only changes with items, states, winners, the selection, the
     -- sort or item data arriving; a want or a roll alone leaves it as it is.
     local sig = { tostring(selKey), tostring(rowGlowKey), tostring(queue.sortCol), tostring(queue.desc), itemInfoGen }
@@ -1043,14 +1044,16 @@ local function refreshLoot(S)
     local finished = item.state == "done" or item.state == "cancelled"
     local cur = S.active and S.items[S.active]
     local busy = cur ~= nil and cur ~= item and (cur.state == "interest" or cur.state == "rolling")
-    later(select(2, callState(S, item)))
-    later(select(2, closeState(S, item)))
+    local callOK, callWait = callState(S, item)
+    local closeOK, closeWait = closeState(S, item)
+    later(callWait)
+    later(closeWait)
     if live then
         later(Rules.INTEREST_MIN + 1 - upFor(S, item))
     end
     startBtn:SetEnabled(item.state == "pending" and not busy)
-    callBtn:SetEnabled((callState(S, item)))
-    closeBtn:SetEnabled((closeState(S, item)))
+    callBtn:SetEnabled(callOK)
+    closeBtn:SetEnabled(closeOK)
     openBtn:SetEnabled(openOK(S, item))
     specBtn:SetEnabled(not finished and not rollOpen(S))
     awardBtn:SetEnabled(selPlayer ~= nil and NS.ClassOf(selPlayer) ~= nil and not finished)
@@ -1343,7 +1346,7 @@ local resBox = InputBox(rpg, 220, "Shift-click an item, or type its ID")
 resBox:SetPoint("TOPLEFT", 8, -84)
 local function doReserve()
     local text = resBox:GetText() or ""
-    local id = tonumber(text) or Rules.ItemIDOf(NS.ItemStringOf(text) or "")
+    local id = NS.ItemIDFrom(text)
     if id then
         NS.Act("RES", id)
         resBox:SetText("")

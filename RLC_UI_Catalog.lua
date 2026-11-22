@@ -14,6 +14,7 @@ local Catalog = NS.Catalog
 local catBoss -- { instID, bossKey } of the selected boss
 local catItem -- itemString of the selected item
 local expanded = {} -- instID -> true when its bosses are listed
+local expandRev = 0 -- counts expand and collapse clicks (refreshCatalog's skip)
 local catSpec, catWish = false, false -- filters: only items for my spec, only my wishlist
 local wishRev = 0 -- counts wishlist changes, for the cached scan below
 
@@ -100,6 +101,7 @@ local tree = List(cp, 260, 330, { 220 }, false, function(row)
         return -- a section header
     elseif row.bossKey == nil then
         expanded[row.instID] = not expanded[row.instID] or nil
+        expandRev = expandRev + 1
     else
         catBoss, catItem = row, nil
         search:SetText("")
@@ -239,7 +241,7 @@ local function sortedBosses(inst)
     return keys
 end
 
-local function refreshCatalog()
+local function drawLists()
     local cat = NS.DB.catalog
     local insts = {}
     for instID in pairs(cat) do
@@ -343,7 +345,6 @@ local function refreshCatalog()
             end
         end
     end
-    catSpec = catSpec and NS.Specs.Mine() ~= nil -- off again if the spec is lost: never "on" and filtering nothing
     if catSpec then
         local suited = {}
         for _, e in ipairs(shown) do
@@ -395,7 +396,44 @@ local function refreshCatalog()
         end
         return e.rec.s == catItem
     end)
+end
 
+-- Both lists refill up to 200 rows, and the window redraws on every op and
+-- roster change. So they redraw at once for anything clicked or typed here,
+-- and for anything else (drops, kills, names, item loads) at most once a
+-- second, with a redraw queued for the last change.
+local catSig, catDrawn, catQueued = nil, 0, false
+local function refreshCatalog()
+    catSpec = catSpec and NS.Specs.Mine() ~= nil -- off again if the spec is lost: never "on" and filtering nothing
+    local sig = table.concat({
+        tostring(NS.DB.catalog),
+        catRev,
+        expandRev,
+        tostring(catBoss and catBoss.instID),
+        tostring(catBoss and catBoss.bossKey),
+        tostring(catItem),
+        (search:GetText() or ""):lower(),
+        tostring(catSpec),
+        tostring(NS.Specs.Mine()),
+        tostring(catWish),
+        wishRev,
+        tostring(NS.Wish()),
+        tostring(catItems.sortCol),
+        tostring(catItems.desc),
+    }, "\0")
+    local wait = 1 - (GetTime() - catDrawn)
+    if sig ~= catSig or wait <= 0 then
+        catSig, catDrawn = sig, GetTime()
+        drawLists()
+    elseif not catQueued then
+        catQueued = true
+        C_Timer.After(wait, function()
+            catQueued = false
+            NS.Refresh()
+        end)
+    end
+
+    local wish = NS.Wish()
     local S = NS.S()
     catReserve:SetShown(S ~= nil and S.phase == "reserve")
     catReserve:SetEnabled(catItem ~= nil and S ~= nil and next(S.items) == nil) -- closed at the first item

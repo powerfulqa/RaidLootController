@@ -620,4 +620,14 @@ function refreshHelp()
     noResults:SetShown(not any)
     child:SetHeight(math.max(1, -y))
 end
-NS.UI.refresh.help = refreshHelp
+-- Nothing here reads the session: the window's redraws lay the page out
+-- only on first show, after a resize while hidden, or when the saved data
+-- (and its collapsed sections) changes, as /rlc demo does. Search, section
+-- clicks and a resize while shown call refreshHelp themselves.
+local drawnFor, drawnWidth
+NS.UI.refresh.help = function()
+    if drawnFor ~= NS.DB or drawnWidth ~= WIDTH then
+        drawnFor, drawnWidth = NS.DB, WIDTH
+        refreshHelp()
+    end
+end

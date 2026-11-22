@@ -361,28 +361,24 @@ if not NS.On then
     return -- loaded by the test suite without the client
 end
 
-local function readStats(itemString, data)
-    local _, link = C_Item.GetItemInfo(itemString)
-    return Specs.ItemKinds(C_Item.GetItemStats(link or itemString), data and data.lines)
-end
-
 -- The host's describe() for Rules.Intent ADD: class mask from the item's
 -- "Classes:" line, and the suited specs as a list. Items that are not
 -- gear get no spec limit; an officer can always change it.
-function Specs.DescribeItem(itemString)
-    local data = C_TooltipInfo.GetHyperlink(itemString) -- read once for both uses
+-- data: the item's tooltip when the caller already has it.
+function Specs.DescribeItem(itemString, data)
+    data = data or C_TooltipInfo.GetHyperlink(itemString) -- read once for both uses
     local mask = NS.Loot.TooltipClassMask(itemString, data)
     local _, _, _, equipLoc, _, classID, subclassID = C_Item.GetItemInfoInstant(itemString)
     if classID ~= 2 and classID ~= 4 then
         return mask, ""
     end
-    local reqLevel = select(5, C_Item.GetItemInfo(itemString))
+    local _, link, _, _, reqLevel = C_Item.GetItemInfo(itemString)
     local suited = Specs.SuitedSpecs({
         classID = classID,
         subclassID = subclassID,
         equipLoc = equipLoc,
         reqLevel = reqLevel,
-        stats = readStats(itemString, data),
+        stats = Specs.ItemKinds(C_Item.GetItemStats(link or itemString), data and data.lines),
         classMask = mask,
     })
     return mask, Rules.SetToCSV(suited)
@@ -392,23 +388,23 @@ end
 -- for an item with no spec limit, and while the spec or the item is not
 -- known yet. The suited specs are kept per item once the game has loaded
 -- both its info and its tooltip: a half-loaded item would be kept wrong.
-local suitedCSV = {}
+-- itemString -> set of suited specs, or false for no spec limit.
+local suitedSet = {}
 function Specs.SuitsMe(itemString)
     local mine = Specs.Mine()
     if not mine then
         return true
     end
-    if
-        not suitedCSV[itemString] and not (C_Item.GetItemInfo(itemString) and C_TooltipInfo.GetHyperlink(itemString))
-    then
-        return true
+    local suited = suitedSet[itemString]
+    if suited == nil then
+        local data = C_Item.GetItemInfo(itemString) and C_TooltipInfo.GetHyperlink(itemString)
+        if not data then
+            return true
+        end
+        suited = Rules.CSVToSpecs(select(2, Specs.DescribeItem(itemString, data))) or false
+        suitedSet[itemString] = suited
     end
-    local csv = suitedCSV[itemString]
-    if not csv then
-        csv = select(2, Specs.DescribeItem(itemString))
-        suitedCSV[itemString] = csv
-    end
-    return csv == "" or ("," .. csv .. ","):find("," .. mine .. ",", 1, true) ~= nil
+    return not suited or suited[mine] == true
 end
 
 -- ---- the player's own spec -------------------------------------------------

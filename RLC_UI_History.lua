@@ -62,16 +62,22 @@ local histItems = List(hp, 436, 350, { 160, 100, 130 }, true, nil, { "Item", "Wi
 histItems.frame:SetPoint("TOPLEFT", 250, -20)
 histItems.frame:SetPoint("BOTTOMLEFT", hp, "BOTTOMLEFT", 250, 34)
 histItems.frame:SetPoint("BOTTOMRIGHT", hp, "BOTTOMRIGHT", -26, 34)
+-- Rolls (name -> number) as a list, highest first.
+local function byRoll(rolls)
+    local out = {}
+    for name, n in pairs(rolls or {}) do
+        out[#out + 1] = { name = name, n = n }
+    end
+    table.sort(out, function(a, b)
+        return a.n > b.n
+    end)
+    return out
+end
+
 histItems.onEnter = function(row, item)
     GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink(item.itemString)
-    local lines = {}
-    for name, n in pairs(item.rolls) do
-        lines[#lines + 1] = { name = name, n = n }
-    end
-    table.sort(lines, function(a, b)
-        return a.n > b.n
-    end)
+    local lines = byRoll(item.rolls)
     if #lines > 0 then
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Rolls")
@@ -98,14 +104,7 @@ histItems.onEnter = function(row, item)
             0.25,
             true
         )
-        local old = {}
-        for name, n in pairs(u.rolls or {}) do
-            old[#old + 1] = { name = name, n = n }
-        end
-        table.sort(old, function(a, b)
-            return a.n > b.n
-        end)
-        for _, l in ipairs(old) do
+        for _, l in ipairs(byRoll(u.rolls)) do
             GameTooltip:AddDoubleLine(NS.ColorName(l.name), l.n, 1, 1, 1, 0.6, 0.6, 0.6)
         end
     end

@@ -86,8 +86,8 @@ statsList.onEnter = function(row, name)
     GameTooltip:Show()
 end
 
--- Worked out again only when history changes, not on every redraw (a
--- window resize redraws every frame).
+-- Worked out again only when history changes, not on every redraw (any op
+-- or roster change redraws the open tab).
 -- Wants and rolls in the live raid count too, but those arrive many times a
 -- second during a roll: they redo the stats at most every 3 s.
 local statsCache, statsGen, statsOp, statsAt, statsLater

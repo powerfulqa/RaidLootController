@@ -98,17 +98,18 @@ Rules.ROLL_MIN = 15 -- seconds a roll stays open before a close, unless every wa
 Rules.MAX_ITEMS = 500 -- per raid session; far above any real raid
 Rules.MAX_ID = 2147483647 -- item ids and session keys: rejects "1e999" (inf) and NaN
 
+local function count(set)
+    local n = 0
+    for _ in pairs(set) do
+        n = n + 1
+    end
+    return n
+end
+
 -- Whether name may be added to set t (Rules.MAX_NAMES). Removing and
 -- changing an entry is always allowed.
 local function roomFor(t, name)
-    if t[name] ~= nil then
-        return true
-    end
-    local n = 0
-    for _ in pairs(t) do
-        n = n + 1
-    end
-    return n < Rules.MAX_NAMES
+    return t[name] ~= nil or count(t) < Rules.MAX_NAMES
 end
 
 -- A whole number in [lo, hi] from a wire field, or nil.
@@ -308,9 +309,14 @@ end
 -- Pack encoded ops into as few messages as fit `limit` bytes each. An op
 -- longer than the limit is dropped rather than truncated. With maxMsgs, stop
 -- once that many messages are full (the sender only needs the first one).
-function Rules.Pack(encoded, limit, maxMsgs)
+-- first, last: pack only encoded[first..last] (default: all of it). The
+-- second return is the index after the last op the messages used; oversize
+-- ops skipped on the way count as used.
+function Rules.Pack(encoded, limit, maxMsgs, first, last)
+    last = last or #encoded
     local msgs, cur = {}, nil
-    for _, s in ipairs(encoded) do
+    for i = first or 1, last do
+        local s = encoded[i]
         if #s <= limit then
             if cur and #cur + 1 + #s <= limit then
                 cur = cur .. OS .. s
@@ -318,7 +324,7 @@ function Rules.Pack(encoded, limit, maxMsgs)
                 if cur then
                     msgs[#msgs + 1] = cur
                     if maxMsgs and #msgs >= maxMsgs then
-                        return msgs
+                        return msgs, i
                     end
                 end
                 cur = s
@@ -328,7 +334,7 @@ function Rules.Pack(encoded, limit, maxMsgs)
     if cur then
         msgs[#msgs + 1] = cur
     end
-    return msgs
+    return msgs, last + 1
 end
 
 function Rules.Decode(msg)
@@ -523,14 +529,14 @@ function Rules.Top(item)
             tied[name] = true
         end
     end
-    local count, only = 0, nil
+    local ties, only = 0, nil
     for name in pairs(tied) do
-        count = count + 1
+        ties = ties + 1
         only = name
     end
-    if count == 1 then
+    if ties == 1 then
         return only, nil, best
-    elseif count > 1 then
+    elseif ties > 1 then
         return nil, tied, best
     end
     return nil
@@ -1636,14 +1642,6 @@ Rules.ATTEND_SHARE = 0.75 -- share of the raid you must be there for
 Rules.REGULAR_WINDOW, Rules.REGULAR_SHARE = 8, 0.75 -- in 75% of the last 8 raids
 Rules.NIGHT = 12 * 3600 -- raids this close together in one instance are one night
 
-local function count(set)
-    local n = 0
-    for _ in pairs(set) do
-        n = n + 1
-    end
-    return n
-end
-
 -- Whether `name` was there for raid `rec`. Older raids without att fall
 -- back to who wanted or rolled: a spec or a reserve alone does not count,
 -- both can be made before the raid.
@@ -1748,7 +1746,6 @@ function Rules.RegularsFrom(history, currentID, inst)
     table.sort(out)
     return out
 end
-Rules.DryFrom = Rules.RegularsFrom -- the old name, for one release
 
 -- ---- snapshot -------------------------------------------------------------
 

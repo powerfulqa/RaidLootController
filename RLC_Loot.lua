@@ -117,6 +117,11 @@ local added = {}
 -- LOOT_OPENED, so every read adds to a snapshot kept until LOOT_CLOSED: a
 -- slot looted away still counts. Keyed by source + slot, so a slot read on
 -- both events is one entry.
+-- A loot slot's key: its source (the corpse) and slot number.
+local function slotKey(slot)
+    return tostring(GetLootSourceInfo(slot)) .. ":" .. slot
+end
+
 local snap, snapKeys = {}, {}
 function Loot.LootSlots()
     for slot = 1, GetNumLootItems() do
@@ -125,7 +130,7 @@ function Loot.LootSlots()
         local s = NS.ItemStringOf(link)
         if s and quality and quality >= NS.DB.minQuality then
             local source = GetLootSourceInfo(slot)
-            local key = tostring(source) .. ":" .. slot
+            local key = slotKey(slot)
             if not snapKeys[key] then
                 snapKeys[key] = true
                 snap[#snap + 1] = { slot = slot, itemString = s, source = source, key = key }
@@ -204,15 +209,15 @@ local function bestMatch(n, get, itemString, skip)
     end
 end
 
--- Whether this client hands won items over: the master looter when loot
--- is on Master Looter (only they can give from the loot window, and the
--- drops are in their bags otherwise), else the raid host.
 -- Whether `unit` is the master looter's unit (false when unknown).
 local function isUnit(unit, mlUnit)
     local same = unit and mlUnit and UnitIsUnit(unit, mlUnit) -- can be secret
     return NS.CanRead(same) and same == true
 end
 
+-- Whether this client hands won items over: the master looter when loot
+-- is on Master Looter (only they can give from the loot window, and the
+-- drops are in their bags otherwise), else the raid host.
 function Loot.IAmGiver()
     local unit, ml = masterLooterUnit()
     if ml then
@@ -257,7 +262,7 @@ local function sessionItemAt(slot)
     if not S or S.phase == "ended" then
         return
     end
-    local src = tostring(GetLootSourceInfo(slot)) .. ":" .. slot
+    local src = slotKey(slot)
     local s = NS.ItemStringOf(GetLootSlotLink(slot))
     for _, item in pairs(S.items) do
         if item.src == src and sameItem(s, item.itemString) then
@@ -286,19 +291,14 @@ function Loot.Deliver(item)
     local winner = item.winner
     -- ponytail: master loot is unmeasured on Forever (checklist 3); without
     -- the API the item falls through to the owed list and a trade.
-    if
-        Loot.lootOpen
-        and GetMasterLootCandidate
-        and GiveMasterLoot
-        and C_PartyInfo.GetLootMethod() == Enum.LootMethod.Masterlooter
-    then
+    if Loot.lootOpen and GetMasterLootCandidate and GiveMasterLoot and select(2, masterLooterUnit()) then
         -- Only the slot this drop was added from (two copies of one item on
         -- a boss: give the right one), and only for a win the rules decided.
         -- An item typed in by ID, or given by hand, is the master looter's
         -- call: an officer could otherwise add any drop and give it away.
         local slot
         for i = 1, GetNumLootItems() do
-            if item.src and tostring(GetLootSourceInfo(i)) .. ":" .. i == item.src then
+            if item.src and slotKey(i) == item.src then
                 slot = sameItem(NS.ItemStringOf(GetLootSlotLink(i)), item.itemString) and i or nil
                 break
             end
@@ -435,8 +435,7 @@ NS.On("TRADE_SHOW", function()
     -- use, however the realm part reads for "npc".
     local who
     for name, r in pairs(NS.roster) do
-        local same = r.unit and not r.stale and UnitIsUnit(r.unit, "npc")
-        if NS.CanRead(same) and same then
+        if not r.stale and isUnit(r.unit, "npc") then
             who = name
         end
     end
@@ -750,10 +749,13 @@ local function paintFrame(frame)
     frame.rlcMarked = any
 end
 
+local frames -- built on first use: the bag frames exist by then
 local function containerFrames()
-    local frames = { _G.ContainerFrameCombinedBags }
-    for i = 1, _G.NUM_CONTAINER_FRAMES or 13 do
-        frames[#frames + 1] = _G["ContainerFrame" .. i]
+    if not frames then
+        frames = { _G.ContainerFrameCombinedBags }
+        for i = 1, _G.NUM_CONTAINER_FRAMES or 13 do
+            frames[#frames + 1] = _G["ContainerFrame" .. i]
+        end
     end
     return frames
 end

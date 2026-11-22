@@ -68,6 +68,16 @@ do
     local first = R.Pack({ string.rep("a", 100), string.rep("b", 100), string.rep("c", 100) }, 250, 1)
     check(#first == 1 and first[1] == msgs[1], "pack with maxMsgs returns just the first message")
     check(#R.Pack({ string.rep("x", 300) }, 250) == 0, "pack drops an oversize op")
+    -- A range and where the next message starts (RLC_Net.lua serve): an
+    -- oversize op skipped inside the message counts as used, the op that did
+    -- not fit does not.
+    local q = { "x", string.rep("a", 100), string.rep("o", 300), string.rep("b", 100), string.rep("c", 100) }
+    local one, nextAt = R.Pack(q, 250, 1, 2, 5)
+    check(one[1] == q[2] .. "^" .. q[4] and nextAt == 5, "pack range: skips oversize, stops at the op that did not fit")
+    local rest, after = R.Pack(q, 250, 1, nextAt, 5)
+    check(rest[1] == q[5] and after == 6, "pack range: the last op ends past the range")
+    local none, past = R.Pack(q, 250, 1, 3, 3)
+    check(#none == 0 and past == 4, "pack range: only oversize ops are all used")
 end
 
 -- ---- roll lines ----------------------------------------------------------

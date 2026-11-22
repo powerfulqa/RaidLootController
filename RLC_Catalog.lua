@@ -159,10 +159,19 @@ local function evict(cat, t)
         if heardOnly(e) then
             t[k] = nil
             if e.s and totals[cat] then
-                -- One item record: count it off, so a flood at the cap does
-                -- not recount the whole catalogue per message. The search
-                -- index rebuilds on its next use.
-                totals[cat], index[cat] = totals[cat] - 1, nil
+                -- One item record: count it off and take it out of the
+                -- search index, so a flood at the cap does not recount or
+                -- reindex the whole catalogue per message.
+                totals[cat] = totals[cat] - 1
+                local hits = index[cat] and index[cat][k]
+                for i = #(hits or {}), 1, -1 do
+                    if hits[i].rec == e then
+                        table.remove(hits, i)
+                    end
+                end
+                if hits and #hits == 0 then
+                    index[cat][k] = nil
+                end
             else
                 Catalog.Forget(cat)
             end
@@ -1051,7 +1060,7 @@ function Catalog.OnMessage(ops, dest, sender)
                 if
                     dest ~= "GROUP"
                     or not NS.roster[sender]
-                    or int(op[2], 1, 1e9) ~= where()
+                    or instID ~= where()
                     or not Catalog.KillAllowed(killSeen, sender, op, GetTime())
                 then
                     op = nil
