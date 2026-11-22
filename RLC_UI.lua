@@ -645,7 +645,7 @@ for i, def in ipairs(TABS) do
     b:SetPoint("TOPLEFT", 12 + (i - 1) * 87, -30) -- 8 tabs across the minimum width
     AddGlow(b)
     -- A gold bar under the open tab: the locked highlight alone is too
-    -- faint to tell, and a skin (DaylightUI) can flatten it away.
+    -- faint to tell, and a UI skin addon can flatten it away.
     b.mark = b:CreateTexture(nil, "OVERLAY")
     b.mark:SetColorTexture(1, 0.82, 0, 1)
     b.mark:SetHeight(3)

@@ -4,7 +4,7 @@ Raid Loot Controller: a no-DKP raid loot addon for **WoW: Forever**
 (interface 16001). Forever is the Mainline 12.1.x client wearing a Classic
 version number: use the `C_*` API surface, never Classic globals.
 
-**Status: v0.8.0, still mostly unmeasured in game.** Most of what sits below the
+**Status: v0.9.4, still mostly unmeasured in game.** Most of what sits below the
 rules layer is unmeasured on the live client. Treat the in-game checklist at
 the end as open until someone ticks it off in a real group.
 
@@ -25,7 +25,7 @@ the end as open until someone ticks it off in a real group.
 | `RLC_Demo.lua` | `/rlc demo`: swaps `NS.DB` for an in-memory fake raid, history and catalogue; `RLC_Net` sends nothing while it is on. `tests/test_demo.lua` builds it. |
 | `RLC_UI.lua` | The window (resizable, size saved in `RaidLootControllerDB.window`), the shared widgets (`NS.UI`: `Text`, `Button`, `List`, `InputBox`, `ItemTooltip`, `page`, `itemKey`), the redraw dispatch (`UI.refresh[tab](S)`, for every tab including Loot, Raid and Help), the Loot and Raid pages, the next-step glow that ties those two together, the copy window (`NS.ShowCopy`), the spec menus and the minimap button. |
 | `RLC_UI_History.lua`, `RLC_UI_Stats.lua`, `RLC_UI_Catalog.lua`, `RLC_UI_Versions.lua`, `RLC_UI_Commands.lua` | One tab each, loaded after `RLC_UI.lua`. Each builds its page from `NS.UI` and sets `UI.refresh[tab key]` to its redraw. A new tab is a new file like these (plus its line in the `.toc` and in `TABS`). The Commands tab renders `NS.Commands` (in `RLC_Core.lua`, the single list behind `/rlc`, `/rlc help` and the Run buttons; `when(S)` filters by role). Add a slash command there, never as a new `if` in the handler. |
-| `RLC_UI_Card.lua` | The roll card: a small movable window that pops up when an item goes up (window closed too) and stays 8 s after the win. Item, a timer bar for `Rules.INTEREST_MIN` / `ROLL_MIN` (from `UI.upFor`), a summary line, the players best roll first with roll bars, the winner lit, I want this and Roll. `RLC_UI.lua`'s `refreshNow` calls `UI.card(S)` before its hidden-window return. `/rlc card` (`DB.rollCard`) turns it off. Our own design: DaylightUI's roll cards may not be copied without the author's written permission (asked 2026-11-22). |
+| `RLC_UI_Card.lua` | The roll card: a small movable window that pops up when an item goes up (window closed too) and stays 8 s after the win. Item, a timer bar for `Rules.INTEREST_MIN` / `ROLL_MIN` (from `UI.upFor`), a summary line, the players best roll first with roll bars, the winner lit, I want this and Roll. `RLC_UI.lua`'s `refreshNow` calls `UI.card(S)` before its hidden-window return. `/rlc card` (`DB.rollCard`) turns it off. |
 | `tools/install/` | One-click installers, release assets: `Install-RaidLootController.bat` (cmd stub; the release build appends `Install-RaidLootController.ps1` below a `#RLCPAYLOAD#` marker, CRLF) and `install-raidlootcontroller.command` (Mac/Linux bash). Both find the Forever folder (`.flavor.info` = `wowf`, else `_forever_`, else `_classic_beta_`), download the latest zip, replace `Interface/AddOns/RaidLootController`, never touch `WTF`. Built and attached by `release.yml`. |
 
 Data flow: a button calls `NS.Act(req)`. On the host that runs
@@ -275,10 +275,9 @@ only from the session host (and `NEW` only from a leader or assistant).
     - The list holds only players heard from (group or guild); Copy list
       gives the ones in the group as text.
 
-26. ~~DaylightUI look (`RLC_Daylight.lua`, 2026-11-14)~~ Removed after
-    v0.9.1: DaylightAddonSkins' Auto Skinner dresses the windows instead.
-    Old saved `RaidLootControllerDB.daylightLook` values are left alone and
-    read by nothing.
+26. ~~Built-in window look (2026-11-14)~~ Removed after v0.9.1. Old saved
+    `RaidLootControllerDB.daylightLook` values are left alone and read by
+    nothing.
 
 27. Catalogue "Seen by" (2026-11-15), unmeasured: the fourth column fits at
     the minimum window size (the kills label lost its "in "), names past
@@ -341,7 +340,7 @@ only from the session host (and `NEW` only from a leader or assistant).
     (`Tip` in `RLC_UI.lua`), greyed-out buttons included
     (`SetMotionScriptsWhileDisabled`, read from `UIButtonTemplate.lua`); the
     Officer log button keeps its own tooltip. The open tab has a gold bar
-    along its bottom edge, visible with and without DaylightUI.
+    along its bottom edge, visible with and without a UI skin addon.
 33. Class colours for players outside the group (2026-11-15),
     unmeasured: `CV` and `CQE` carry the sender's class token (`CV version
     ["?"] class`, `CQE version class`), kept for the session in
@@ -356,8 +355,7 @@ only from the session host (and `NEW` only from a leader or assistant).
     and the winner row lights; it hides 8 s after the win; the X keeps it
     hidden until rolls are called; the dragged spot survives a reload
     (`RaidLootControllerDB.card`); I want this and Roll on the card work like
-    the Loot tab's; DaylightAddonSkins' Auto Skinner dresses it or leaves it
-    readable.
+    the Loot tab's; a UI skin addon dresses it or leaves it readable.
 
 ## Dev tooling
 

@@ -8,9 +8,9 @@ The detail behind the [README](../README.md): every rule, who can roll, how spec
 2. Raiders reserve an item on the **Raid** tab: shift-click it into the box, or type its item ID. One reserve each.
 3. The leader clicks **Start raid**, or the first boss pull starts it. Reserves are now closed.
 4. A boss dies. The master looter opens the loot window and clicks **Add from loot** (or drops an item from their bags on the window). The items appear on the **Loot** tab for everyone.
-5. An officer picks an item and clicks **Start**. Raiders who can use it click **I want this**.
+5. An officer picks an item and clicks **Start**. Raiders who can use it click **I want this**, on the Loot tab or on the [roll card](#the-roll-card) that pops up.
 6. The officer clicks **Call roll** (not during a boss fight). The addon works out who rolls: see [Who can roll](#who-can-roll).
-7. Raiders click **Roll (1-100)**. Rolls show up live.
+7. Raiders click **Roll (1-100)**. Rolls show up live, on the Loot tab and the roll card.
 8. The officer clicks **Close roll**, after 15 seconds or more. The highest roll wins. A tie makes only the tied players roll again.
 9. The master looter's addon gives the winner the item straight from the loot window. If the window is closed, the item goes on the giver's "still to trade" list, glows green in their bags, and is put in the trade window the next time they trade the winner. History then marks it delivered.
 
@@ -94,16 +94,27 @@ Officers can:
 
 ## Tools
 
-
 - **Always a next step.** The button you need next glows, and the **Next:** line says it in words.
 - **Delivery tracking.** Items still to trade are listed on the Raid tab, with the trade time left on bound items, and glow green in the giver's bags. A master loot give that fails (full bags, unique item, out of range) goes on that list too.
 - **Upgrade info.** Hold Shift on an item to compare it with your own gear. When you click **I want this**, the addon sends what you wear in that slot, so officers can hover your name to see your item level and the stat change. No scores: officers judge.
 - **Raid history.** Every raid is saved: who got what and how (roll, open roll, reserve, given), every roll, who wanted it, removed items and wins taken back. **Copy as text** pastes a raid's results into Discord. A raid not hosted by the group leader is marked (unverified).
 - **Stats.** Every player from your saved raids: attendance, items won, free rolls and their last win.
 - **Versions.** Every player known to have the addon, with their version and whether they are in your group. **Check again** asks your group and your guild, and every copy from this version on answers. **Copy list** gives the group's as text, to take attendance. **Whisper link** (leader and assistants) whispers the download link to group members without the addon, five per click, each player once a day.
+- **Roll card.** A small card for the item up for rolls, with a countdown and the live list of rolls: see [The roll card](#the-roll-card).
 - **Loot catalogue.** Every notable drop the addon has seen, by instance and boss.
 - **Item tooltips** show who reserved an item, who you owe it to, which boss drops it and when you last won one.
 - **Update notice.** When a guild or group member has a newer version, or the raid host's addon sends something yours does not know, you get one chat line with a link to the download. The Raid tab flags old versions.
+
+## The roll card
+
+When an item goes up for interest or rolls, a small card pops up, with the main window closed too.
+
+- **The item:** hover the icon for its tooltip, shift-click it to link it.
+- **The bar** counts down the wait before rolls can be called (15 seconds), then before the roll can close (15 seconds). It is the shortest wait, not a deadline: after it, the officer decides.
+- **The line under it** says where things stand: how many want the item, how many of those expected have rolled and who is still to roll, or who won and with what.
+- **The list:** everyone who wants the item, rolled or is named to roll, best roll first, with a bar for each roll and a tag for wants and reserves. Past eight players it shows how many more. The winner is lit in gold.
+- **I want this** and **Roll** work as on the Loot tab.
+- The card closes a few seconds after the win. Drag it to move it (the place is saved). The X hides it for that item until rolls are called. `/rlc card` turns it off and on.
 
 ## The loot catalogue
 

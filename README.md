@@ -33,6 +33,8 @@ The installer finds WoW: Forever and keeps your settings and loot history. To up
 
 That is all. Before the raid you can reserve one item on the **Raid** tab. When an item you can use comes up, click **I want this**, then **Roll**.
 
+You don't even need the window open: when an item goes up, a small **roll card** pops up with the item, a countdown bar, everyone in the roll (best roll first) and the same two buttons. It closes a few seconds after the win. `/rlc card` turns it off.
+
 No addon? You can still roll with `/roll`, and reserve by whispering the host `!rlc reserve <item or ID>`.
 
 ## For the raid leader
@@ -52,8 +54,10 @@ The **Versions** tab shows who has the addon; **Copy list** gives that as text t
 
 - **History** of every raid, with an officer log, and **Copy as text** for Discord.
 - **Stats:** attendance and items won per player, to check loot is spread fairly.
-- **Catalogue:** every drop the addon has seen, by instance and boss.
+- **Roll card:** pops up for each item up for rolls, with a countdown and the live list of rolls.
+- **Catalogue:** every drop the addon has seen, by instance and boss, in foldable 5-man to 40-man sections. Star items for a **wishlist** and get told when one drops.
 - **Item tooltips:** who reserved an item, which boss drops it, when you last won one.
+- **Versions:** who in your group or guild has the addon, and which version.
 - **Help** tab with search, and a **Commands** tab with a Run button for each command.
 
 ## More
@@ -73,8 +77,10 @@ lua5.1 tests/test_raid_sim.lua    # a raid night with cheaters, plus 8 weeks of 
 lua5.1 tests/test_catalog.lua     # catalogue data and sync merge
 lua5.1 tests/test_specs.lua       # which specs an item suits
 lua5.1 tests/test_demo.lua        # demo mode builds cleanly
+lua5.1 tests/test_load.lua        # every file loads with the game stubbed, every tab draws
 luacheck *.lua tests/*.lua        # 0 warnings
 stylua --check *.lua tests/*.lua
+for f in RLC_*.lua; do luac5.1 -p $f; done   # syntax and the 200-locals limit
 ```
 
 CI runs all of these on every push. Releases: see [CHANGELOG.md](CHANGELOG.md) and the release steps in CLAUDE.md.
