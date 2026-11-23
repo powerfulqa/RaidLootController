@@ -2,7 +2,8 @@
 -- The roll card: a small window that pops up when an item goes up for
 -- interest or rolls, and stays until a few seconds after the win. It shows
 -- the item, a timer bar for the host's minimum waits, where the roll
--- stands, and everyone in it, best roll first, with the winner lit.
+-- stands, and everyone in it, best roll first, with the winner lit, their
+-- wins this raid, and those still to roll dimmed.
 -- Loads after RLC_UI.lua, which calls UI.card(S) on every redraw, with the
 -- main window open or not. /rlc card turns it off.
 local _, NS = ...
@@ -10,13 +11,14 @@ local Rules = NS.Rules
 local UI = NS.UI
 local Text, Button, Tip = UI.Text, UI.Button, UI.Tip
 
-local W = 300
+local W = 320
 local PAD = 10
 local ICON = 36
 local ROWS = 8 -- players listed; the rest show as "and N more"
 local ROW_H = 18
-local BAR_W = 70 -- a row's roll bar at 100
+local BAR_W = 60 -- a row's roll bar at 100
 local LINGER = 8 -- seconds the card stays up after the win
+local FADE = 0.18 -- seconds to fade in or out
 local GOLD = { 1, 0.82, 0 }
 local BAR_COLOR = {
     interest = { 1, 0.82, 0 },
@@ -46,13 +48,21 @@ card:Hide()
 UI.cardFrame = card -- for tests/test_load.lua
 
 -- Where the player dragged it, kept in the real saved table (not the demo's).
+-- Pinned by its top edge in the upper half of the screen and by its bottom
+-- edge in the lower half, so it grows away from the screen edge.
 card:SetScript("OnDragStart", card.StartMoving)
 card:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
-    local point, _, rel, x, y = self:GetPoint()
-    if RaidLootControllerDB then
-        RaidLootControllerDB.card = { point = point, rel = rel, x = x, y = y }
+    local left, top, bottom = self:GetLeft(), self:GetTop(), self:GetBottom()
+    local height = UIParent:GetHeight()
+    if not (RaidLootControllerDB and left and top and bottom and height) then
+        return
     end
+    local low = (top + bottom) / 2 < height / 2
+    local point = low and "BOTTOMLEFT" or "TOPLEFT"
+    RaidLootControllerDB.card = { point = point, rel = "BOTTOMLEFT", x = left, y = low and bottom or top }
+    self:ClearAllPoints()
+    self:SetPoint(point, UIParent, "BOTTOMLEFT", left, low and bottom or top)
 end)
 local placed = false
 local function place()
@@ -107,44 +117,57 @@ end)
 -- ---- timer bar -------------------------------------------------------------------
 
 local BAR_INNER = W - 2 * PAD
-local barBg = card:CreateTexture(nil, "BACKGROUND", nil, 1)
-barBg:SetPoint("TOPLEFT", icon, "BOTTOMLEFT", 0, -8)
-barBg:SetSize(BAR_INNER, 12)
+local bar = CreateFrame("StatusBar", nil, card)
+bar:SetPoint("TOPLEFT", icon, "BOTTOMLEFT", 0, -8)
+bar:SetSize(BAR_INNER, 12)
+bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+bar:SetMinMaxValues(0, 1)
+local barBg = bar:CreateTexture(nil, "BACKGROUND")
+barBg:SetAllPoints()
 barBg:SetColorTexture(0, 0, 0, 0.6)
-local barFill = card:CreateTexture(nil, "ARTWORK")
-barFill:SetPoint("TOPLEFT", barBg, "TOPLEFT")
-barFill:SetHeight(12)
-local barText = Text(card, "GameFontHighlightSmall", "CENTER")
-barText:SetPoint("CENTER", barBg, "CENTER", 0, 0)
+local barText = Text(bar, "GameFontHighlightSmall", "CENTER")
+barText:SetPoint("CENTER", bar, "CENTER", 0, 0)
 
 -- The bar drains over the host's minimum wait (Rules.INTEREST_MIN, then
 -- Rules.ROLL_MIN). It is a floor, not a deadline: after it the host decides.
+-- The value moves every frame; the text only when its second changes.
 local timer = { total = 0, endAt = 0, during = "", after = "" }
 local function drawTimer()
     local left = timer.endAt - GetTime()
+    local text
     if timer.total > 0 and left > 0 then
-        barFill:SetWidth(math.max(1, BAR_INNER * left / timer.total))
-        barFill:Show()
-        barText:SetText(timer.during:format(math.ceil(left)))
+        bar:SetValue(left / timer.total)
+        text = timer.during:format(math.ceil(left))
     else
-        barFill:SetWidth(BAR_INNER)
-        barFill:SetShown(timer.full == true)
-        barText:SetText(timer.after)
+        bar:SetValue(timer.full and 1 or 0)
+        text = timer.after
+    end
+    if text ~= timer.shown then
+        timer.shown = text
+        barText:SetText(text)
     end
 end
-local tick = 0
-card:SetScript("OnUpdate", function(_, elapsed)
-    tick = tick + elapsed
-    if tick >= 0.1 then
-        tick = 0
-        drawTimer()
+
+-- Fades in when it shows and out when the win has lingered. alphaTo is
+-- what OnUpdate moves the alpha towards; at 0 the card hides.
+local alphaTo = 1
+card:SetScript("OnUpdate", function(self, elapsed)
+    drawTimer()
+    local a = self:GetAlpha()
+    if a ~= alphaTo then
+        local step = elapsed / FADE
+        a = alphaTo > a and math.min(alphaTo, a + step) or math.max(alphaTo, a - step)
+        self:SetAlpha(a)
+        if a <= 0 then
+            self:Hide()
+        end
     end
 end)
 
 -- ---- summary and the live list -----------------------------------------------
 
 local summary = Text(card)
-summary:SetPoint("TOPLEFT", barBg, "BOTTOMLEFT", 0, -8)
+summary:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -8)
 summary:SetPoint("RIGHT", card, "RIGHT", -PAD, 0)
 
 local rows = {}
@@ -157,10 +180,13 @@ for i = 1, ROWS do
     r.wash:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.18)
     r.name = Text(r)
     r.name:SetPoint("LEFT", 4, 0)
-    r.name:SetWidth(110)
+    r.name:SetWidth(100)
     r.tag = Text(r, "GameFontDisableSmall")
     r.tag:SetPoint("LEFT", r.name, "RIGHT", 4, 0)
-    r.tag:SetWidth(60)
+    r.tag:SetWidth(54)
+    r.won = Text(r, "GameFontDisableSmall")
+    r.won:SetPoint("LEFT", r.tag, "RIGHT", 4, 0)
+    r.won:SetWidth(36)
     r.num = Text(r, "GameFontHighlightSmall", "RIGHT")
     r.num:SetPoint("RIGHT", -4, 0)
     r.num:SetWidth(28)
@@ -304,8 +330,19 @@ function UI.card(S)
     local item = pick(S)
     local key = item and (S.id .. "\t" .. item.key .. "\t" .. item.state)
     if not item or dismissed[key] then
+        -- A win that has lingered fades out; anything else (turned off,
+        -- closed, the session gone) goes at once.
+        local lingered = not item
+            and shownFor
+            and shownFor:find("\tdone$")
+            and S
+            and not (NS.DB and NS.DB.rollCard == false)
         shownFor = nil
-        card:Hide()
+        if lingered and card:IsShown() then
+            alphaTo = 0
+        else
+            card:Hide()
+        end
         return
     end
     if not placed then
@@ -317,6 +354,13 @@ function UI.card(S)
 
     icon.itemString = item.itemString
     icon.tex:SetTexture(NS.IconOf(item.itemString))
+    -- Edged in the item's quality colour, once the item has loaded.
+    local q = C_Item.GetItemQualityByID(item.itemString)
+    local qr, qg, qb = 0.6, 0.6, 0.6
+    if type(q) == "number" then
+        qr, qg, qb = C_Item.GetItemQualityColor(q)
+    end
+    card:SetBackdropBorderColor(qr or 0.6, qg or 0.6, qb or 0.6)
     name:SetText(NS.LinkOf(item.itemString))
     stateLine:SetText(STATE_LINE[item.state] .. (MODE_LINE[item.mode] or ""))
 
@@ -335,12 +379,20 @@ function UI.card(S)
         timer.total, timer.after = 0, "Done"
     end
     local c = BAR_COLOR[item.state]
-    barFill:SetColorTexture(c[1], c[2], c[3], 0.85)
+    bar:SetStatusBarColor(c[1], c[2], c[3], 0.85)
     drawTimer()
 
     local canRoll = item.state == "rolling" and Rules.CanRoll(S, item, me, myClass)
     summary:SetText(summaryText(S, item, me, canRoll))
 
+    -- Wins this raid, and who is still to roll (named players, else wanters).
+    local won = {}
+    for _, it in pairs(S.items) do
+        if it.state == "done" and it.winner then
+            won[it.winner] = (won[it.winner] or 0) + 1
+        end
+    end
+    local expected = next(item.restrict or {}) and item.restrict or item.wants
     local names = players(item)
     local shown = math.min(#names, ROWS)
     for i, r in ipairs(rows) do
@@ -360,6 +412,10 @@ function UI.card(S)
                 r.bar:SetColorTexture(win and GOLD[1] or 0.6, win and GOLD[2] or 0.6, win and GOLD[3] or 0.6, 0.9)
             end
             r.wash:SetShown(item.state == "done" and item.winner == n)
+            -- The win shown counts towards the total once it is done.
+            local w = (won[n] or 0) - ((item.state == "done" and item.winner == n) and 1 or 0)
+            r.won:SetText(w > 0 and ("won " .. w) or "")
+            r:SetAlpha((item.state == "rolling" and expected[n] and not roll) and 0.5 or 1)
         end
     end
     local below = rows[math.max(shown, 1)]
@@ -391,5 +447,9 @@ function UI.card(S)
     local h = PAD + ICON + 8 + 12 + 8 + 14 + 6 + shown * ROW_H
     h = h + (#names > ROWS and 16 or 0) + (anyBtn and 30 or 4) + PAD
     card:SetHeight(h)
+    if not card:IsShown() then
+        card:SetAlpha(0)
+    end
+    alphaTo = 1
     card:Show()
 end

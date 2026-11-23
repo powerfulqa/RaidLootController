@@ -401,6 +401,9 @@ local G = {
         GetItemQualityByID = function()
             return 3
         end,
+        GetItemQualityColor = function()
+            return 0, 0.44, 0.87, "ff0070dd"
+        end,
         GetItemStats = function()
             return {}
         end,

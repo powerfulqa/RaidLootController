@@ -356,6 +356,13 @@ only from the session host (and `NEW` only from a leader or assistant).
     hidden until rolls are called; the dragged spot survives a reload
     (`RaidLootControllerDB.card`); I want this and Roll on the card work like
     the Loot tab's; a UI skin addon dresses it or leaves it readable.
+35. Roll card polish (2026-11-23, ideas from the Need addon), unmeasured:
+    the border takes the item's quality colour (`C_Item.GetItemQualityByID`
+    / `GetItemQualityColor`, grey until the item loads); the timer is a
+    `StatusBar` on `Interface\TargetingFrame\UI-StatusBar`; rows show
+    "won N" (wins this raid before this item) and players still to roll are
+    at half alpha; the card fades in, and fades out after the 8 s linger; a
+    card dragged to the lower half grows upward (saved by `BOTTOMLEFT`).
 
 ## Dev tooling
 
